@@ -1,0 +1,617 @@
+-- ChompersBottomBar (LocalScript in StarterPlayerScripts)
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes",15)
+
+local SLOT_SIZE  = 52
+local SLOT_GAP   = 6
+local BAR_BOTTOM = 16
+local BAR_H      = SLOT_SIZE
+
+local C = {
+	bg      = Color3.fromRGB(20,18,32),
+	bgLight = Color3.fromRGB(28,26,42),
+	stroke  = Color3.fromRGB(50,46,72),
+	red     = Color3.fromRGB(218,65,65),
+	gold    = Color3.fromRGB(239,159,39),
+	green   = Color3.fromRGB(70,195,85),
+	white   = Color3.fromRGB(245,242,255),
+	dim     = Color3.fromRGB(105,100,138),
+	money   = Color3.fromRGB(75,205,60),
+	napkin  = Color3.fromRGB(100,180,255),
+	warn    = Color3.fromRGB(220,60,60),
+	weight  = Color3.fromRGB(200,160,80),
+}
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "ChompersBottomBar"
+Gui.ResetOnSpawn = false
+Gui.DisplayOrder = 2
+Gui.IgnoreGuiInset = true
+Gui.Parent = player:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function mkFrame(parent,name,size,pos,anchor,bg,corner,nostroke)
+	local f = Instance.new("Frame")
+	f.Name = name or "Frame"
+	f.Size = size
+	f.Position = pos
+	if anchor then f.AnchorPoint = anchor end
+	f.BackgroundColor3 = bg or C.bg
+	f.BorderSizePixel = 0
+	f.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0,corner or 12)
+	c.Parent = f
+	if not nostroke then
+		local s = Instance.new("UIStroke")
+		s.Thickness = 1.5
+		s.Color = C.stroke
+		s.Parent = f
+	end
+	return f
+end
+
+local function mkLabel(parent,text,font,size,color,xAlign,pos,sz)
+	local l = Instance.new("TextLabel")
+	l.Text = text
+	l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14
+	l.TextColor3 = color or C.white
+	l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.BackgroundTransparency = 1
+	l.Position = pos or UDim2.new(0,0,0,0)
+	l.Size = sz or UDim2.new(1,0,1,0)
+	l.Parent = parent
+	return l
+end
+
+-- ============================================================
+-- LEFT SIDE: STORE GUIDE BUTTON
+-- ============================================================
+local StoreGuideBtn = Instance.new("TextButton")
+StoreGuideBtn.Name = "StoreGuideBtn"
+StoreGuideBtn.Size = UDim2.new(0,140,0,BAR_H)
+StoreGuideBtn.AnchorPoint = Vector2.new(0,1)
+StoreGuideBtn.Position = UDim2.new(0,BAR_BOTTOM,1,-BAR_BOTTOM)
+StoreGuideBtn.BackgroundColor3 = C.bg
+StoreGuideBtn.BorderSizePixel = 0
+StoreGuideBtn.Font = Enum.Font.GothamBlack
+StoreGuideBtn.TextSize = 15
+StoreGuideBtn.TextColor3 = C.red
+StoreGuideBtn.Text = "Store Guide"
+StoreGuideBtn.AutoButtonColor = false
+StoreGuideBtn.Parent = Gui
+
+local sgCorner = Instance.new("UICorner")
+sgCorner.CornerRadius = UDim.new(0,12)
+sgCorner.Parent = StoreGuideBtn
+
+local sgStroke = Instance.new("UIStroke")
+sgStroke.Thickness = 1.5
+sgStroke.Color = C.stroke
+sgStroke.Parent = StoreGuideBtn
+
+-- Pulsing red dot (hidden on lock-in)
+local PrefDot = Instance.new("Frame")
+PrefDot.Name = "PrefDot"
+PrefDot.Size = UDim2.new(0,8,0,8)
+PrefDot.Position = UDim2.new(1,-12,0,5)
+PrefDot.BackgroundColor3 = C.red
+PrefDot.BorderSizePixel = 0
+PrefDot.ZIndex = 3
+PrefDot.Visible = true
+PrefDot.Parent = StoreGuideBtn
+local pdC = Instance.new("UICorner")
+pdC.CornerRadius = UDim.new(1,0)
+pdC.Parent = PrefDot
+
+local dotPulseTween = TweenService:Create(PrefDot,
+	TweenInfo.new(0.8,Enum.EasingStyle.Sine,
+		Enum.EasingDirection.InOut,-1,true),
+	{BackgroundTransparency=0.5})
+dotPulseTween:Play()
+
+-- ============================================================
+-- LEFT SIDE: NAPKIN BUTTON + COOLDOWN
+-- Napkin heals 25 cleanliness, 20s cooldown, 2s use time
+-- ============================================================
+local NapkinPill = mkFrame(Gui,"NapkinPill",
+	UDim2.new(0,130,0,BAR_H),
+	UDim2.new(0,BAR_BOTTOM+140+8,1,-BAR_BOTTOM),
+	Vector2.new(0,1))
+
+-- Napkin count label (top)
+local NapkinCount = mkLabel(NapkinPill,"🧻 ×1",
+	Enum.Font.GothamBold,22,C.napkin,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,6),UDim2.new(1,0,0,36))
+NapkinCount.Name = "NapkinCount"
+
+-- Cooldown bar (bottom of pill)
+local cdTrack = mkFrame(NapkinPill,"CdTrack",
+	UDim2.new(1,-16,0,6),
+	UDim2.new(0,8,1,-8),
+	nil,Color3.fromRGB(25,23,38),4,true)
+
+local cdFill = mkFrame(cdTrack,"CdFill",
+	UDim2.new(1,0,1,0),
+	UDim2.new(0,0,0,0),
+	nil,C.napkin,4,true)
+cdFill.Name = "CdFill"
+
+-- Use button overlay
+-- Status label shown during use
+local cdLabel = mkLabel(NapkinPill,"",
+	Enum.Font.GothamBold,13,C.napkin,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,42),UDim2.new(1,0,0,16))
+cdLabel.Name = "CdLabel"
+
+local NapkinBtn = Instance.new("TextButton")
+NapkinBtn.Size = UDim2.new(1,0,0,30)
+NapkinBtn.Position = UDim2.new(0,0,0,0)
+NapkinBtn.BackgroundTransparency = 1
+NapkinBtn.Text = ""
+NapkinBtn.ZIndex = 4
+NapkinBtn.Parent = NapkinPill
+
+-- ============================================================
+-- CENTRE: HOTBAR (inventory slots, explicit pixel positioning)
+-- ============================================================
+local HotbarFrame = Instance.new("Frame")
+HotbarFrame.Name = "HotbarFrame"
+HotbarFrame.BackgroundTransparency = 1
+HotbarFrame.AnchorPoint = Vector2.new(0.5,1)
+HotbarFrame.Position = UDim2.new(0.5,0,1,-BAR_BOTTOM)
+HotbarFrame.Size = UDim2.new(0,
+	6*(SLOT_SIZE+SLOT_GAP)-SLOT_GAP,0,SLOT_SIZE)
+HotbarFrame.Parent = Gui
+
+local inventorySlots = {}
+
+local function buildHotbar(count)
+	for _,child in ipairs(HotbarFrame:GetChildren()) do
+		child:Destroy()
+	end
+	inventorySlots = {}
+	local totalW = count*(SLOT_SIZE+SLOT_GAP)-SLOT_GAP
+	HotbarFrame.Size = UDim2.new(0,totalW,0,SLOT_SIZE)
+
+	for i=1,count do
+		local xPos = (i-1)*(SLOT_SIZE+SLOT_GAP)
+		local slot = Instance.new("Frame")
+		slot.Name = "Slot_"..i
+		slot.Size = UDim2.new(0,SLOT_SIZE,0,SLOT_SIZE)
+		slot.Position = UDim2.new(0,xPos,0,0)
+		slot.BackgroundColor3 = C.bgLight
+		slot.BorderSizePixel = 0
+		slot.Parent = HotbarFrame
+		local sc = Instance.new("UICorner")
+		sc.CornerRadius = UDim.new(0,8)
+		sc.Parent = slot
+		local ss = Instance.new("UIStroke")
+		ss.Thickness = 2
+		ss.Color = i==1 and C.red or C.stroke
+		ss.Parent = slot
+
+		-- Slot number (always shows, two-digit aware)
+		local numL = Instance.new("TextLabel")
+		numL.Name = "SlotNum"
+		numL.Size = UDim2.new(0,18,0,14)
+		numL.Position = UDim2.new(0,3,1,-16)
+		numL.BackgroundTransparency = 1
+		numL.Text = tostring(i)
+		numL.Font = Enum.Font.GothamBold
+		numL.TextSize = i<=9 and 10 or 8
+		numL.TextColor3 = C.dim
+		numL.TextXAlignment = Enum.TextXAlignment.Left
+		numL.ZIndex = 2
+		numL.Parent = slot
+
+		-- Item icon
+		local ico = Instance.new("TextLabel")
+		ico.Name = "ItemIcon"
+		ico.Size = UDim2.new(1,-4,1,-18)
+		ico.Position = UDim2.new(0,2,0,2)
+		ico.BackgroundTransparency = 1
+		ico.Text = ""
+		ico.Font = Enum.Font.GothamBold
+		ico.TextSize = 20
+		ico.TextXAlignment = Enum.TextXAlignment.Center
+		ico.TextYAlignment = Enum.TextYAlignment.Center
+		ico.ZIndex = 2
+		ico.Parent = slot
+
+		-- Item weight (bottom right, replaces count)
+		local wgt = Instance.new("TextLabel")
+		wgt.Name = "ItemWeight"
+		wgt.Size = UDim2.new(0,22,0,14)
+		wgt.Position = UDim2.new(1,-24,1,-16)
+		wgt.BackgroundTransparency = 1
+		wgt.Text = ""
+		wgt.Font = Enum.Font.GothamBold
+		wgt.TextSize = 9
+		wgt.TextColor3 = C.weight
+		wgt.TextXAlignment = Enum.TextXAlignment.Right
+		wgt.ZIndex = 2
+		wgt.Parent = slot
+
+		table.insert(inventorySlots,slot)
+	end
+end
+
+buildHotbar(6)
+
+-- ============================================================
+-- BUFF ROW (above hotbar)
+-- ============================================================
+local BuffRow = Instance.new("Frame")
+BuffRow.Name = "BuffRow"
+BuffRow.Size = UDim2.new(0,400,0,40)
+BuffRow.AnchorPoint = Vector2.new(0.5,1)
+BuffRow.Position = UDim2.new(0.5,0,1,-(BAR_BOTTOM+BAR_H+8))
+BuffRow.BackgroundTransparency = 1
+BuffRow.Parent = Gui
+
+local buffLL = Instance.new("UIListLayout")
+buffLL.FillDirection = Enum.FillDirection.Horizontal
+buffLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+buffLL.VerticalAlignment = Enum.VerticalAlignment.Center
+buffLL.Padding = UDim.new(0,4)
+buffLL.Parent = BuffRow
+
+-- ============================================================
+-- RIGHT SIDE: MONEY PILL
+-- Sits to the right of the minimap (minimap is in ChompersMeters)
+-- We position it from the right edge
+-- Weight bar and minimap are in ChompersMeters
+-- Money pill anchors from right
+-- ============================================================
+local MAP_SIZE   = 180
+local MAP_PAD    = 8
+local WEIGHT_W   = 36
+local WEIGHT_PAD = 6
+
+-- Money pill sits right of weight bar, right of minimap
+-- Minimap right edge: 1, -(MAP_PAD)
+-- Weight bar: MAP_SIZE + MAP_PAD + WEIGHT_W + WEIGHT_PAD from right
+-- Money pill: another 8px + MONEY_W from that
+local MONEY_W = 120
+
+local MoneyPill = mkFrame(Gui,"MoneyPill",
+	UDim2.new(0,MONEY_W,0,BAR_H),
+	UDim2.new(1,-(MAP_PAD+MAP_SIZE+WEIGHT_W+WEIGHT_PAD+24+MONEY_W),
+		1,-BAR_BOTTOM),
+	Vector2.new(0,1))
+
+mkLabel(MoneyPill,"💵",
+	Enum.Font.GothamBold,20,C.money,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,0),UDim2.new(0.3,0,1,0))
+
+local MoneyLabel = mkLabel(MoneyPill,"$15",
+	Enum.Font.GothamBold,18,C.money,
+	Enum.TextXAlignment.Left,
+	UDim2.new(0.3,4,0,0),UDim2.new(0.7,-8,1,0))
+MoneyLabel.Name = "MoneyLabel"
+
+-- ============================================================
+-- NAPKIN COOLDOWN SYSTEM
+-- ============================================================
+local napkinCount    = 1
+local napkinCooldown = 0
+local napkinUsing    = false
+local NAPKIN_CD      = 20
+local NAPKIN_USE     = 2
+
+local function updateNapkinUI()
+	NapkinCount.Text = "🧻 ×"..napkinCount
+	if napkinCooldown > 0 then
+		local pct = 1 - (napkinCooldown/NAPKIN_CD)
+		TweenService:Create(cdFill,TweenInfo.new(0.1),
+			{Size=UDim2.new(pct,0,1,0)}):Play()
+		NapkinPill.BackgroundColor3 = Color3.fromRGB(22,20,36)
+	else
+		cdFill.Size = UDim2.new(1,0,1,0)
+		NapkinPill.BackgroundColor3 = napkinCount>0
+			and Color3.fromRGB(18,28,40)
+			or  Color3.fromRGB(20,18,32)
+	end
+end
+
+NapkinBtn.MouseButton1Click:Connect(function()
+	if napkinUsing or napkinCooldown>0 or napkinCount<=0 then return end
+	napkinUsing = true
+	cdLabel.Text = "Using..."
+	cdLabel.TextColor3 = C.napkin
+	task.wait(NAPKIN_USE)
+	if napkinUsing then
+		napkinCount = napkinCount - 1
+		napkinCooldown = NAPKIN_CD
+		napkinUsing = false
+		if _G.Chompers and _G.Chompers.UpdateCleanliness then
+			-- Heal 25% cleanliness (25/100)
+			-- Actual server call would go here in Phase 6
+		end
+		updateNapkinUI()
+	end
+end)
+
+-- Cooldown tick
+game:GetService("RunService").Heartbeat:Connect(function(dt)
+	if napkinCooldown > 0 then
+		napkinCooldown = math.max(0,napkinCooldown-dt)
+		updateNapkinUI()
+	end
+end)
+
+updateNapkinUI()
+
+-- ============================================================
+-- BATHROOM BREAK COUNTER (next to napkin)
+-- 3 breaks max, shows as 3 toilet icons
+-- ============================================================
+local BathroomPill = mkFrame(Gui,"BathroomPill",
+	UDim2.new(0,130,0,BAR_H),
+	UDim2.new(0,BAR_BOTTOM+140+8+130+8,1,-BAR_BOTTOM),
+	Vector2.new(0,1))
+
+mkLabel(BathroomPill,"Bathroom Breaks",
+	Enum.Font.GothamBold,10,C.dim,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,4),UDim2.new(1,0,0,14))
+
+-- Three toilet icons (filled = break remaining, dim = used)
+local breakIcons = {}
+local breakFrame = Instance.new("Frame")
+breakFrame.Size = UDim2.new(1,-16,0,28)
+breakFrame.Position = UDim2.new(0,8,0,18)
+breakFrame.BackgroundTransparency = 1
+breakFrame.Parent = BathroomPill
+
+local breakLL = Instance.new("UIListLayout")
+breakLL.FillDirection = Enum.FillDirection.Horizontal
+breakLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+breakLL.VerticalAlignment = Enum.VerticalAlignment.Center
+breakLL.Padding = UDim.new(0,6)
+breakLL.Parent = breakFrame
+
+for i = 1, 3 do
+	local icon = Instance.new("TextLabel")
+	icon.Size = UDim2.new(0,28,0,28)
+	icon.BackgroundTransparency = 1
+	icon.Text = "🚽"
+	icon.Font = Enum.Font.GothamBold
+	icon.TextSize = 22
+	icon.TextXAlignment = Enum.TextXAlignment.Center
+	icon.TextYAlignment = Enum.TextYAlignment.Center
+	icon.TextTransparency = 0
+	icon.ZIndex = 3
+	icon.Parent = breakFrame
+	table.insert(breakIcons, icon)
+end
+
+local breaksRemaining = 3
+
+local function updateBreaks(count)
+	breaksRemaining = math.max(0, count)
+	for i = 1, 3 do
+		if i <= breaksRemaining then
+			-- Break available — full opacity, normal colour
+			breakIcons[i].TextTransparency = 0
+			breakIcons[i].TextColor3 = Color3.fromRGB(255,255,255)
+		else
+			-- Break used — dimmed out with X
+			breakIcons[i].Text = "❌"
+			breakIcons[i].TextTransparency = 0.4
+		end
+	end
+	-- Flash red warning at 1 break left
+	if breaksRemaining == 1 then
+		TweenService:Create(BathroomPill,TweenInfo.new(0.3),
+			{BackgroundColor3=Color3.fromRGB(50,15,15)}):Play()
+	elseif breaksRemaining == 0 then
+		-- All out — show spectate warning
+		TweenService:Create(BathroomPill,TweenInfo.new(0.3),
+			{BackgroundColor3=Color3.fromRGB(80,10,10)}):Play()
+		mkLabel(BathroomPill,"SPECTATING",
+			Enum.Font.GothamBold,10,C.warn,
+			Enum.TextXAlignment.Center,
+			UDim2.new(0,0,1,-14),UDim2.new(1,0,0,12))
+	else
+		TweenService:Create(BathroomPill,TweenInfo.new(0.3),
+			{BackgroundColor3=Color3.fromRGB(20,18,32)}):Play()
+	end
+end
+
+updateBreaks(3)
+
+-- ============================================================
+-- PUBLIC API
+-- ============================================================
+_G.Chompers = _G.Chompers or {}
+
+_G.Chompers.OnStoreGuideClick = nil
+
+_G.Chompers.SetSlots = function(count)
+	buildHotbar(count)
+end
+
+_G.Chompers.SetMoney = function(amount)
+	MoneyLabel.Text = "$"..tostring(amount)
+end
+
+_G.Chompers.SetNapkins = function(count)
+	napkinCount = count
+	updateNapkinUI()
+end
+
+_G.Chompers.SetBreaks = function(count)
+	updateBreaks(count)
+end
+
+_G.Chompers.SetAllergyDot = function(allergyName)
+	-- dot stays red pulsing until locked
+end
+
+_G.Chompers.HideDot = function()
+	dotPulseTween:Cancel()
+	PrefDot.Visible = false
+end
+
+_G.Chompers.SetFavourite = function(recipeName)
+	-- stored for cookbook highlighting
+end
+
+_G.Chompers.AddBuff = function(icon,color,duration)
+	local bf = Instance.new("Frame")
+	bf.Size = UDim2.new(0,36,0,36)
+	bf.BackgroundColor3 = Color3.fromRGB(28,26,42)
+	bf.BorderSizePixel = 0
+	bf.Parent = BuffRow
+	local bfc = Instance.new("UICorner")
+	bfc.CornerRadius = UDim.new(0,8)
+	bfc.Parent = bf
+	local bfS = Instance.new("UIStroke")
+	bfS.Thickness = 1.5
+	bfS.Color = color
+	bfS.Parent = bf
+	local icoL = Instance.new("TextLabel")
+	icoL.Size = UDim2.new(1,0,0.65,0)
+	icoL.BackgroundTransparency = 1
+	icoL.Text = icon
+	icoL.Font = Enum.Font.GothamBold
+	icoL.TextSize = 18
+	icoL.TextXAlignment = Enum.TextXAlignment.Center
+	icoL.TextYAlignment = Enum.TextYAlignment.Center
+	icoL.Parent = bf
+	local tBg = Instance.new("Frame")
+	tBg.Size = UDim2.new(1,-4,0,3)
+	tBg.Position = UDim2.new(0,2,1,-5)
+	tBg.BackgroundColor3 = Color3.fromRGB(20,18,32)
+	tBg.BorderSizePixel = 0
+	tBg.Parent = bf
+	local tFillC2 = Instance.new("UICorner")
+	tFillC2.CornerRadius = UDim.new(0,2)
+	tFillC2.Parent = tBg
+	local tFill = Instance.new("Frame")
+	tFill.Size = UDim2.new(1,0,1,0)
+	tFill.BackgroundColor3 = color
+	tFill.BorderSizePixel = 0
+	tFill.Parent = tBg
+	local tFillC = Instance.new("UICorner")
+	tFillC.CornerRadius = UDim.new(0,2)
+	tFillC.Parent = tFill
+	TweenService:Create(tFill,
+		TweenInfo.new(duration,Enum.EasingStyle.Linear),
+		{Size=UDim2.new(0,0,1,0)}):Play()
+	task.delay(duration,function()
+		TweenService:Create(bf,TweenInfo.new(0.2),
+			{BackgroundTransparency=1}):Play()
+		task.wait(0.2)
+		bf:Destroy()
+	end)
+end
+
+StoreGuideBtn.MouseButton1Click:Connect(function()
+	if _G.Chompers.OnStoreGuideClick then
+		_G.Chompers.OnStoreGuideClick()
+	end
+end)
+
+_G.Chompers.GetSlotCount = function()
+	return #inventorySlots
+end
+
+_G.Chompers.SetSlotItem = function(slotIndex, itemData)
+	local slot = inventorySlots[slotIndex]
+	if not slot then return end
+	local ico = slot:FindFirstChild("ItemIcon")
+	local wgt = slot:FindFirstChild("ItemWeight")
+	local stroke = slot:FindFirstChildWhichIsA("UIStroke")
+	if not itemData then
+		if ico then ico.Text = "" end
+		if wgt then wgt.Text = "" end
+		slot.BackgroundColor3 = Color3.fromRGB(28,26,42)
+		if stroke then
+			stroke.Color = C.stroke
+			stroke.Thickness = 1.5
+		end
+		local unpaidL = slot:FindFirstChild("UnpaidLabel")
+		if unpaidL then unpaidL.Visible = false end
+		return
+	end
+	if ico then ico.Text = itemData.emoji or "" end
+	if wgt then wgt.Text = "⚖"..tostring(itemData.weight or 0) end
+	local rarityBg = {
+		Common        = Color3.fromRGB(40,38,55),
+		Uncommon      = Color3.fromRGB(22,42,25),
+		Rare          = Color3.fromRGB(18,28,52),
+		["Ultra-Rare"]= Color3.fromRGB(35,20,50),
+		Legendary     = Color3.fromRGB(50,38,10),
+	}
+	local rarityStroke = {
+		Common        = Color3.fromRGB(80,78,100),
+		Uncommon      = Color3.fromRGB(50,140,60),
+		Rare          = Color3.fromRGB(50,100,200),
+		["Ultra-Rare"]= Color3.fromRGB(130,60,200),
+		Legendary     = Color3.fromRGB(200,140,30),
+	}
+	slot.BackgroundColor3 = rarityBg[itemData.rarity] or Color3.fromRGB(28,26,42)
+	if stroke then
+		stroke.Color = itemData.paid
+			and (rarityStroke[itemData.rarity] or C.stroke)
+			or  Color3.fromRGB(200,120,30)
+		stroke.Thickness = itemData.paid and 1.5 or 2.5
+	end
+	local unpaidL = slot:FindFirstChild("UnpaidLabel")
+	if not itemData.paid then
+		if not unpaidL then
+			unpaidL = Instance.new("TextLabel")
+			unpaidL.Name = "UnpaidLabel"
+			unpaidL.Size = UDim2.new(0,24,0,14)
+			unpaidL.Position = UDim2.new(1,-26,0,2)
+			unpaidL.BackgroundTransparency = 1
+			unpaidL.Text = "$"..tostring(itemData.cost or 0)
+			unpaidL.Font = Enum.Font.GothamBold
+			unpaidL.TextSize = 9
+			unpaidL.TextColor3 = Color3.fromRGB(200,120,30)
+			unpaidL.TextXAlignment = Enum.TextXAlignment.Right
+			unpaidL.ZIndex = 4
+			unpaidL.Parent = slot
+		else
+			unpaidL.Text = "$"..tostring(itemData.cost or 0)
+			unpaidL.Visible = true
+		end
+	else
+		if unpaidL then unpaidL.Visible = false end
+	end
+end
+
+_G.Chompers.SetSelectedSlot = function(index)
+	for i, slot in ipairs(inventorySlots) do
+		local stroke = slot:FindFirstChildWhichIsA("UIStroke")
+		if stroke then
+			if i == index then
+				stroke.Color = C.red
+				stroke.Thickness = 2.5
+			else
+				local unpaidL = slot:FindFirstChild("UnpaidLabel")
+				local isUnpaid = unpaidL and unpaidL.Visible
+				stroke.Color = isUnpaid
+					and Color3.fromRGB(200,120,30)
+					or  C.stroke
+				stroke.Thickness = isUnpaid and 2.5 or 1.5
+			end
+		end
+	end
+end
+
+print("ChompersBottomBar loaded!")
