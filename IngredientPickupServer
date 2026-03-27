@@ -1,0 +1,372 @@
+-- IngredientPickupServer
+-- Handles ProximityPrompt pickup, player inventory, weight tracking
+
+local Players          = game:GetService("Players")
+local ReplicatedStorage= game:GetService("ReplicatedStorage")
+
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
+
+-- Create the remotes we need (add these to your ChompersRemotes folder)
+local function getOrMakeRemote(name, class)
+	local existing = Remotes:FindFirstChild(name)
+	if existing then return existing end
+	local r = Instance.new(class or "RemoteEvent")
+	r.Name = name
+	r.Parent = Remotes
+	return r
+end
+
+local UpdateInventoryRemote  = getOrMakeRemote("UpdateInventory")
+local UpdateWeightRemote     = getOrMakeRemote("UpdateWeight")
+local UpdateMoneyRemote      = getOrMakeRemote("UpdateMoney")
+local CheckoutCompleteRemote = getOrMakeRemote("CheckoutComplete")
+local CheckoutStartRemote    = getOrMakeRemote("CheckoutStart")
+
+-- ============================================================
+-- PLAYER DATA
+-- ============================================================
+local PlayerData = {}
+
+local CONTAINER_SLOTS = {basket=6, cart=12}
+local CONTAINER_WEIGHT = {basket=35, cart=70}
+
+local function getPlayerData(player)
+	return PlayerData[player]
+end
+
+local function initPlayerData(player)
+	PlayerData[player] = {
+		inventory  = {},   -- {name, emoji, rarity, weight, cost, allergy, paid}
+		container  = "basket",
+		money      = 15,
+		maxSlots   = 6,
+		maxWeight  = 35,
+	}
+end
+
+local function getTotalWeight(inventory)
+	local w = 0
+	for _,item in ipairs(inventory) do w = w + item.weight end
+	return w
+end
+
+local function getUnpaidCost(inventory)
+	local total = 0
+	for _,item in ipairs(inventory) do
+		if not item.paid then total = total + item.cost end
+	end
+	return total
+end
+
+local function syncInventoryToClient(player)
+	local data = getPlayerData(player)
+	if not data then return end
+	local currentWeight = getTotalWeight(data.inventory)
+	UpdateInventoryRemote:FireClient(player, data.inventory)
+	UpdateWeightRemote:FireClient(player, currentWeight, data.maxWeight)
+	UpdateMoneyRemote:FireClient(player, data.money)
+end
+
+Players.PlayerAdded:Connect(function(player)
+	initPlayerData(player)
+
+	player.CharacterAdded:Connect(function()
+		task.wait(1)
+		syncInventoryToClient(player)
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	PlayerData[player] = nil
+end)
+
+-- ============================================================
+-- CONTAINER SELECTION (from preferences)
+-- ============================================================
+Remotes:WaitForChild("PlayerSelectCart").OnServerEvent:Connect(function(player, choice)
+	local data = getPlayerData(player)
+	if not data then return end
+	data.container = choice
+	data.maxSlots  = CONTAINER_SLOTS[choice]  or 6
+	data.maxWeight = CONTAINER_WEIGHT[choice] or 35
+	syncInventoryToClient(player)
+end)
+
+-- ============================================================
+-- INGREDIENT PICKUP via ProximityPrompt
+-- ============================================================
+local LiveFolder = workspace:WaitForChild("Ingredients_Live")
+
+-- Watch for new ingredient parts being added to live folder
+local function setupPickupPrompt(part)
+	if not part:GetAttribute("IsIngredient") then return end
+
+	local prompt = part:FindFirstChildWhichIsA("ProximityPrompt")
+	if not prompt then return end
+
+	prompt.Triggered:Connect(function(player)
+		local data = getPlayerData(player)
+		if not data then return end
+
+		-- Check slot limit
+		if #data.inventory >= data.maxSlots then
+			-- Signal client: inventory full
+			return
+		end
+
+		-- Build inventory entry
+		local item = {
+			name    = part:GetAttribute("IngredientName") or part.Name,
+			emoji   = part:GetAttribute("Emoji")          or "🍽",
+			rarity  = part:GetAttribute("Rarity")         or "Common",
+			weight  = part:GetAttribute("Weight")         or 1,
+			cost    = part:GetAttribute("Cost")            or 1,
+			allergy = part:GetAttribute("Allergy")         or "None",
+			zone    = part:GetAttribute("Zone")            or "Unknown",
+			paid    = false,
+			spawnID = part:GetAttribute("SpawnID")         or "",
+		}
+
+		-- Store spawn info for respawn system
+		local spawnID   = part:GetAttribute("SpawnMarkerID") or ""
+		local rarity    = item.rarity
+		local ingData   = {
+			n=item.name, r=rarity,
+			wt=item.weight, cost=item.cost,
+			emoji=item.emoji, allergy=item.allergy,
+		}
+
+		-- Add to inventory
+		table.insert(data.inventory, item)
+
+		-- Remove from world (schedules respawn via attribute on part before destroy)
+		-- Find spawn marker and schedule respawn
+		task.spawn(function()
+			task.wait(0.05) -- brief delay so prompt fires cleanly
+			for _, child in ipairs(LiveFolder:GetChildren()) do
+				if child:GetAttribute("SpawnID") == spawnID
+					and not child:GetAttribute("IsIngredient") then
+					-- This is the spawn marker — schedule respawn
+					local respawnTimes = {
+						Common=25, Uncommon=35, Rare=50,
+						["Ultra-Rare"]=90, Legendary=math.huge
+					}
+					local rt = respawnTimes[rarity] or 30
+					if rt ~= math.huge then
+						task.delay(rt, function()
+							if child and child.Parent then
+								-- Re-spawn ingredient at this marker
+								local newPart = spawnIngredient(child, ingData)
+								setupPickupPrompt(newPart)
+							end
+						end)
+					end
+					break
+				end
+			end
+			part:Destroy()
+		end)
+
+		-- Sync to client
+		syncInventoryToClient(player)
+	end)
+end
+
+-- Forward declaration for spawnIngredient (import from spawner or inline)
+-- For now, connect to all existing and future ingredients
+for _,child in ipairs(LiveFolder:GetChildren()) do
+	setupPickupPrompt(child)
+end
+LiveFolder.ChildAdded:Connect(setupPickupPrompt)
+
+-- ============================================================
+-- CHECKOUT SYSTEM
+-- ============================================================
+-- Hold time scales with total unpaid weight
+-- Every 5 weight units = 0.5s, minimum 0.5s, maximum 8s
+
+local checkingOut = {}  -- player → true while in checkout
+
+local function getCheckoutHoldTime(inventory)
+	local unpaidWeight = 0
+	for _,item in ipairs(inventory) do
+		if not item.paid then
+			unpaidWeight = unpaidWeight + item.weight
+		end
+	end
+	local holdTime = math.clamp((unpaidWeight / 5) * 0.5, 0.5, 8)
+	return holdTime, unpaidWeight
+end
+
+-- Find checkout zone parts and add interaction
+local function setupCheckout()
+	local Map = workspace:WaitForChild("Map", 10)
+	if not Map then return end
+	local Zones = Map:FindFirstChild("Zones")
+	if not Zones then return end
+
+	local checkoutZone = Zones:FindFirstChild("Zone_Checkout")
+	if not checkoutZone then
+		warn("IngredientPickupServer: Zone_Checkout not found")
+		return
+	end
+
+	-- Add proximity prompt to checkout zone
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText    = "Checkout"
+	prompt.ObjectText    = "Pay for items"
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.HoldDuration  = 0.5  -- updated dynamically on client
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = checkoutZone
+
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local data = getPlayerData(player)
+		if not data then return end
+		local unpaidCost = getUnpaidCost(data.inventory)
+		if unpaidCost == 0 then return end  -- nothing to pay
+		if checkingOut[player] then return end
+
+		-- Tell client to show checkout progress bar
+		local holdTime, unpaidWeight = getCheckoutHoldTime(data.inventory)
+		CheckoutStartRemote:FireClient(player, holdTime, unpaidCost)
+		checkingOut[player] = true
+	end)
+
+	prompt.PromptButtonHoldEnded:Connect(function(player)
+		checkingOut[player] = nil
+	end)
+
+	prompt.Triggered:Connect(function(player)
+		local data = getPlayerData(player)
+		if not data then return end
+
+		local unpaidCost = getUnpaidCost(data.inventory)
+		if unpaidCost == 0 then return end
+
+		-- Check player has enough money
+		if data.money < unpaidCost then
+			-- Can't afford — signal client
+			CheckoutCompleteRemote:FireClient(player, false, data.money, unpaidCost)
+			checkingOut[player] = nil
+			return
+		end
+
+		-- Deduct money, mark all items paid
+		data.money = data.money - unpaidCost
+		for _,item in ipairs(data.inventory) do
+			item.paid = true
+		end
+
+		checkingOut[player] = nil
+
+		-- Sync everything to client
+		syncInventoryToClient(player)
+		CheckoutCompleteRemote:FireClient(player, true, data.money, unpaidCost)
+
+		print(player.Name.." checked out — paid $"..unpaidCost
+			..", remaining $"..data.money)
+	end)
+end
+
+task.spawn(setupCheckout)
+
+-- ============================================================
+-- ITEM DROP (forced bathroom or manual Q drop)
+-- ============================================================
+local DropItemRemote = getOrMakeRemote("DropItem")
+
+local function dropAllItems(player, forced)
+	local data = getPlayerData(player)
+	if not data then return end
+
+	-- Find nearest trash can or just floor position
+	local char = player.Character
+	local pos = char and char:FindFirstChild("HumanoidRootPart")
+		and char.HumanoidRootPart.Position
+		or Vector3.new(0,5,0)
+
+	-- Scatter items around drop position
+	for i,item in ipairs(data.inventory) do
+		local dropPart = Instance.new("Part")
+		dropPart.Name = item.name
+		dropPart.Size = Vector3.new(2,2,2)
+		dropPart.Color = Color3.fromRGB(80,60,40) -- dirty/dropped colour
+		dropPart.Position = pos + Vector3.new(
+			math.random(-4,4), 2, math.random(-4,4))
+		dropPart.Anchored = false
+
+		-- Mark as trash (gives cleanliness penalty on pickup)
+		dropPart:SetAttribute("IsIngredient",   true)
+		dropPart:SetAttribute("IngredientName", item.name)
+		dropPart:SetAttribute("Emoji",          item.emoji)
+		dropPart:SetAttribute("Rarity",         item.rarity)
+		dropPart:SetAttribute("Weight",         item.weight)
+		dropPart:SetAttribute("Cost",           item.cost)
+		dropPart:SetAttribute("Allergy",        item.allergy)
+		dropPart:SetAttribute("IsPaid",         item.paid)
+		dropPart:SetAttribute("IsTrash",        true)  -- trash pickup = -10 cleanliness
+		dropPart:SetAttribute("SpawnID",        "trash_"..player.UserId.."_"..i)
+
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.ActionText = "Grab"
+		prompt.ObjectText = item.emoji.." "..item.name.." (trash)"
+		prompt.KeyboardKeyCode = Enum.KeyCode.E
+		prompt.HoldDuration = 0.3
+		prompt.MaxActivationDistance = 8
+		prompt.Parent = dropPart
+
+		dropPart.Parent = LiveFolder
+		setupPickupPrompt(dropPart)
+	end
+
+	data.inventory = {}
+	syncInventoryToClient(player)
+end
+
+DropItemRemote.OnServerEvent:Connect(function(player, slotIndex)
+	local data = getPlayerData(player)
+	if not data then return end
+	if not slotIndex or not data.inventory[slotIndex] then return end
+
+	local item = data.inventory[slotIndex]
+	-- Drop single item
+	local char = player.Character
+	local pos = char and char:FindFirstChild("HumanoidRootPart")
+		and char.HumanoidRootPart.Position
+		or Vector3.new(0,5,0)
+
+	local dropPart = Instance.new("Part")
+	dropPart.Name = item.name
+	dropPart.Size = Vector3.new(2,2,2)
+	dropPart.Color = Color3.fromRGB(120,100,80)
+	dropPart.Position = pos + Vector3.new(math.random(-2,2),2,math.random(-2,2))
+	dropPart.Anchored = false
+	dropPart:SetAttribute("IsIngredient",   true)
+	dropPart:SetAttribute("IngredientName", item.name)
+	dropPart:SetAttribute("Emoji",          item.emoji)
+	dropPart:SetAttribute("Rarity",         item.rarity)
+	dropPart:SetAttribute("Weight",         item.weight)
+	dropPart:SetAttribute("Cost",           0)           -- dropped items cost nothing
+	dropPart:SetAttribute("Allergy",        item.allergy)
+	dropPart:SetAttribute("IsPaid",         item.paid)
+	dropPart:SetAttribute("IsTrash",        false)
+	dropPart:SetAttribute("SpawnID",        "drop_"..player.UserId.."_"..slotIndex)
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText = "Pick up"
+	prompt.ObjectText = item.emoji.." "..item.name
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.HoldDuration = 0.3
+	prompt.MaxActivationDistance = 8
+	prompt.Parent = dropPart
+	dropPart.Parent = LiveFolder
+	setupPickupPrompt(dropPart)
+
+	table.remove(data.inventory, slotIndex)
+	syncInventoryToClient(player)
+end)
+
+-- Export dropAllItems for bathroom system to call
+return {dropAllItems = dropAllItems}
