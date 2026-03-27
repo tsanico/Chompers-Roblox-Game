@@ -1,0 +1,42 @@
+local HttpService = game:GetService("HttpService")
+local output = {}
+
+local function scanModels(folder)
+	for _, obj in ipairs(folder:GetDescendants()) do
+		if obj:IsA("Model") or obj:IsA("BasePart") then
+			local size
+			if obj:IsA("Model") then
+				size = obj:GetExtentsSize()
+			else
+				size = obj.Size
+			end
+
+			local volume = size.X * size.Y * size.Z
+
+			local suggestedWeight
+			if volume < 5 then
+				suggestedWeight = 1
+			elseif volume < 15 then
+				suggestedWeight = 2
+			elseif volume < 40 then
+				suggestedWeight = 3
+			elseif volume < 80 then
+				suggestedWeight = 4
+			else
+				suggestedWeight = 5
+			end
+
+			table.insert(output, {
+				name = obj.Name,
+				size = {x = size.X, y = size.Y, z = size.Z},
+				volume = volume,
+				suggestedWeight = suggestedWeight
+			})
+		end
+	end
+end
+
+scanModels(workspace)
+
+local json = HttpService:JSONEncode(output)
+print(json)
