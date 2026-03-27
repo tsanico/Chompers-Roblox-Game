@@ -1,0 +1,782 @@
+-- ChompersMeters (LocalScript in StarterPlayerScripts)
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage= game:GetService("ReplicatedStorage")
+local GuiService       = game:GetService("GuiService")
+
+local player  = Players.LocalPlayer
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes",15)
+
+local ROBLOX_BAR_H = GuiService:GetGuiInset().Y
+
+local METER_W    = 28
+local METER_H    = 260
+local BAR_BOTTOM = 16
+local SLOT_SIZE  = 52
+local MAP_SIZE   = 180
+local MAP_PAD    = 8
+local WEIGHT_W   = 52
+local WEIGHT_H   = MAP_SIZE
+
+local C = {
+	bg      = Color3.fromRGB(20,18,32),
+	stroke  = Color3.fromRGB(50,46,72),
+	red     = Color3.fromRGB(218,65,65),
+	gold    = Color3.fromRGB(239,159,39),
+	green   = Color3.fromRGB(70,195,85),
+	white   = Color3.fromRGB(245,242,255),
+	dim     = Color3.fromRGB(105,100,138),
+	fullness= Color3.fromRGB(235,155,35),
+	dirty   = Color3.fromRGB(65,165,235),
+	warn    = Color3.fromRGB(220,60,60),
+	weight  = Color3.fromRGB(200,160,80),
+}
+
+local PHASES = {
+	WAITING   = {label="Waiting...",   color=C.dim},
+	COUNTDOWN = {label="Get Ready!",   color=C.gold},
+	SHOPPING  = {label="Shopping",     color=C.green},
+	COOKING   = {label="Cooking",      color=C.gold},
+	FOODFIGHT = {label="Food Fight!",  color=C.red},
+	CLEANUP   = {label="Cleanup",      color=C.dim},
+}
+
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "ChompersMeters"
+Gui.ResetOnSpawn = false
+Gui.DisplayOrder = 3
+Gui.IgnoreGuiInset = true
+Gui.Parent = player:WaitForChild("PlayerGui")
+
+local function mkFrame(parent,name,size,pos,anchor,bg,corner,nostroke)
+	local f = Instance.new("Frame")
+	f.Name = name or "Frame"
+	f.Size = size
+	f.Position = pos
+	if anchor then f.AnchorPoint = anchor end
+	f.BackgroundColor3 = bg or C.bg
+	f.BorderSizePixel = 0
+	f.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0,corner or 12)
+	c.Parent = f
+	if not nostroke then
+		local s = Instance.new("UIStroke")
+		s.Thickness = 1.5
+		s.Color = C.stroke
+		s.Parent = f
+	end
+	return f
+end
+
+local function mkLabel(parent,text,font,size,color,xAlign,pos,sz)
+	local l = Instance.new("TextLabel")
+	l.Text = text
+	l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14
+	l.TextColor3 = color or C.white
+	l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.BackgroundTransparency = 1
+	l.Position = pos or UDim2.new(0,0,0,0)
+	l.Size = sz or UDim2.new(1,0,1,0)
+	l.Parent = parent
+	return l
+end
+
+-- ============================================================
+-- TOP BAR — Pills aligned with Roblox buttons
+-- ============================================================
+local PILL_H = 34
+local PILL_Y = 16
+
+local PhasePill = mkFrame(Gui,"PhasePill",
+	UDim2.new(0,180,0,PILL_H),
+	UDim2.new(0,168,0,PILL_Y))
+local PhaseLabel = mkLabel(PhasePill,"Waiting...",
+	Enum.Font.GothamBold,13,C.dim)
+PhaseLabel.Name = "PhaseLabel"
+
+local TimerPill = mkFrame(Gui,"TimerPill",
+	UDim2.new(0,140,0,PILL_H),
+	UDim2.new(0.5,-70,0,PILL_Y))
+local TimerLabel = mkLabel(TimerPill,"5:00",
+	Enum.Font.GothamBold,20,C.white)
+TimerLabel.Name = "TimerLabel"
+
+local ScorePill = mkFrame(Gui,"ScorePill",
+	UDim2.new(0,120,0,PILL_H),
+	UDim2.new(0.5,78,0,PILL_Y))
+ScorePill.Visible = false
+mkLabel(ScorePill,"🍅",Enum.Font.GothamBold,14,C.red,
+	Enum.TextXAlignment.Left,
+	UDim2.new(0,8,0,0),UDim2.new(0,22,1,0))
+local ScoreLabel = mkLabel(ScorePill,"0 hits",
+	Enum.Font.GothamBold,12,C.white,
+	Enum.TextXAlignment.Left,
+	UDim2.new(0,28,0,0),UDim2.new(1,-32,1,0))
+ScoreLabel.Name = "ScoreLabel"
+
+local PlayerPill = mkFrame(Gui,"PlayerPill",
+	UDim2.new(0,180,0,PILL_H),
+	UDim2.new(1,-188,0,PILL_Y))
+local PlayerLabel = mkLabel(PlayerPill,"0 / 15",
+	Enum.Font.GothamBold,13,C.dim)
+PlayerLabel.Name = "PlayerLabel"
+
+-- ============================================================
+-- TIMER
+-- ============================================================
+local matchTime   = 300
+local timerActive = false
+local timerConn   = nil
+
+local function startTimer(secs)
+	matchTime   = secs or 300
+	timerActive = true
+	ScorePill.Visible = true
+	if timerConn then timerConn:Disconnect() end
+	timerConn = RunService.Heartbeat:Connect(function(dt)
+		if not timerActive then return end
+		matchTime = math.max(0,matchTime-dt)
+		local m = math.floor(matchTime/60)
+		local s = math.floor(matchTime%60)
+		TimerLabel.Text = string.format("%d:%02d",m,s)
+		TimerLabel.TextColor3 = matchTime<=30 and C.red
+			or matchTime<=60 and C.gold or C.white
+		if matchTime<=0 then
+			timerActive = false
+			timerConn:Disconnect()
+		end
+	end)
+end
+
+-- ============================================================
+-- FULLNESS + CLEANLINESS METERS (sides)
+-- ============================================================
+local function buildMeter(isLeft,baseCol,warnCol,icon,labelText)
+	local xScale  = isLeft and 0 or 1
+	local xOffset = isLeft and 14 or -14
+	local anchor  = Vector2.new(isLeft and 0 or 1,0.5)
+
+	local container = Instance.new("Frame")
+	container.Name  = labelText.."Meter"
+	container.Size  = UDim2.new(0,METER_W+20,0,METER_H+80)
+	container.AnchorPoint = anchor
+	container.Position = UDim2.new(xScale,xOffset,0.5,-10)
+	container.BackgroundTransparency = 1
+	container.Visible = true
+	container.Parent = Gui
+
+	mkLabel(container,icon,
+		Enum.Font.GothamBold,24,C.white,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,0),UDim2.new(1,0,0,30))
+
+	local track = mkFrame(container,"Track",
+		UDim2.new(0,METER_W,0,METER_H),
+		UDim2.new(0.5,-METER_W/2,0,34),
+		nil,Color3.fromRGB(24,22,38),8)
+
+	local fill = mkFrame(track,"Fill",
+		UDim2.new(1,0,0,0),
+		UDim2.new(0,0,1,0),
+		Vector2.new(0,1),baseCol,8,true)
+
+	local warnOverlay = mkFrame(track,"Warn",
+		UDim2.new(1,0,1,0),UDim2.new(0,0,0,0),
+		nil,warnCol,8,true)
+	warnOverlay.BackgroundTransparency = 1
+	warnOverlay.ZIndex = 3
+
+	local pctBg = mkFrame(container,"PctBg",
+		UDim2.new(1,4,0,22),
+		UDim2.new(0,-2,0,METER_H+38),
+		nil,Color3.fromRGB(35,12,12),6,true)
+
+	local pctL = mkLabel(pctBg,"0%",
+		Enum.Font.GothamBlack,13,
+		Color3.fromRGB(255,80,80))
+	pctL.Name = "PctLabel"
+
+	mkLabel(container,labelText,
+		Enum.Font.GothamBlack,12,C.white,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,METER_H+62),
+		UDim2.new(1,0,0,16))
+
+	local arrowL = mkLabel(container,
+		isLeft and "🚽" or "🚿",
+		Enum.Font.GothamBold,20,C.warn,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,METER_H+42),
+		UDim2.new(1,0,0,22))
+	arrowL.Visible = false
+
+	return fill,pctL,warnOverlay,arrowL
+end
+
+local FFill,FPct,FWarn,FArrow =
+	buildMeter(true,  C.fullness,C.warn,"🍔","FULL")
+local CFill,CPct,CWarn,CArrow =
+	buildMeter(false, C.dirty,
+		Color3.fromRGB(155,115,35),"🧼","DIRTY")
+
+local warnTweens = {}
+
+local function updateMeter(fill,pctL,warnF,arrowL,baseCol,warnCol,pct)
+	pct = math.clamp(pct,0,1)
+	TweenService:Create(fill,
+		TweenInfo.new(0.3,Enum.EasingStyle.Quad),
+		{Size=UDim2.new(1,0,0,METER_H*pct)}):Play()
+	pctL.Text = math.floor(pct*100).."%"
+	local r = baseCol.R+(warnCol.R-baseCol.R)*pct
+	local g = baseCol.G+(warnCol.G-baseCol.G)*pct
+	local b = baseCol.B+(warnCol.B-baseCol.B)*pct
+	TweenService:Create(fill,TweenInfo.new(0.3),
+		{BackgroundColor3=Color3.new(
+			math.clamp(r,0,1),
+			math.clamp(g,0,1),
+			math.clamp(b,0,1))}):Play()
+	if pct>=0.8 then
+		arrowL.Visible = true
+		if not warnTweens[warnF] then
+			warnTweens[warnF] = TweenService:Create(warnF,
+				TweenInfo.new(0.5,Enum.EasingStyle.Sine,
+					Enum.EasingDirection.InOut,-1,true),
+				{BackgroundTransparency=0.7})
+			warnTweens[warnF]:Play()
+		end
+	else
+		arrowL.Visible = false
+		if warnTweens[warnF] then
+			warnTweens[warnF]:Cancel()
+			warnTweens[warnF] = nil
+			warnF.BackgroundTransparency = 1
+		end
+	end
+end
+
+-- ============================================================
+-- MINIMAP (bottom right, above bottom bar)
+-- ============================================================
+local MinimapOuter = mkFrame(Gui,"Minimap",
+	UDim2.new(0,MAP_SIZE,0,MAP_SIZE),
+	UDim2.new(1,-(MAP_PAD+MAP_SIZE),
+		1,-(BAR_BOTTOM+MAP_SIZE)),
+	Vector2.new(0,0),
+	Color3.fromRGB(18,16,28),14)
+MinimapOuter.ClipsDescendants = true
+
+local MapBg = Instance.new("Frame")
+MapBg.Size = UDim2.new(1,0,1,0)
+MapBg.BackgroundColor3 = Color3.fromRGB(28,26,40)
+MapBg.BorderSizePixel = 0
+MapBg.Parent = MinimapOuter
+local mapBgC = Instance.new("UICorner")
+mapBgC.CornerRadius = UDim.new(0,14)
+mapBgC.Parent = MapBg
+
+mkLabel(MinimapOuter,"MAP",
+	Enum.Font.GothamBlack,9,
+	Color3.fromRGB(180,175,220),
+	Enum.TextXAlignment.Left,
+	UDim2.new(0,8,0,4),UDim2.new(0,28,0,14))
+
+local MapInner = Instance.new("Frame")
+MapInner.Name = "MapInner"
+MapInner.Size = UDim2.new(1,-4,1,-20)
+MapInner.Position = UDim2.new(0,2,0,18)
+MapInner.BackgroundTransparency = 1
+MapInner.ClipsDescendants = true
+MapInner.Parent = MinimapOuter
+
+local ZONE_COLS = {
+	Zone_Produce   = Color3.fromRGB(45,105,40),
+	Zone_Freezer   = Color3.fromRGB(32,60,118),
+	Zone_Aisles    = Color3.fromRGB(78,65,28),
+	Zone_Bakery    = Color3.fromRGB(110,50,68),
+	Zone_Centre    = Color3.fromRGB(62,55,25),
+	Zone_Dairy     = Color3.fromRGB(38,62,100),
+	Zone_Kitchen   = Color3.fromRGB(110,52,32),
+	Zone_Checkout  = Color3.fromRGB(62,38,95),
+	Zone_Stockroom = Color3.fromRGB(52,52,62),
+	Zone_WC_FrontLeft  = Color3.fromRGB(28,80,88),
+	Zone_WC_FrontRight = Color3.fromRGB(28,80,88),
+	Zone_WC_BackLeft   = Color3.fromRGB(28,80,88),
+	Zone_WC_BackRight  = Color3.fromRGB(28,80,88),
+	Zone_Spice     = Color3.fromRGB(95,45,20),
+}
+
+local zoneData = {}
+local Map = workspace:FindFirstChild("Map")
+if Map then
+	local Zones = Map:FindFirstChild("Zones")
+	if Zones then
+		for _,z in ipairs(Zones:GetChildren()) do
+			if z:IsA("BasePart") then
+				table.insert(zoneData,{
+					name=z.Name,cx=z.Position.X,cz=z.Position.Z,
+					wx=z.Size.X,wz=z.Size.Z,
+					color=ZONE_COLS[z.Name] or Color3.fromRGB(40,38,55),
+				})
+			end
+		end
+	end
+end
+
+local function worldToFrac(wx,wz)
+	return math.clamp((300-wx)/600,0,1),
+	math.clamp((wz+200)/400,0,1)
+end
+
+for _,z in ipairs(zoneData) do
+	local x1,z1 = worldToFrac(z.cx+z.wx/2,z.cz-z.wz/2)
+	local x2,z2 = worldToFrac(z.cx-z.wx/2,z.cz+z.wz/2)
+	local zf = Instance.new("Frame")
+	zf.Size = UDim2.new(x2-x1,0,z2-z1,0)
+	zf.Position = UDim2.new(x1,0,z1,0)
+	zf.BackgroundColor3 = z.color
+	zf.BorderSizePixel = 0
+	zf.ZIndex = 2
+	zf.Parent = MapInner
+	local zfc = Instance.new("UICorner")
+	zfc.CornerRadius = UDim.new(0,2)
+	zfc.Parent = zf
+	local zl = mkLabel(zf,z.name:gsub("Zone_",""):sub(1,4),
+		Enum.Font.GothamBold,6,
+		Color3.fromRGB(220,215,240),
+		Enum.TextXAlignment.Center)
+	zl.TextTransparency = 0.2
+	zl.ZIndex = 3
+end
+
+local wallColor = Color3.fromRGB(80,75,110)
+local function drawWall(xs,zs,ws,hs)
+	local wf = Instance.new("Frame")
+	wf.Size = UDim2.new(ws,0,hs,0)
+	wf.Position = UDim2.new(xs,0,zs,0)
+	wf.BackgroundColor3 = wallColor
+	wf.BorderSizePixel = 0
+	wf.ZIndex = 4
+	wf.Parent = MapInner
+end
+drawWall(0,0,1,0.012)
+drawWall(0,0.988,1,0.012)
+drawWall(0,0,0.012,1)
+drawWall(0.988,0,0.012,1)
+drawWall(0,0.897,1,0.008)
+
+local SelfDot = Instance.new("Frame")
+SelfDot.Size = UDim2.new(0,9,0,9)
+SelfDot.AnchorPoint = Vector2.new(0.5,0.5)
+SelfDot.BackgroundColor3 = C.red
+SelfDot.BorderSizePixel = 0
+SelfDot.ZIndex = 10
+SelfDot.Parent = MapInner
+local selfC = Instance.new("UICorner")
+selfC.CornerRadius = UDim.new(1,0)
+selfC.Parent = SelfDot
+
+local pulseRing = Instance.new("Frame")
+pulseRing.Size = UDim2.new(0,9,0,9)
+pulseRing.AnchorPoint = Vector2.new(0.5,0.5)
+pulseRing.BackgroundTransparency = 1
+pulseRing.BorderSizePixel = 0
+pulseRing.ZIndex = 9
+pulseRing.Parent = MapInner
+local prC = Instance.new("UICorner")
+prC.CornerRadius = UDim.new(1,0)
+prC.Parent = pulseRing
+local prS = Instance.new("UIStroke")
+prS.Thickness = 1.5
+prS.Color = C.red
+prS.Parent = pulseRing
+TweenService:Create(pulseRing,
+	TweenInfo.new(1.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out,-1),
+	{Size=UDim2.new(0,22,0,22)}):Play()
+TweenService:Create(prS,
+	TweenInfo.new(1.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out,-1),
+	{Transparency=1}):Play()
+
+local otherDots = {}
+local function getOrMakeDot(userId)
+	if not otherDots[userId] then
+		local d = Instance.new("Frame")
+		d.Size = UDim2.new(0,6,0,6)
+		d.AnchorPoint = Vector2.new(0.5,0.5)
+		d.BackgroundColor3 = C.white
+		d.BorderSizePixel = 0
+		d.ZIndex = 9
+		d.Visible = false
+		d.Parent = MapInner
+		local dc = Instance.new("UICorner")
+		dc.CornerRadius = UDim.new(1,0)
+		dc.Parent = d
+		otherDots[userId] = d
+	end
+	return otherDots[userId]
+end
+
+RunService.RenderStepped:Connect(function()
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local sx,sz = worldToFrac(hrp.Position.X,hrp.Position.Z)
+	SelfDot.Position   = UDim2.new(sx,0,sz,0)
+	pulseRing.Position = UDim2.new(sx,0,sz,0)
+	for _,op in ipairs(Players:GetPlayers()) do
+		if op~=player then
+			local dot = getOrMakeDot(op.UserId)
+			local oc = op.Character
+			if oc then
+				local oh = oc:FindFirstChild("HumanoidRootPart")
+				if oh then
+					local ox,oz = worldToFrac(oh.Position.X,oh.Position.Z)
+					dot.Position = UDim2.new(ox,0,oz,0)
+					dot.Visible = true
+				else dot.Visible=false end
+			else dot.Visible=false end
+		end
+	end
+	for uid,dot in pairs(otherDots) do
+		local found = false
+		for _,p in ipairs(Players:GetPlayers()) do
+			if p.UserId==uid then found=true break end
+		end
+		if not found then dot:Destroy() otherDots[uid]=nil end
+	end
+end)
+
+-- ============================================================
+-- WEIGHT BAR (vertical, right of minimap)
+-- Shows current weight / max weight
+-- ============================================================
+
+local WEIGHT_W = 52  -- wider than before
+
+local WeightBarOuter = mkFrame(Gui,"WeightBar",
+	UDim2.new(0,WEIGHT_W,0,WEIGHT_H),
+	UDim2.new(1,-(MAP_PAD+MAP_SIZE+WEIGHT_W+6),
+		1,-(BAR_BOTTOM+WEIGHT_H)),
+	Vector2.new(0,0),
+	Color3.fromRGB(22,20,34),10)
+
+-- Scale icon at top
+mkLabel(WeightBarOuter,"⚖️",
+	Enum.Font.GothamBold,18,
+	Color3.fromRGB(200,160,80),
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,4),UDim2.new(1,0,0,22))
+
+-- "WEIGHT" label
+mkLabel(WeightBarOuter,"WEIGHT",
+	Enum.Font.GothamBlack,9,
+	Color3.fromRGB(200,160,80),
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,24),UDim2.new(1,0,0,12))
+
+local weightTrack = mkFrame(WeightBarOuter,"Track",
+	UDim2.new(0,16,1,-80),
+	UDim2.new(0.5,-8,0,40),
+	nil,Color3.fromRGB(24,22,38),6,true)
+
+local weightFill = mkFrame(weightTrack,"Fill",
+	UDim2.new(1,0,0,0),
+	UDim2.new(0,0,1,0),
+	Vector2.new(0,1),
+	Color3.fromRGB(200,160,80),6,true)
+
+-- Current weight number (big, bold, readable)
+local weightDisplay = mkLabel(WeightBarOuter,"0/35",
+	Enum.Font.GothamBlack,14,
+	Color3.fromRGB(239,200,100),
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,1,-22),UDim2.new(1,0,0,20))
+weightDisplay.Name = "WeightDisplay"
+
+local function updateWeight(current,maxW)
+	local pct = math.clamp(current/(maxW>0 and maxW or 1),0,1)
+	TweenService:Create(weightFill,
+		TweenInfo.new(0.3,Enum.EasingStyle.Quad),
+		{Size=UDim2.new(1,0,pct,0)}):Play()
+
+	weightDisplay.Text = current.."/"..maxW
+
+	local overweight = pct >= 1
+	local fillCol = overweight and C.warn
+		or pct >= 0.8 and C.gold
+		or Color3.fromRGB(200,160,80)
+
+	TweenService:Create(weightFill,TweenInfo.new(0.3),
+		{BackgroundColor3=fillCol}):Play()
+	weightDisplay.TextColor3 = overweight
+		and C.warn or Color3.fromRGB(239,200,100)
+
+	if overweight then
+		TweenService:Create(WeightBarOuter,TweenInfo.new(0.15),
+			{BackgroundColor3=Color3.fromRGB(40,18,18)}):Play()
+	else
+		TweenService:Create(WeightBarOuter,TweenInfo.new(0.3),
+			{BackgroundColor3=Color3.fromRGB(22,20,34)}):Play()
+	end
+end
+
+-- ============================================================
+-- SCOREBOARD
+-- ============================================================
+local ScoreboardOverlay = Instance.new("Frame")
+ScoreboardOverlay.Name = "Scoreboard"
+ScoreboardOverlay.Size = UDim2.new(1,0,1,0)
+ScoreboardOverlay.BackgroundColor3 = Color3.fromRGB(0,0,0)
+ScoreboardOverlay.BackgroundTransparency = 0.45
+ScoreboardOverlay.BorderSizePixel = 0
+ScoreboardOverlay.Visible = false
+ScoreboardOverlay.ZIndex = 60
+ScoreboardOverlay.Parent = Gui
+
+local ScorePanel = mkFrame(ScoreboardOverlay,"Panel",
+	UDim2.new(0,720,0,520),
+	UDim2.new(0.5,-360,0.5,-260),
+	nil,Color3.fromRGB(18,16,28),20)
+ScorePanel.ZIndex = 61
+
+local sbHead = mkFrame(ScorePanel,"Head",
+	UDim2.new(1,0,0,62),UDim2.new(0,0,0,0),
+	nil,Color3.fromRGB(65,48,128),20)
+sbHead.ZIndex = 62
+local sbHFill = Instance.new("Frame")
+sbHFill.Size = UDim2.new(1,0,0,20)
+sbHFill.Position = UDim2.new(0,0,1,-20)
+sbHFill.BackgroundColor3 = Color3.fromRGB(65,48,128)
+sbHFill.BorderSizePixel = 0
+sbHFill.ZIndex = 62
+sbHFill.Parent = sbHead
+mkLabel(sbHead,"📊  Scoreboard  —  Hold Tab",
+	Enum.Font.GothamBold,20,C.white,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,0),UDim2.new(1,0,1,0)).ZIndex = 62
+
+local COLS = {
+	{label="Player",   w=0.30},
+	{label="🧼 Dealt", w=0.14},
+	{label="🍔 Dealt", w=0.14},
+	{label="🧼 Taken", w=0.14},
+	{label="🍔 Taken", w=0.14},
+	{label="Cleans",   w=0.14},
+}
+
+local headerRow = Instance.new("Frame")
+headerRow.Size = UDim2.new(1,-24,0,26)
+headerRow.Position = UDim2.new(0,12,0,68)
+headerRow.BackgroundTransparency = 1
+headerRow.ZIndex = 62
+headerRow.Parent = ScorePanel
+local cx2 = 0
+for i,col in ipairs(COLS) do
+	local hl = mkLabel(headerRow,col.label,
+		Enum.Font.GothamBold,11,C.dim,
+		i==1 and Enum.TextXAlignment.Left or Enum.TextXAlignment.Center,
+		UDim2.new(cx2,i==1 and 4 or 0,0,0),
+		UDim2.new(col.w,0,1,0))
+	hl.ZIndex = 63
+	cx2 = cx2+col.w
+end
+
+local sbDiv = Instance.new("Frame")
+sbDiv.Size = UDim2.new(1,-24,0,1)
+sbDiv.Position = UDim2.new(0,12,0,96)
+sbDiv.BackgroundColor3 = C.stroke
+sbDiv.BorderSizePixel = 0
+sbDiv.ZIndex = 62
+sbDiv.Parent = ScorePanel
+
+local sbScroll = Instance.new("ScrollingFrame")
+sbScroll.Size = UDim2.new(1,-24,1,-106)
+sbScroll.Position = UDim2.new(0,12,0,100)
+sbScroll.BackgroundTransparency = 1
+sbScroll.BorderSizePixel = 0
+sbScroll.ScrollBarThickness = 4
+sbScroll.ScrollBarImageColor3 = Color3.fromRGB(65,48,128)
+sbScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+sbScroll.CanvasSize = UDim2.new(0,0,0,0)
+sbScroll.ZIndex = 62
+sbScroll.Parent = ScorePanel
+local sbLL = Instance.new("UIListLayout")
+sbLL.SortOrder = Enum.SortOrder.LayoutOrder
+sbLL.Padding = UDim.new(0,3)
+sbLL.Parent = sbScroll
+
+local scoreData = {}
+
+local function refreshScoreboard()
+	for _,c in ipairs(sbScroll:GetChildren()) do
+		if c:IsA("Frame") then c:Destroy() end
+	end
+	table.sort(scoreData,function(a,b)
+		return (a.cleanDealt or 0)>(b.cleanDealt or 0)
+	end)
+	if #scoreData==0 then
+		mkLabel(sbScroll,
+			"Scores appear when the match begins",
+			Enum.Font.Gotham,14,C.dim,
+			Enum.TextXAlignment.Center,
+			UDim2.new(0,0,0,16),UDim2.new(1,0,0,40)).ZIndex = 63
+		return
+	end
+	for rank,data in ipairs(scoreData) do
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1,0,0,38)
+		row.BackgroundColor3 = rank==1
+			and Color3.fromRGB(50,40,15)
+			or Color3.fromRGB(24,22,36)
+		row.BorderSizePixel = 0
+		row.ZIndex = 63
+		row.Parent = sbScroll
+		local rc = Instance.new("UICorner")
+		rc.CornerRadius = UDim.new(0,6)
+		rc.Parent = row
+		local rankCol = rank==1 and C.gold
+			or rank==2 and Color3.fromRGB(185,185,195)
+			or rank==3 and Color3.fromRGB(165,105,65)
+			or C.dim
+		local vals = {
+			rank.."  "..(data.name or "Player"),
+			tostring(data.cleanDealt or 0),
+			tostring(data.fullDealt  or 0),
+			tostring(data.cleanTaken or 0),
+			tostring(data.fullTaken  or 0),
+			tostring(data.cleans     or 0),
+		}
+		local colX = 0
+		for i,val in ipairs(vals) do
+			local vl = mkLabel(row,val,
+				i==1 and Enum.Font.GothamBold or Enum.Font.Gotham,
+				i==1 and 14 or 13,
+				i==1 and rankCol or Color3.fromRGB(182,180,200),
+				i==1 and Enum.TextXAlignment.Left or Enum.TextXAlignment.Center,
+				UDim2.new(colX,i==1 and 6 or 0,0,0),
+				UDim2.new(COLS[i].w,0,1,0))
+			vl.ZIndex = 64
+			colX = colX+COLS[i].w
+		end
+	end
+end
+
+refreshScoreboard()
+
+local sbVisible = false
+UserInputService.InputBegan:Connect(function(input,processed)
+	if processed then return end
+	if input.KeyCode==Enum.KeyCode.Tab then
+		sbVisible = true
+		refreshScoreboard()
+		ScoreboardOverlay.Visible = true
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode==Enum.KeyCode.Tab then
+		sbVisible = false
+		ScoreboardOverlay.Visible = false
+	end
+end)
+
+-- ============================================================
+-- PHASE
+-- ============================================================
+local function setPhase(key)
+	local data = PHASES[key] or PHASES.WAITING
+	PhaseLabel.Text = data.label
+	PhaseLabel.TextColor3 = data.color
+	TweenService:Create(PhasePill,TweenInfo.new(0.2),
+		{BackgroundColor3=Color3.fromRGB(35,32,52)}):Play()
+	task.wait(0.4)
+	TweenService:Create(PhasePill,TweenInfo.new(0.5),
+		{BackgroundColor3=C.bg}):Play()
+	if key=="FOODFIGHT" then
+		startTimer(300)
+		ScorePill.Visible = true
+	end
+end
+
+-- ============================================================
+-- PUBLIC API
+-- ============================================================
+task.wait(0.1)
+_G.Chompers = _G.Chompers or {}
+
+_G.Chompers.SetPhase = setPhase
+
+_G.Chompers.SetPlayerCount = function(current,total)
+	local minPlayers = total
+	if current>=minPlayers then
+		PlayerLabel.Text = "👥  "..current.." / 40"
+		PlayerLabel.TextColor3 = C.green
+	else
+		PlayerLabel.Text = "👥  "..current.." / "..minPlayers
+		PlayerLabel.TextColor3 = C.dim
+	end
+end
+
+_G.Chompers.UpdateFullness = function(pct)
+	updateMeter(FFill,FPct,FWarn,FArrow,
+		C.fullness,C.warn,pct)
+end
+
+_G.Chompers.UpdateCleanliness = function(pct)
+	updateMeter(CFill,CPct,CWarn,CArrow,
+		C.dirty,Color3.fromRGB(155,115,35),pct)
+end
+
+_G.Chompers.SetWeight = function(current,maxW)
+	updateWeight(current,maxW)
+end
+
+_G.Chompers.AddScore = function(hits)
+	for _,d in ipairs(scoreData) do
+		if d.userId==player.UserId then
+			d.cleanDealt = (d.cleanDealt or 0)+(hits or 1)
+			local t = d.cleanDealt
+			ScoreLabel.Text = t.." hit"..(t==1 and "" or "s")
+			return
+		end
+	end
+	table.insert(scoreData,{
+		userId=player.UserId,
+		name=player.Name,
+		cleanDealt=hits or 1,
+	})
+	ScoreLabel.Text = (hits or 1).." hit"
+end
+
+_G.Chompers.UpdateScoreboard = function(data)
+	scoreData = data
+end
+
+_G.Chompers.ToggleScoreboard = function()
+	sbVisible = not sbVisible
+	if sbVisible then refreshScoreboard() end
+	ScoreboardOverlay.Visible = sbVisible
+end
+
+-- ============================================================
+-- REMOTES
+-- ============================================================
+Remotes.UpdateLobbyState.OnClientEvent:Connect(function(state)
+	if state.Phase=="WAITING" then setPhase("WAITING")
+	elseif state.Phase=="COUNTDOWN" then setPhase("COUNTDOWN") end
+	_G.Chompers.SetPlayerCount(state.PlayerCount,state.MinPlayers)
+end)
+
+Remotes.PhaseChanged.OnClientEvent:Connect(function(phase)
+	local map = {
+		GATHERING="SHOPPING",COOKING="COOKING",
+		FOODFIGHT="FOODFIGHT",ACCOLADES="CLEANUP",
+	}
+	if map[phase] then setPhase(map[phase]) end
+end)
+
+print("ChompersMeters loaded!")
