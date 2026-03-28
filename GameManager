@@ -1,0 +1,397 @@
+-- ============================================================
+-- GameManager — Script
+-- Location: ServerScriptService > GameManager
+--
+-- Phase orchestrator. Owns the match clock and fires phase
+-- transitions that every other system listens to.
+-- All phase-dependent behaviour in other scripts should
+-- listen to the PhaseChanged BindableEvent, not roll their own.
+--
+-- REQUIRES: PlayerState (ModuleScript in ServerScriptService)
+-- FIRES:    PhaseChanged (BindableEvent — server-to-server)
+--           PhaseChanged (RemoteEvent — server-to-client)
+--           TransitionToStore (RemoteEvent)
+--           UpdateLobbyState (RemoteEvent)
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
+local PlayerState   = require(ServerScriptService:WaitForChild("PlayerState"))
+local C             = ChompersData.Constants
+
+local Remotes       = ReplicatedStorage:WaitForChild("ChompersRemotes")
+local function R(name) return Remotes:WaitForChild(name) end
+
+-- ── Remotes ─────────────────────────────────────────────────
+local PhaseChangedRemote    = R("PhaseChanged")
+local TransitionToStore     = R("TransitionToStore")
+local UpdateLobbyState      = R("UpdateLobbyState")
+
+-- ── BindableEvent so server systems can listen to phase changes
+-- Create it if it doesn't exist (lives in ServerScriptService)
+local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
+if not PhaseChangedEvent then
+	PhaseChangedEvent = Instance.new("BindableEvent")
+	PhaseChangedEvent.Name = "PhaseChangedEvent"
+	PhaseChangedEvent.Parent = ServerScriptService
+end
+
+-- ============================================================
+-- PHASE CONSTANTS
+-- ============================================================
+
+local PHASE = {
+	NONE        = "None",
+	PRELOBBY    = "Prelobby",
+	GATHERING   = "Gathering",
+	COOKING     = "Cooking",
+	FOODFIGHT   = "FoodFight",
+	ENDGAME     = "EndGame",
+	ACCOLADES   = "Accolades",
+}
+
+-- ============================================================
+-- STATE
+-- ============================================================
+
+local currentPhase      = PHASE.NONE
+local phaseStartTime    = 0
+local phaseTimer        = nil   -- active task thread
+local matchNumber       = 0
+
+-- Track which players have readied up in prelobby
+local readyPlayers      = {}   -- set: player → true
+
+-- ============================================================
+-- INTERNAL HELPERS
+-- ============================================================
+
+local function cancelTimer()
+	if phaseTimer then
+		task.cancel(phaseTimer)
+		phaseTimer = nil
+	end
+end
+
+-- Fire phase change to all listeners (server BindableEvent + client RemoteEvent)
+local function setPhase(newPhase)
+	local prev = currentPhase
+	currentPhase = newPhase
+	phaseStartTime = tick()
+	print(string.format("[GameManager] Phase: %s → %s", prev, newPhase))
+
+	-- Notify all clients
+	PhaseChangedRemote:FireAllClients(newPhase)
+
+	-- Notify all server systems
+	PhaseChangedEvent:Fire(newPhase)
+end
+
+-- Count active (non-eliminated) players
+local function getActivePlayers()
+	local list = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		local s = PlayerState.Get(player)
+		if s and not s.isEliminated then
+			table.insert(list, player)
+		end
+	end
+	return list
+end
+
+-- Count ready players in prelobby
+local function getReadyCount()
+	local count = 0
+	for player, _ in pairs(readyPlayers) do
+		if player and player.Parent then  -- still in game
+			count = count + 1
+		end
+	end
+	return count
+end
+
+-- Broadcast current lobby state (player count, ready count, phase) to all clients
+local function broadcastLobbyState()
+	local total = #Players:GetPlayers()
+	local ready = getReadyCount()
+	UpdateLobbyState:FireAllClients({
+		phase      = currentPhase,
+		totalCount = total,
+		readyCount = ready,
+		minToStart = C.Phase.PreglobbyMinPlayers,
+	})
+end
+
+-- Check if Food Fight should end early (one player or one allied team remains)
+local function checkFoodFightEnd()
+	if currentPhase ~= PHASE.FOODFIGHT then return false end
+
+	local active = getActivePlayers()
+
+	if #active == 0 then
+		-- Edge case: everyone eliminated simultaneously
+		return true, {}
+	end
+
+	if #active == 1 then
+		return true, active
+	end
+
+	-- Check if all remaining players are in the same alliance
+	-- They are if every pair is mutually allied
+	local allAllied = true
+	for i = 1, #active do
+		for j = i + 1, #active do
+			if not PlayerState.IsAllied(active[i], active[j]) then
+				allAllied = false
+				break
+			end
+		end
+		if not allAllied then break end
+	end
+
+	if allAllied then
+		return true, active
+	end
+
+	return false
+end
+
+-- ============================================================
+-- PHASE LOGIC
+-- ============================================================
+
+-- ── PRELOBBY ─────────────────────────────────────────────────
+local function startPrelobby()
+	cancelTimer()
+	readyPlayers = {}
+	setPhase(PHASE.PRELOBBY)
+	broadcastLobbyState()
+
+	-- Maximum wait: 90s
+	-- Will also start early if 8+ ready
+	phaseTimer = task.delay(C.Phase.PreglobbyMaxWait, function()
+		if currentPhase == PHASE.PRELOBBY then
+			if #Players:GetPlayers() >= C.Phase.PreglobbyMinPlayers then
+				startGathering()
+			else
+				-- Not enough players — reset and wait
+				print("[GameManager] Prelobby timed out — not enough players. Resetting.")
+				startPrelobby()
+			end
+		end
+	end)
+end
+
+-- ── GATHERING ────────────────────────────────────────────────
+local function startGathering()
+	cancelTimer()
+	matchNumber = matchNumber + 1
+	print(string.format("[GameManager] Starting match #%d", matchNumber))
+
+	-- Reset all player states for new match
+	for _, player in ipairs(Players:GetPlayers()) do
+		PlayerState.Init(player)
+	end
+
+	setPhase(PHASE.GATHERING)
+
+	-- TransitionToStore tells clients to move their cameras into the store
+	TransitionToStore:FireAllClients()
+
+	phaseTimer = task.delay(C.Phase.Gathering, function()
+		if currentPhase == PHASE.GATHERING then
+			startCooking()
+		end
+	end)
+end
+
+-- ── COOKING ──────────────────────────────────────────────────
+local function startCooking()
+	cancelTimer()
+	setPhase(PHASE.COOKING)
+
+	phaseTimer = task.delay(C.Phase.Cooking, function()
+		if currentPhase == PHASE.COOKING then
+			-- 10s grace for active cooks to finish
+			print("[GameManager] Cooking phase ending — 10s grace for active cooks")
+			setPhase(PHASE.COOKING)    -- re-fire so UI shows grace countdown
+			PhaseChangedRemote:FireAllClients("CookingGrace")
+			PhaseChangedEvent:Fire("CookingGrace")
+			task.wait(C.Phase.CookingGrace)
+			startFoodFight()
+		end
+	end)
+end
+
+-- ── FOOD FIGHT ───────────────────────────────────────────────
+local function startFoodFight()
+	cancelTimer()
+	setPhase(PHASE.FOODFIGHT)
+
+	-- Poll for early-end condition every 2 seconds
+	-- Hard cap: 6 minutes
+	local elapsed = 0
+	local pollInterval = 2
+
+	phaseTimer = task.spawn(function()
+		while currentPhase == PHASE.FOODFIGHT do
+			task.wait(pollInterval)
+			elapsed = elapsed + pollInterval
+
+			-- Check early end
+			local shouldEnd, winners = checkFoodFightEnd()
+			if shouldEnd then
+				print(string.format("[GameManager] Food Fight ended early at %ds — %d survivor(s)",
+					elapsed, #winners))
+				startEndGame(winners)
+				return
+			end
+
+			-- Hard cap
+			if elapsed >= C.Phase.FoodFight then
+				print("[GameManager] Food Fight hard cap reached")
+				startEndGame(getActivePlayers())
+				return
+			end
+		end
+	end)
+end
+
+-- ── END GAME ─────────────────────────────────────────────────
+local function startEndGame(survivors)
+	cancelTimer()
+	setPhase(PHASE.ENDGAME)
+
+	-- Determine winner(s)
+	local winnerNames = {}
+	for _, p in ipairs(survivors) do
+		table.insert(winnerNames, p.Name)
+	end
+	print(string.format("[GameManager] Match over — survivors: %s",
+		table.concat(winnerNames, ", ")))
+
+	-- Broadcast end-game to clients (shows Together/Fight decision for allies)
+	PhaseChangedRemote:FireAllClients(PHASE.ENDGAME, survivors)
+	PhaseChangedEvent:Fire(PHASE.ENDGAME, survivors)
+
+	-- End-game alliance decision window (30s) is handled by AllianceSystem
+	-- After 45s accolades → new prelobby
+	task.delay(C.Phase.Accolades, function()
+		startPrelobby()
+	end)
+end
+
+-- ============================================================
+-- READY SYSTEM (Prelobby)
+-- Players fire RequestLobbyData to signal ready
+-- We reuse UpdateLobbyState remote for ready acknowledgement
+-- ============================================================
+
+-- A separate ready toggle remote — clients fire this when they press Ready
+local ReadyUpRemote = Remotes:FindFirstChild("ReadyUp")
+if not ReadyUpRemote then
+	ReadyUpRemote = Instance.new("RemoteEvent")
+	ReadyUpRemote.Name = "ReadyUp"
+	ReadyUpRemote.Parent = Remotes
+end
+
+ReadyUpRemote.OnServerEvent:Connect(function(player)
+	if currentPhase ~= PHASE.PRELOBBY then return end
+
+	readyPlayers[player] = true
+	PlayerState.SetReady(player, true)
+	broadcastLobbyState()
+
+	print(string.format("[GameManager] %s is ready (%d/%d)",
+		player.Name,
+		getReadyCount(),
+		#Players:GetPlayers()))
+
+	-- Start if minimum met and all current players ready
+	local readyCount = getReadyCount()
+	local totalCount = #Players:GetPlayers()
+	if readyCount >= C.Phase.PreglobbyMinPlayers and readyCount >= totalCount then
+		print("[GameManager] All players ready — starting early")
+		cancelTimer()
+		startGathering()
+	end
+end)
+
+-- ============================================================
+-- ELIMINATION CHECK
+-- Called by BathroomSystem/CombatSystem after eliminating a player
+-- ============================================================
+
+function GameManager_OnPlayerEliminated(player)
+	if currentPhase ~= PHASE.FOODFIGHT then return end
+	-- Reuse the poll — it checks every 2s
+	-- But also check immediately on each elimination
+	local shouldEnd, winners = checkFoodFightEnd()
+	if shouldEnd then
+		startEndGame(winners)
+	end
+end
+
+-- Expose for other scripts to call
+_G.GameManager = {
+	GetCurrentPhase  = function() return currentPhase end,
+	GetPhaseElapsed  = function() return tick() - phaseStartTime end,
+	OnPlayerEliminated = GameManager_OnPlayerEliminated,
+	Phases           = PHASE,
+}
+
+-- ============================================================
+-- PLAYER LIFECYCLE
+-- ============================================================
+
+Players.PlayerAdded:Connect(function(player)
+	if currentPhase == PHASE.PRELOBBY then
+		broadcastLobbyState()
+	end
+
+	player.CharacterAdded:Connect(function()
+		-- Spawn players to prelobby spawn points
+		if currentPhase == PHASE.PRELOBBY then
+			-- Teleport to a random prelobby spawn
+			local spawns = workspace:FindFirstChild("Map")
+				and workspace.Map:FindFirstChild("IP")
+				and workspace.Map.IP:FindFirstChild("Prelobby")
+
+			if spawns then
+				local spawnList = spawns:GetChildren()
+				if #spawnList > 0 then
+					local pick = spawnList[math.random(1, #spawnList)]
+					local hrp = player.Character:WaitForChild("HumanoidRootPart", 3)
+					if hrp then
+						hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
+					end
+				end
+			end
+		end
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	readyPlayers[player] = nil
+	if currentPhase == PHASE.PRELOBBY then
+		broadcastLobbyState()
+	elseif currentPhase == PHASE.FOODFIGHT then
+		-- Treat disconnect as elimination
+		local shouldEnd, winners = checkFoodFightEnd()
+		if shouldEnd then
+			startEndGame(winners)
+		end
+	end
+end)
+
+-- ============================================================
+-- BOOT — start the first prelobby on server load
+-- ============================================================
+
+task.wait(2)   -- brief wait for other scripts to initialise
+startPrelobby()
+print("[GameManager] Boot complete — Prelobby started")
