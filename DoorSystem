@@ -30,7 +30,12 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local RunService          = game:GetService("RunService")
 
 -- ── Phase event ─────────────────────────────────────────────
-local PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
+local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
+if not PhaseChangedEvent then
+	PhaseChangedEvent = Instance.new("BindableEvent")
+	PhaseChangedEvent.Name   = "PhaseChangedEvent"
+	PhaseChangedEvent.Parent = ServerScriptService
+end
 
 -- ── Config ──────────────────────────────────────────────────
 local APPROACH_RANGE    = 14   -- studs — proximity trigger distance
@@ -110,22 +115,45 @@ local function getSlideVector(door)
 	end
 end
 
+-- Gathering doors (OpenOnGathering=true): fully disappear — transparent + no collision
+-- Proximity doors (OpenOnApproach=true): swing/slide with tween
+local function disappearDoor(door, state)
+	if state.isOpen then return end
+	door.Transparency = 1
+	door.CanCollide   = false
+	state.isOpen      = true
+	door:SetAttribute("IsOpen", true)
+end
+
+local function reappearDoor(door, state)
+	if not state.isOpen then return end
+	if state.lockedOpen then return end
+	door.Transparency = 0
+	door.CanCollide   = true
+	state.isOpen      = false
+	door:SetAttribute("IsOpen", false)
+end
+
 local function tweenDoorOpen(door, state)
 	if state.isOpen then return end
+
+	-- Gathering/fire-exit/butcher doors just disappear
+	if door:GetAttribute("OpenOnGathering") or door:GetAttribute("IsFireExit")
+	or door:GetAttribute("IsButcherDoor") then
+		disappearDoor(door, state)
+		return
+	end
 
 	local doorType = door:GetAttribute("DoorType") or "AutoSliding"
 
 	if doorType == "AutoSliding" then
 		local slideVec = getSlideVector(door)
 		local targetCF = state.origCFrame + slideVec
-		local tween = TweenService:Create(door, tweenInfo_slide, { CFrame = targetCF })
-		tween:Play()
+		TweenService:Create(door, tweenInfo_slide, { CFrame = targetCF }):Play()
 
 	elseif doorType == "Hinged" or doorType == "ButcherSwing" then
-		-- Swing open around Y axis
 		local targetCF = state.origCFrame * CFrame.Angles(0, math.rad(SWING_ANGLE), 0)
-		local tween = TweenService:Create(door, tweenInfo_swing, { CFrame = targetCF })
-		tween:Play()
+		TweenService:Create(door, tweenInfo_swing, { CFrame = targetCF }):Play()
 	end
 
 	state.isOpen = true
@@ -134,10 +162,15 @@ end
 
 local function tweenDoorClose(door, state)
 	if not state.isOpen then return end
-	if state.lockedOpen then return end   -- StaysOpen doors never close
+	if state.lockedOpen then return end
 
-	local tween = TweenService:Create(door, tweenInfo_slide, { CFrame = state.origCFrame })
-	tween:Play()
+	-- If it disappeared, reappear it
+	if door.Transparency == 1 then
+		reappearDoor(door, state)
+		return
+	end
+
+	TweenService:Create(door, tweenInfo_slide, { CFrame = state.origCFrame }):Play()
 	state.isOpen = false
 	door:SetAttribute("IsOpen", false)
 end
@@ -170,17 +203,21 @@ local function openGatheringDoors()
 	if not DoorsFolder then return end
 	for door, state in pairs(doorStates) do
 		if door:GetAttribute("OpenOnGathering") == true
-			or door:GetAttribute("IsFireExit") == true then
+		or door:GetAttribute("IsFireExit") == true then
 			tweenDoorOpen(door, state)
 		end
 	end
 end
 
--- Close all proximity doors (called at match end / prelobby reset)
+-- Close/reappear all doors (called at prelobby reset)
 local function closeAllDoors()
 	for door, state in pairs(doorStates) do
-		state.lockedOpen = false   -- allow close
-		tweenDoorClose(door, state)
+		state.lockedOpen = false
+		if door.Transparency == 1 then
+			reappearDoor(door, state)
+		else
+			tweenDoorClose(door, state)
+		end
 		state.lockedOpen = door:GetAttribute("StaysOpen") == true
 	end
 end
@@ -271,7 +308,7 @@ local function runProximityLoop()
 				-- ButcherSwing: swing toward player
 				local doorType = door:GetAttribute("DoorType") or "Hinged"
 				if doorType == "ButcherSwing"
-					and door:GetAttribute("TwoWaySwing") == true then
+				and door:GetAttribute("TwoWaySwing") == true then
 					local hrp = nearestPlayer.Character
 						and nearestPlayer.Character:FindFirstChild("HumanoidRootPart")
 					if hrp then
@@ -295,25 +332,21 @@ end
 -- PHASE LISTENER
 -- ============================================================
 
-if PhaseChangedEvent then
-	PhaseChangedEvent.Event:Connect(function(newPhase)
-		currentPhase = newPhase
+PhaseChangedEvent.Event:Connect(function(newPhase)
+	currentPhase = newPhase
 
-		if newPhase == "Gathering"
-			or newPhase == "Cooking"
-			or newPhase == "FoodFight"
-			or newPhase == "CookingGrace" then
-			openGatheringDoors()
+	if newPhase == "Gathering"
+	or newPhase == "Cooking"
+	or newPhase == "FoodFight"
+	or newPhase == "CookingGrace" then
+		openGatheringDoors()
 
-		elseif newPhase == "Prelobby" then
-			-- New match starting — reset all doors
-			task.wait(1)   -- brief pause before resetting
-			closeAllDoors()
-		end
-	end)
-else
-	warn("[DoorSystem] PhaseChangedEvent not found — doors won't respond to phases")
-end
+	elseif newPhase == "Prelobby" then
+		-- New match starting — reset all doors
+		task.wait(1)
+		closeAllDoors()
+	end
+end)
 
 -- ============================================================
 -- BOOT
