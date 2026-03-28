@@ -14,6 +14,24 @@ local RunService        = game:GetService("RunService")
 local player  = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 15)
 
+-- Initialise _G.Chompers immediately with stubs so other scripts
+-- (PrelobbyGuiBuilder, CookbookBuilder) never hit nil when they call early
+_G.Chompers = _G.Chompers or {}
+_G.Chompers.SetSlots         = _G.Chompers.SetSlots         or function() end
+_G.Chompers.SetSlotItem      = _G.Chompers.SetSlotItem      or function() end
+_G.Chompers.SetMoney         = _G.Chompers.SetMoney         or function() end
+_G.Chompers.SetNapkins       = _G.Chompers.SetNapkins       or function() end
+_G.Chompers.SetBreaks        = _G.Chompers.SetBreaks        or function() end
+_G.Chompers.HideDot          = _G.Chompers.HideDot          or function() end
+_G.Chompers.SetContainerType = _G.Chompers.SetContainerType or function() end
+_G.Chompers.SetItemCount     = _G.Chompers.SetItemCount     or function() end
+_G.Chompers.SetWeight        = _G.Chompers.SetWeight        or function() end
+_G.Chompers.SetSelectedSlot  = _G.Chompers.SetSelectedSlot  or function() end
+_G.Chompers.GetSlotCount     = _G.Chompers.GetSlotCount     or function() return 10 end
+_G.Chompers.GetSelectedSlot  = _G.Chompers.GetSelectedSlot  or function() return 1 end
+_G.Chompers.GetInventoryOpen = _G.Chompers.GetInventoryOpen or function() return false end
+_G.Chompers.AddBuff          = _G.Chompers.AddBuff          or function() end
+
 -- ── Layout constants ─────────────────────────────────────────
 local BAR_BOTTOM = 16
 local BAR_H      = 52
@@ -504,9 +522,8 @@ end)
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.KeyCode == Enum.KeyCode.G then
-		StoreGuideBtn:GetPropertyChangedSignal("Text") -- no-op to avoid duplicate G handling
 		local invEvt = player.PlayerGui:FindFirstChild("InventoryToggle")
-		if invEvt and _G.Chompers and _G.Chompers.GetInventoryOpen
+		if invEvt and _G.Chompers.GetInventoryOpen
 		and _G.Chompers.GetInventoryOpen() then
 			inventoryOpen = false
 			TweenService:Create(ContainerIcon, TweenInfo.new(0.1),
@@ -514,7 +531,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			ciStroke.Color = C.stroke
 			invEvt:Fire(false)
 		end
-		if _G.Chompers and _G.Chompers.OpenStoreGuide then
+		if _G.Chompers.OpenStoreGuide then
 			_G.Chompers.OpenStoreGuide()
 		end
 	end
