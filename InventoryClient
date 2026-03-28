@@ -1,10 +1,11 @@
 -- InventoryClient
 -- Receives inventory updates from server and updates HUD
+-- Patched: item.wt (PlayerState field name) not item.weight
 
-local Players          = game:GetService("Players")
-local ReplicatedStorage= game:GetService("ReplicatedStorage")
-local TweenService     = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
 
 local player  = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
@@ -16,7 +17,7 @@ local CheckoutCompleteRemote = Remotes:WaitForChild("CheckoutComplete")
 local CheckoutStartRemote    = Remotes:WaitForChild("CheckoutStart")
 local DropItemRemote         = Remotes:WaitForChild("DropItem")
 
--- Wait for _G.Chompers to exist
+-- Wait for _G.Chompers to exist (set by ChompersBottomBar)
 local waited = 0
 while not _G.Chompers and waited < 8 do
 	task.wait(0.1)
@@ -37,13 +38,14 @@ UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
 	end
 
 	-- Fill slots with inventory items
+	-- NOTE: PlayerState stores weight as item.wt (not item.weight)
 	for i, item in ipairs(inventory) do
 		_G.Chompers.SetSlotItem(i, {
 			emoji  = item.emoji,
 			name   = item.name,
 			rarity = item.rarity,
 			paid   = item.paid,
-			weight = item.weight,
+			weight = item.wt,   -- ← was item.weight, PlayerState uses item.wt
 		})
 	end
 end)
@@ -71,82 +73,70 @@ end)
 -- ============================================================
 local playerGui = player:WaitForChild("PlayerGui")
 
--- Build checkout progress bar overlay
 local checkoutGui = Instance.new("ScreenGui")
-checkoutGui.Name = "CheckoutProgressGui"
-checkoutGui.ResetOnSpawn = false
-checkoutGui.DisplayOrder = 15
-checkoutGui.IgnoreGuiInset = true
-checkoutGui.Enabled = false
-checkoutGui.Parent = playerGui
+checkoutGui.Name            = "CheckoutProgressGui"
+checkoutGui.ResetOnSpawn    = false
+checkoutGui.DisplayOrder    = 15
+checkoutGui.IgnoreGuiInset  = true
+checkoutGui.Enabled         = false
+checkoutGui.Parent          = playerGui
 
 local checkoutFrame = Instance.new("Frame")
-checkoutFrame.Size = UDim2.new(0,400,0,80)
-checkoutFrame.AnchorPoint = Vector2.new(0.5,1)
-checkoutFrame.Position = UDim2.new(0.5,0,1,-100)
-checkoutFrame.BackgroundColor3 = Color3.fromRGB(20,18,32)
+checkoutFrame.Size            = UDim2.new(0, 400, 0, 80)
+checkoutFrame.AnchorPoint     = Vector2.new(0.5, 1)
+checkoutFrame.Position        = UDim2.new(0.5, 0, 1, -100)
+checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
 checkoutFrame.BorderSizePixel = 0
-checkoutFrame.Parent = checkoutGui
-local cfC = Instance.new("UICorner")
-cfC.CornerRadius = UDim.new(0,12)
-cfC.Parent = checkoutFrame
-local cfS = Instance.new("UIStroke")
+checkoutFrame.Parent          = checkoutGui
+Instance.new("UICorner", checkoutFrame).CornerRadius = UDim.new(0, 12)
+local cfS = Instance.new("UIStroke", checkoutFrame)
 cfS.Thickness = 2
-cfS.Color = Color3.fromRGB(75,205,60)
-cfS.Parent = checkoutFrame
+cfS.Color     = Color3.fromRGB(75, 205, 60)
 
-local checkoutTitle = Instance.new("TextLabel")
-checkoutTitle.Size = UDim2.new(1,0,0,28)
-checkoutTitle.Position = UDim2.new(0,0,0,6)
+local checkoutTitle = Instance.new("TextLabel", checkoutFrame)
+checkoutTitle.Size                 = UDim2.new(1, 0, 0, 28)
+checkoutTitle.Position             = UDim2.new(0, 0, 0, 6)
 checkoutTitle.BackgroundTransparency = 1
-checkoutTitle.Text = "💵  Checking out..."
-checkoutTitle.Font = Enum.Font.GothamBold
-checkoutTitle.TextSize = 18
-checkoutTitle.TextColor3 = Color3.fromRGB(75,205,60)
-checkoutTitle.TextXAlignment = Enum.TextXAlignment.Center
-checkoutTitle.Parent = checkoutFrame
+checkoutTitle.Text                 = "💵  Checking out..."
+checkoutTitle.Font                 = Enum.Font.GothamBold
+checkoutTitle.TextSize             = 18
+checkoutTitle.TextColor3           = Color3.fromRGB(75, 205, 60)
+checkoutTitle.TextXAlignment       = Enum.TextXAlignment.Center
 
-local checkoutCostLabel = Instance.new("TextLabel")
-checkoutCostLabel.Size = UDim2.new(1,0,0,18)
-checkoutCostLabel.Position = UDim2.new(0,0,0,32)
+local checkoutCostLabel = Instance.new("TextLabel", checkoutFrame)
+checkoutCostLabel.Size                 = UDim2.new(1, 0, 0, 18)
+checkoutCostLabel.Position             = UDim2.new(0, 0, 0, 32)
 checkoutCostLabel.BackgroundTransparency = 1
-checkoutCostLabel.Text = ""
-checkoutCostLabel.Font = Enum.Font.Gotham
-checkoutCostLabel.TextSize = 14
-checkoutCostLabel.TextColor3 = Color3.fromRGB(175,172,198)
-checkoutCostLabel.TextXAlignment = Enum.TextXAlignment.Center
-checkoutCostLabel.Parent = checkoutFrame
+checkoutCostLabel.Text                 = ""
+checkoutCostLabel.Font                 = Enum.Font.Gotham
+checkoutCostLabel.TextSize             = 14
+checkoutCostLabel.TextColor3           = Color3.fromRGB(175, 172, 198)
+checkoutCostLabel.TextXAlignment       = Enum.TextXAlignment.Center
 
--- Progress bar track
-local barTrack = Instance.new("Frame")
-barTrack.Size = UDim2.new(1,-24,0,10)
-barTrack.Position = UDim2.new(0,12,1,-18)
-barTrack.BackgroundColor3 = Color3.fromRGB(30,28,44)
-barTrack.BorderSizePixel = 0
-barTrack.Parent = checkoutFrame
-local btC = Instance.new("UICorner")
-btC.CornerRadius = UDim.new(0,5)
-btC.Parent = barTrack
+local barTrack = Instance.new("Frame", checkoutFrame)
+barTrack.Size             = UDim2.new(1, -24, 0, 10)
+barTrack.Position         = UDim2.new(0, 12, 1, -18)
+barTrack.BackgroundColor3 = Color3.fromRGB(30, 28, 44)
+barTrack.BorderSizePixel  = 0
+Instance.new("UICorner", barTrack).CornerRadius = UDim.new(0, 5)
 
-local barFill = Instance.new("Frame")
-barFill.Size = UDim2.new(0,0,1,0)
-barFill.BackgroundColor3 = Color3.fromRGB(75,205,60)
-barFill.BorderSizePixel = 0
-barFill.Parent = barTrack
-local bfC = Instance.new("UICorner")
-bfC.CornerRadius = UDim.new(0,5)
-bfC.Parent = barFill
+local barFill = Instance.new("Frame", barTrack)
+barFill.Size             = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(75, 205, 60)
+barFill.BorderSizePixel  = 0
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(0, 5)
 
 local checkoutTween = nil
 
 CheckoutStartRemote.OnClientEvent:Connect(function(holdTime, cost)
-	checkoutGui.Enabled = true
-	checkoutCostLabel.Text = "Total due: $"..tostring(cost)
-	barFill.Size = UDim2.new(0,0,1,0)
+	checkoutGui.Enabled         = true
+	checkoutCostLabel.Text      = "Total due: $" .. tostring(cost)
+	barFill.Size                = UDim2.new(0, 0, 1, 0)
 	if checkoutTween then checkoutTween:Cancel() end
-	checkoutTween = TweenService:Create(barFill,
+	checkoutTween = TweenService:Create(
+		barFill,
 		TweenInfo.new(holdTime, Enum.EasingStyle.Linear),
-		{Size=UDim2.new(1,0,1,0)})
+		{ Size = UDim2.new(1, 0, 1, 0) })
 	checkoutTween:Play()
 end)
 
@@ -158,27 +148,25 @@ CheckoutCompleteRemote.OnClientEvent:Connect(function(success, newMoney, cost)
 	checkoutGui.Enabled = false
 
 	if success then
-		-- Flash green confirmation
-		checkoutFrame.BackgroundColor3 = Color3.fromRGB(18,45,20)
-		checkoutGui.Enabled = true
-		checkoutTitle.Text = "✓  Paid $"..cost.."!"
-		checkoutTitle.TextColor3 = Color3.fromRGB(75,205,60)
+		checkoutFrame.BackgroundColor3 = Color3.fromRGB(18, 45, 20)
+		checkoutGui.Enabled            = true
+		checkoutTitle.Text             = "✓  Paid $" .. cost .. "!"
+		checkoutTitle.TextColor3       = Color3.fromRGB(75, 205, 60)
 		task.wait(1.2)
-		checkoutGui.Enabled = false
-		checkoutFrame.BackgroundColor3 = Color3.fromRGB(20,18,32)
-		checkoutTitle.Text = "💵  Checking out..."
-		checkoutTitle.TextColor3 = Color3.fromRGB(75,205,60)
+		checkoutGui.Enabled            = false
+		checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+		checkoutTitle.Text             = "💵  Checking out..."
+		checkoutTitle.TextColor3       = Color3.fromRGB(75, 205, 60)
 	else
-		-- Flash red — can't afford
-		checkoutFrame.BackgroundColor3 = Color3.fromRGB(45,15,15)
-		checkoutGui.Enabled = true
-		checkoutTitle.Text = "✗  Not enough money!"
-		checkoutTitle.TextColor3 = Color3.fromRGB(220,60,60)
+		checkoutFrame.BackgroundColor3 = Color3.fromRGB(45, 15, 15)
+		checkoutGui.Enabled            = true
+		checkoutTitle.Text             = "✗  Not enough money!"
+		checkoutTitle.TextColor3       = Color3.fromRGB(220, 60, 60)
 		task.wait(1.5)
-		checkoutGui.Enabled = false
-		checkoutFrame.BackgroundColor3 = Color3.fromRGB(20,18,32)
-		checkoutTitle.Text = "💵  Checking out..."
-		checkoutTitle.TextColor3 = Color3.fromRGB(75,205,60)
+		checkoutGui.Enabled            = false
+		checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+		checkoutTitle.Text             = "💵  Checking out..."
+		checkoutTitle.TextColor3       = Color3.fromRGB(75, 205, 60)
 	end
 end)
 
@@ -189,16 +177,17 @@ local selectedSlot = 1
 
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
+
 	if input.KeyCode == Enum.KeyCode.Q then
 		DropItemRemote:FireServer(selectedSlot)
 	end
-	-- Number keys 1-12 select hotbar slot
+
 	local numKeys = {
-		[Enum.KeyCode.One]=1,[Enum.KeyCode.Two]=2,
-		[Enum.KeyCode.Three]=3,[Enum.KeyCode.Four]=4,
-		[Enum.KeyCode.Five]=5,[Enum.KeyCode.Six]=6,
-		[Enum.KeyCode.Seven]=7,[Enum.KeyCode.Eight]=8,
-		[Enum.KeyCode.Nine]=9,[Enum.KeyCode.Zero]=10,
+		[Enum.KeyCode.One]   = 1,  [Enum.KeyCode.Two]   = 2,
+		[Enum.KeyCode.Three] = 3,  [Enum.KeyCode.Four]  = 4,
+		[Enum.KeyCode.Five]  = 5,  [Enum.KeyCode.Six]   = 6,
+		[Enum.KeyCode.Seven] = 7,  [Enum.KeyCode.Eight] = 8,
+		[Enum.KeyCode.Nine]  = 9,  [Enum.KeyCode.Zero]  = 10,
 	}
 	if numKeys[input.KeyCode] then
 		selectedSlot = numKeys[input.KeyCode]
