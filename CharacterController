@@ -1,51 +1,219 @@
-  23:02:23.209  PrelobbyManager loaded — waiting for players...  -  Server - PrelobbyManager:324
-  23:02:23.211  [DoorSystem] Registered 17 door parts  -  Server - DoorSystem:337
-  23:02:23.211  [DoorSystem] Boot complete  -  Server - DoorSystem:342
-  23:02:23.345  ChompersBottomBar loaded!  -  Client - ChompersBottomBar:617
-  23:02:23.346  [{"suggestedWeight":5,"volume":1052839872,"name":"Terrain","size":{"y":252,"x":2044,"z":2044}}]  -  Client - PrelobbyClient:42
-  23:02:23.776  ChompersMeters loaded!  -  Client - ChompersMeters:782
-  23:02:24.190  StoreGuide loaded!  -  Client - PrelobbyGuiBuilder:1525
-  23:02:24.240  CookbookBuilder loaded!  -  Client - CookbookBuilder:2221
-  23:02:24.362  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
-  23:02:24.362  Stack Begin  -  Studio
-  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
-  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
-  23:02:24.362  Stack End  -  Studio
-  23:02:24.362  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
-  23:02:24.362  Stack Begin  -  Studio
-  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
-  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
-  23:02:24.362  Stack End  -  Studio
-  23:02:24.617  Spawned WubTumArchNemesis at prelobby point 23  -  Server - PrelobbyManager:112
-  23:02:25.216  [GameManager] Phase: None → Prelobby  -  Server - GameManager:84
-  23:02:25.217  [GameManager] Boot complete — Prelobby started  -  Server - GameManager:397
-  23:02:25.250  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
-  23:02:25.250  Stack Begin  -  Studio
-  23:02:25.250  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
-  23:02:25.250  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
-  23:02:25.250  Stack End  -  Studio
-  23:02:26.850  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
-  23:02:26.850  Stack Begin  -  Studio
-  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
-  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
-  23:02:26.850  Stack End  -  Studio
-  23:02:26.850  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
-  23:02:26.850  Stack Begin  -  Studio
-  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
-  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
-  23:02:26.850  Stack End  -  Studio
-  23:02:28.227  IngredientSpawner: part not found: BinRow1_Cake_A in Props/Props_Bakery  -  Server - IngredientSpawner:500
-  23:02:28.229  IngredientSpawner: part not found: MidShelf_Front in Props/Props_Bakery  -  Server - IngredientSpawner:500
-  23:02:28.229  IngredientSpawner: part not found: MidShelf_Back in Props/Props_Bakery  -  Server - IngredientSpawner:500
-  23:02:28.229  IngredientSpawner: part not found: WallShelf_A in Props/Props_Bakery  -  Server - IngredientSpawner:500
-  23:02:28.229  IngredientSpawner: part not found: WallShelf_B in Props/Props_Bakery  -  Server - IngredientSpawner:500
-  23:02:28.229   ▶ IngredientSpawner: folder not found: Shelves (x6)  -  Server - IngredientSpawner:495
-  23:02:28.230  IngredientSpawner: part not found: BinRow1_Fruit_B in Props/Props_Produce  -  Server - IngredientSpawner:500
-  23:02:28.231  IngredientSpawner: part not found: MidShelf_Front in Props/Props_Produce  -  Server - IngredientSpawner:500
-  23:02:28.231  IngredientSpawner: part not found: MidShelf_Back in Props/Props_Produce  -  Server - IngredientSpawner:500
-  23:02:28.231  IngredientSpawner: part not found: WallShelf_A in Props/Props_Produce  -  Server - IngredientSpawner:500
-  23:02:28.231  IngredientSpawner: part not found: WallShelf_B in Props/Props_Produce  -  Server - IngredientSpawner:500
-  23:02:28.231   ▶ IngredientSpawner: folder not found: Freezers (x8)  -  Server - IngredientSpawner:495
-  23:02:28.237  IngredientSpawner: 161 items spawned (ingredients + loot)!  -  Server - IngredientSpawner:574
-  23:02:28.237  TEST: Gathering phase force-started!  -  Server - PrelobbyManager:318
-  23:02:43.823  Disconnect from 127.0.0.1|57753  -  Studio
+-- ============================================================
+-- CharacterController — LocalScript
+-- Location: StarterPlayerScripts > CharacterController
+--
+-- Owns all client-side character movement feel:
+--   • Jump power: 40 (Bible-spec — floaty but not broken)
+--   • Low air control: 0.2s cooldown before direction change mid-air
+--   • Speed: driven by UpdateSpeed remote from PlayerState
+--   • Applies speed multiplier from server without trusting the client
+--
+-- The server (PlayerState) owns the authoritative speed value.
+-- This script receives it and applies it to the Humanoid.
+-- It never calculates speed itself — that stays server-side.
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+
+local player    = Players.LocalPlayer
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes")
+
+-- ── Config ──────────────────────────────────────────────────
+local BASE_WALK_SPEED   = 16    -- studs/s — Roblox default, our 1× baseline
+local JUMP_POWER        = 40    -- higher than default 50? no — 40 is slightly lower,
+                                 -- giving a heavier, more grounded feel
+local AIR_CONTROL_DELAY = 0.2   -- seconds before direction can change mid-air
+
+-- ── State ───────────────────────────────────────────────────
+local currentSpeedMult  = 1.0
+local isAirborne        = false
+local airTime           = 0
+local lastGroundedTime  = tick()
+
+-- ============================================================
+-- CHARACTER SETUP
+-- Runs every time the character spawns (respawn safe)
+-- ============================================================
+
+local function setupCharacter(character)
+	local humanoid = character:WaitForChild("Humanoid")
+	local hrp      = character:WaitForChild("HumanoidRootPart")
+
+	-- Apply base stats
+	humanoid.JumpPower   = JUMP_POWER
+	humanoid.WalkSpeed   = BASE_WALK_SPEED * currentSpeedMult
+	humanoid.AutoRotate  = true
+
+	-- ── Air control: dampen direction input while airborne ──
+	local stateConn
+	stateConn = humanoid.StateChanged:Connect(function(_, newState)
+		if newState == Enum.HumanoidStateType.Jumping
+		or newState == Enum.HumanoidStateType.Freefall then
+			isAirborne = true
+			airTime    = tick()
+
+		elseif newState == Enum.HumanoidStateType.Landed
+		or newState == Enum.HumanoidStateType.Running
+		or newState == Enum.HumanoidStateType.Idle then
+			isAirborne       = false
+			lastGroundedTime = tick()
+		end
+	end)
+
+	-- ── Apply speed every frame so tween-driven changes feel smooth ──
+	local renderConn
+	renderConn = RunService.RenderStepped:Connect(function()
+		if not humanoid or not humanoid.Parent then
+			renderConn:Disconnect()
+			stateConn:Disconnect()
+			return
+		end
+
+		local targetSpeed = BASE_WALK_SPEED * currentSpeedMult
+
+		-- Low air control: if recently became airborne, clamp speed slightly
+		if isAirborne then
+			local elapsed = tick() - airTime
+			if elapsed < AIR_CONTROL_DELAY then
+				-- Interpolate from current to target during the delay window
+				local alpha = elapsed / AIR_CONTROL_DELAY
+				targetSpeed = humanoid.WalkSpeed + (targetSpeed - humanoid.WalkSpeed) * alpha
+			end
+		end
+
+		humanoid.WalkSpeed = targetSpeed
+	end)
+
+	-- Clean up on character removal
+	character.AncestryChanged:Connect(function()
+		if not character.Parent then
+			pcall(function() renderConn:Disconnect() end)
+			pcall(function() stateConn:Disconnect() end)
+		end
+	end)
+end
+
+-- ============================================================
+-- SPEED REMOTE — server tells client what multiplier to use
+-- ============================================================
+
+Remotes:WaitForChild("UpdateSpeed").OnClientEvent:Connect(function(mult)
+	currentSpeedMult = math.max(mult, 0.35)   -- enforce 35% floor client-side too
+
+	-- Apply immediately to existing character if present
+	local character = player.Character
+	local humanoid  = character and character:FindFirstChild("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = BASE_WALK_SPEED * currentSpeedMult
+	end
+end)
+
+-- ============================================================
+-- CL / FL WARN VISUAL FEEDBACK (Part 3)
+-- Subtle screen effects when bars approach 100%
+-- ============================================================
+
+local function flashScreenEdge(color)
+	-- Simple: tween a full-screen frame briefly
+	local screenGui = player.PlayerGui:FindFirstChild("ChompersHUD")
+	if not screenGui then return end
+	local edgeFrame = screenGui:FindFirstChild("BarWarningFlash")
+	if not edgeFrame then return end
+
+	-- Make visible, fade out over 0.75s
+	edgeFrame.BackgroundColor3 = color
+	edgeFrame.BackgroundTransparency = 0.3
+	task.delay(0.75, function()
+		-- Fade back
+		for i = 1, 10 do
+			task.wait(0.05)
+			edgeFrame.BackgroundTransparency = 0.3 + (0.7 * (i / 10))
+		end
+		edgeFrame.BackgroundTransparency = 1
+	end)
+end
+
+-- ── HitPlayer remote carries multiple signal types ──────────
+Remotes:WaitForChild("HitPlayer").OnClientEvent:Connect(function(signal, ...)
+	if signal == "cl_warn" then
+		-- ~95% CL — red warning slow + screen edge
+		flashScreenEdge(Color3.fromRGB(200, 50, 50))
+		-- 0.75s slow on character
+		local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+		if humanoid then
+			local orig = humanoid.WalkSpeed
+			humanoid.WalkSpeed = orig * 0.40
+			task.delay(0.75, function()
+				humanoid.WalkSpeed = orig
+			end)
+		end
+
+	elseif signal == "fl_warn" then
+		-- ~95% FL — orange warning
+		flashScreenEdge(Color3.fromRGB(220, 120, 30))
+		local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+		if humanoid then
+			local orig = humanoid.WalkSpeed
+			humanoid.WalkSpeed = orig * 0.40
+			task.delay(0.75, function()
+				humanoid.WalkSpeed = orig
+			end)
+		end
+
+	elseif signal == "state100" then
+		-- 0.5s dramatic slow — both bars if applicable
+		local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = 0
+			task.delay(0.5, function()
+				-- Speed is re-applied next RenderStepped tick from currentSpeedMult
+				-- which PlayerState already updated via UpdateSpeed
+			end)
+		end
+	end
+end)
+
+-- ============================================================
+-- PHASE-BASED RESTRICTIONS
+-- During Prelobby, keep players in the car park
+-- (the map boundaries do this physically but we can also
+--  disable jumping in prelobby if needed — for now just note it)
+-- ============================================================
+
+Remotes:WaitForChild("PhaseChanged").OnClientEvent:Connect(function(newPhase)
+	local character = player.Character
+	local humanoid  = character and character:FindFirstChild("Humanoid")
+	if not humanoid then return end
+
+	if newPhase == "Prelobby" then
+		-- Normal movement in prelobby
+		humanoid.JumpPower = JUMP_POWER
+
+	elseif newPhase == "Gathering"
+	or newPhase == "Cooking"
+	or newPhase == "CookingGrace"
+	or newPhase == "FoodFight" then
+		-- Full movement in all active phases
+		humanoid.JumpPower = JUMP_POWER
+
+	elseif newPhase == "EndGame"
+	or newPhase == "Accolades" then
+		-- Freeze movement at end of match (cosmetic — players watch accolades)
+		humanoid.WalkSpeed = 0
+		humanoid.JumpPower = 0
+	end
+end)
+
+-- ============================================================
+-- CONNECT TO PLAYER CHARACTER
+-- ============================================================
+
+-- Character might already exist if script runs late
+if player.Character then
+	setupCharacter(player.Character)
+end
+
+player.CharacterAdded:Connect(setupCharacter)
