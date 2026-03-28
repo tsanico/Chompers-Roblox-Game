@@ -121,15 +121,17 @@ ChompersData.Constants = {
 	-- Freeze cap (Part 9)
 	FreezeCapSeconds = 2.5,
 
-	-- Craving State (Part 5 — Favourite system)
-	Craving = {
-		Multiplier     = 1.50,   -- ×1.5 CL on next throw, consumed on hit
-		WindowSeconds  = 10,
-		CooldownSeconds = 15,
-		-- Trigger: self-consume your favourite recipe
-		-- Also grants: buff duration +8s, fullness cost halved for that consume
+	-- Favourite food system (Part 5 — Final version, March 2026)
+	-- Craving State REMOVED. Always-on passive throw bonus.
+	Favourite = {
+		ThrowBonusMultiplier = 0.5,   -- +50% of Base CL as bonus damage
+		ThrowBonusCap        = 30,    -- bonus CL capped at +30 per hit
+		SelfConsumeBuffMult  = 1.5,   -- ×1.5 buff duration when self-consuming favourite
+		EnemyFLSpike         = 2.0,   -- ×2 FL spike when hit by own favourite (thrown by enemy)
+		-- Formula: bonusCL = math.min(baseCL * 0.5, 30)
+		--          finalCL = baseCL + bonusCL
 	},
-	-- Enemy hits you with your own favourite → ×2 FL spike to you
+	-- Legacy alias (do not use in new code)
 	FavouriteEnemyFLSpike = 2.0,
 
 	-- Throw system (Part 11 — Balance Patch v1)
