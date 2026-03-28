@@ -146,13 +146,15 @@ inventoryGui.IgnoreGuiInset = true
 inventoryGui.Enabled = false
 inventoryGui.Parent = playerGui
 
--- Dimmed overlay behind panel
-local Dimmer = Instance.new("Frame", inventoryGui)
+-- Dimmed overlay behind panel (TextButton so it catches clicks)
+local Dimmer = Instance.new("TextButton", inventoryGui)
 Dimmer.Name = "Dimmer"
 Dimmer.Size = UDim2.new(1, 0, 1, 0)
 Dimmer.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 Dimmer.BackgroundTransparency = 0.5
 Dimmer.BorderSizePixel = 0
+Dimmer.Text = ""
+Dimmer.AutoButtonColor = false
 Dimmer.ZIndex = 10
 
 -- Main panel — centered
