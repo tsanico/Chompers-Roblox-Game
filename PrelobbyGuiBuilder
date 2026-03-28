@@ -239,24 +239,24 @@ local TABS = {
 
 local function switchTab(tabId)
 	activeTab = tabId
-	-- Track registered panels so we know what CookbookBuilder added
+	-- Track which frames are registered to avoid wrong shows
 	local registered = {}
 	for _, p in pairs(tabPanels) do registered[p] = true end
 
 	for _, child in ipairs(ContentArea:GetChildren()) do
 		if child:IsA("Frame") then
 			if registered[child] then
-				-- Our panel: show only if it's the selected one
 				child.Visible = (child == tabPanels[tabId])
 			else
-				-- Unknown frame (CookbookBuilder added to ContentArea directly)
-				-- Show it when we're on COOKBOOK or ACCOLADES
-				child.Visible = (tabId == "COOKBOOK" or tabId == "ACCOLADES")
+				-- Unknown frame from CookbookBuilder — only show if
+				-- tabPanels has already been updated to reference it,
+				-- otherwise hide to prevent overlay
+				child.Visible = false
 			end
 		end
 	end
-	-- Always show our registered panel too (covers CookPanel / AccoladesPanel
-	-- even if CookbookBuilder doesn't use them)
+	-- Show the registered panel for this tab (may now point to
+	-- CookbookBuilder's frame if it updated _G.Chompers.tabPanels)
 	local pnl = tabPanels[tabId]
 	if pnl then pnl.Visible = true end
 
@@ -271,6 +271,25 @@ local function switchTab(tabId)
 		end
 	end
 end
+
+-- After CookbookBuilder loads, scan ContentArea for any new frames
+-- it created and assign them to tabPanels so switchTab can find them
+task.delay(2, function()
+	local registered = {}
+	for _, p in pairs(tabPanels) do registered[p] = true end
+	local unknowns = {}
+	for _, child in ipairs(ContentArea:GetChildren()) do
+		if child:IsA("Frame") and not registered[child] then
+			table.insert(unknowns, child)
+			child.Visible = false
+		end
+	end
+	-- First unknown → COOKBOOK, second → ACCOLADES (CookbookBuilder's order)
+	if unknowns[1] then tabPanels["COOKBOOK"]  = unknowns[1] end
+	if unknowns[2] then tabPanels["ACCOLADES"] = unknowns[2] end
+	-- Re-apply correct visibility for current tab
+	switchTab(activeTab)
+end)
 
 for _, t in ipairs(TABS) do
 	local btn=Instance.new("TextButton",TabBar)
@@ -586,6 +605,17 @@ local FavSelected=mkLabel(PrefPanel,"None selected",
 	Enum.Font.GothamMedium,14,Color3.fromRGB(210,148,42),Enum.TextXAlignment.Left,
 	UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,20))
 FavSelected.Name="FavSelected"
+
+-- When CookbookBuilder updates FavSelected, sync to Selections and refresh billboard
+FavSelected:GetPropertyChangedSignal("Text"):Connect(function()
+	local t = FavSelected.Text
+	if t ~= "" and t ~= "None selected" then
+		Selections.favourite = t:gsub("^✓%s*", "")
+	else
+		Selections.favourite = nil
+	end
+	updateBillboard()
+end)
 
 local AllergyScroll=mkScroll(PrefPanel,"AllergyScroll",
 	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0,PAD,0,scrollY))
