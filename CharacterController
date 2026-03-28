@@ -1,0 +1,51 @@
+  23:02:23.209  PrelobbyManager loaded — waiting for players...  -  Server - PrelobbyManager:324
+  23:02:23.211  [DoorSystem] Registered 17 door parts  -  Server - DoorSystem:337
+  23:02:23.211  [DoorSystem] Boot complete  -  Server - DoorSystem:342
+  23:02:23.345  ChompersBottomBar loaded!  -  Client - ChompersBottomBar:617
+  23:02:23.346  [{"suggestedWeight":5,"volume":1052839872,"name":"Terrain","size":{"y":252,"x":2044,"z":2044}}]  -  Client - PrelobbyClient:42
+  23:02:23.776  ChompersMeters loaded!  -  Client - ChompersMeters:782
+  23:02:24.190  StoreGuide loaded!  -  Client - PrelobbyGuiBuilder:1525
+  23:02:24.240  CookbookBuilder loaded!  -  Client - CookbookBuilder:2221
+  23:02:24.362  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
+  23:02:24.362  Stack Begin  -  Studio
+  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
+  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
+  23:02:24.362  Stack End  -  Studio
+  23:02:24.362  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
+  23:02:24.362  Stack Begin  -  Studio
+  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
+  23:02:24.362  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
+  23:02:24.362  Stack End  -  Studio
+  23:02:24.617  Spawned WubTumArchNemesis at prelobby point 23  -  Server - PrelobbyManager:112
+  23:02:25.216  [GameManager] Phase: None → Prelobby  -  Server - GameManager:84
+  23:02:25.217  [GameManager] Boot complete — Prelobby started  -  Server - GameManager:397
+  23:02:25.250  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
+  23:02:25.250  Stack Begin  -  Studio
+  23:02:25.250  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
+  23:02:25.250  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
+  23:02:25.250  Stack End  -  Studio
+  23:02:26.850  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
+  23:02:26.850  Stack Begin  -  Studio
+  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
+  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
+  23:02:26.850  Stack End  -  Studio
+  23:02:26.850  Players.WubTumArchNemesis.PlayerScripts.ChompersMeters:715: attempt to compare nil <= nil  -  Client - ChompersMeters:715
+  23:02:26.850  Stack Begin  -  Studio
+  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 715  -  Studio - ChompersMeters:715
+  23:02:26.850  Script 'Players.WubTumArchNemesis.PlayerScripts.ChompersMeters', Line 771  -  Studio - ChompersMeters:771
+  23:02:26.850  Stack End  -  Studio
+  23:02:28.227  IngredientSpawner: part not found: BinRow1_Cake_A in Props/Props_Bakery  -  Server - IngredientSpawner:500
+  23:02:28.229  IngredientSpawner: part not found: MidShelf_Front in Props/Props_Bakery  -  Server - IngredientSpawner:500
+  23:02:28.229  IngredientSpawner: part not found: MidShelf_Back in Props/Props_Bakery  -  Server - IngredientSpawner:500
+  23:02:28.229  IngredientSpawner: part not found: WallShelf_A in Props/Props_Bakery  -  Server - IngredientSpawner:500
+  23:02:28.229  IngredientSpawner: part not found: WallShelf_B in Props/Props_Bakery  -  Server - IngredientSpawner:500
+  23:02:28.229   ▶ IngredientSpawner: folder not found: Shelves (x6)  -  Server - IngredientSpawner:495
+  23:02:28.230  IngredientSpawner: part not found: BinRow1_Fruit_B in Props/Props_Produce  -  Server - IngredientSpawner:500
+  23:02:28.231  IngredientSpawner: part not found: MidShelf_Front in Props/Props_Produce  -  Server - IngredientSpawner:500
+  23:02:28.231  IngredientSpawner: part not found: MidShelf_Back in Props/Props_Produce  -  Server - IngredientSpawner:500
+  23:02:28.231  IngredientSpawner: part not found: WallShelf_A in Props/Props_Produce  -  Server - IngredientSpawner:500
+  23:02:28.231  IngredientSpawner: part not found: WallShelf_B in Props/Props_Produce  -  Server - IngredientSpawner:500
+  23:02:28.231   ▶ IngredientSpawner: folder not found: Freezers (x8)  -  Server - IngredientSpawner:495
+  23:02:28.237  IngredientSpawner: 161 items spawned (ingredients + loot)!  -  Server - IngredientSpawner:574
+  23:02:28.237  TEST: Gathering phase force-started!  -  Server - PrelobbyManager:318
+  23:02:43.823  Disconnect from 127.0.0.1|57753  -  Studio
