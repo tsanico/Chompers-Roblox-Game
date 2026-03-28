@@ -1,4 +1,13 @@
--- InventoryClient (LocalScript in StarterPlayerScripts)
+-- ============================================================
+-- InventoryClient — LocalScript
+-- Location: StarterPlayerScripts
+--
+-- Owns: hotbar sync, inventory panel (centered modal),
+--       slot selection (keys 1-0), Q drop, checkout bar.
+--
+-- Depends on: _G.Chompers (set by ChompersBottomBar)
+--             InventoryToggle BindableEvent (in PlayerGui)
+-- ============================================================
 print("[InventoryClient] Script started")
 
 local Players           = game:GetService("Players")
@@ -11,21 +20,23 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 print("[InventoryClient] Services loaded")
 
+-- Safe remote lookup (5s timeout so missing remotes never hang)
 local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 15)
-local function getRemote(name)
+local function R(name)
 	if not Remotes then return nil end
 	return Remotes:WaitForChild(name, 5)
 end
 
-local UpdateInventoryRemote  = getRemote("UpdateInventory")
-local UpdateWeightRemote     = getRemote("UpdateWeight")
-local UpdateMoneyRemote      = getRemote("UpdateMoney")
-local CheckoutCompleteRemote = getRemote("CheckoutComplete")
-local CheckoutStartRemote    = getRemote("CheckoutStart")
-local DropItemRemote         = getRemote("DropItem")
+local UpdateInventoryRemote  = R("UpdateInventory")
+local UpdateWeightRemote     = R("UpdateWeight")
+local UpdateMoneyRemote      = R("UpdateMoney")
+local CheckoutStartRemote    = R("CheckoutStart")
+local CheckoutCompleteRemote = R("CheckoutComplete")
+local DropItemRemote         = R("DropItem")
 
 print("[InventoryClient] Remotes loaded")
 
+-- Wait for _G.Chompers (ChompersBottomBar sets this)
 local waited = 0
 while not (_G.Chompers and _G.Chompers.SetSlotItem) and waited < 8 do
 	task.wait(0.1); waited = waited + 0.1
@@ -49,82 +60,72 @@ local C = {
 	weight  = Color3.fromRGB(200, 160, 80),
 }
 local RARITY_STROKE = {
-	Common         = Color3.fromRGB(80, 78, 100),
-	Uncommon       = Color3.fromRGB(50, 140, 60),
-	Rare           = Color3.fromRGB(50, 100, 200),
-	["Ultra-Rare"] = Color3.fromRGB(130, 60, 200),
-	UltraRare      = Color3.fromRGB(130, 60, 200),
+	Common         = Color3.fromRGB(80,  78,  100),
+	Uncommon       = Color3.fromRGB(50,  140, 60),
+	Rare           = Color3.fromRGB(50,  100, 200),
+	["Ultra-Rare"] = Color3.fromRGB(130, 60,  200),
+	UltraRare      = Color3.fromRGB(130, 60,  200),
 	Legendary      = Color3.fromRGB(200, 140, 30),
 }
 local RARITY_BG = {
-	Common         = Color3.fromRGB(40, 38, 55),
-	Uncommon       = Color3.fromRGB(22, 42, 25),
-	Rare           = Color3.fromRGB(18, 28, 52),
-	["Ultra-Rare"] = Color3.fromRGB(35, 20, 50),
-	UltraRare      = Color3.fromRGB(35, 20, 50),
-	Legendary      = Color3.fromRGB(50, 38, 10),
+	Common         = Color3.fromRGB(40,  38, 55),
+	Uncommon       = Color3.fromRGB(22,  42, 25),
+	Rare           = Color3.fromRGB(18,  28, 52),
+	["Ultra-Rare"] = Color3.fromRGB(35,  20, 50),
+	UltraRare      = Color3.fromRGB(35,  20, 50),
+	Legendary      = Color3.fromRGB(50,  38, 10),
 }
-
--- Rarity sort order (highest priority = lowest number)
 local RARITY_ORDER = {
 	Legendary = 1, UltraRare = 2, ["Ultra-Rare"] = 2,
 	Rare = 3, Uncommon = 4, Common = 5,
 }
 
--- Sort inventory by rarity (desc) then alphabetically
-local function sortedInventory()
-	local sorted = {}
-	for i, item in ipairs(localInventory) do
-		table.insert(sorted, { item = item, origIndex = i })
-	end
-	table.sort(sorted, function(a, b)
-		local ra = RARITY_ORDER[normaliseRarity(a.item.rarity)] or 5
-		local rb = RARITY_ORDER[normaliseRarity(b.item.rarity)] or 5
-		if ra ~= rb then return ra < rb end
-		return (a.item.name or "") < (b.item.name or "")
-	end)
-	return sorted
-end
-
 -- ── State ─────────────────────────────────────────────────────
-local localInventory = {}
+local localInventory = {}   -- raw from server
 local selectedSlot   = 1
-local selectedItem   = nil
+local selectedItem   = nil  -- item shown in detail panel
 local currentWeight  = 0
 local maxWeight      = 35
 local panelOpen      = false
 local containerType  = "Basket"
 
 -- ── Helpers ───────────────────────────────────────────────────
-local function normaliseRarity(r)
+local function normalRarity(r)
 	if r == "UltraRare" then return "Ultra-Rare" end
 	return r or "Common"
 end
-
-local function mkCorner(parent, r)
-	Instance.new("UICorner", parent).CornerRadius = UDim.new(0, r or 8)
+local function corner(p, r)
+	Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 8)
 end
-
-local function mkStroke(parent, thickness, color)
-	local s = Instance.new("UIStroke", parent)
-	s.Thickness = thickness or 1.5
-	s.Color = color or C.stroke
-	return s
+local function mkStroke(p, t, c)
+	local s = Instance.new("UIStroke", p)
+	s.Thickness = t or 1.5; s.Color = c or C.stroke; return s
 end
-
-local function mkLabel(parent, text, font, size, color, xAlign, pos, sz)
+local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
 	local l = Instance.new("TextLabel")
-	l.Text = text or ""
-	l.Font = font or Enum.Font.GothamBold
-	l.TextSize = size or 14
-	l.TextColor3 = color or C.white
+	l.Text = text or ""; l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14; l.TextColor3 = color or C.white
 	l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
 	l.TextYAlignment = Enum.TextYAlignment.Center
 	l.BackgroundTransparency = 1
-	l.Position = pos or UDim2.new(0, 0, 0, 0)
-	l.Size = sz or UDim2.new(1, 0, 1, 0)
-	l.Parent = parent
-	return l
+	l.Position = pos or UDim2.new(0,0,0,0)
+	l.Size = sz or UDim2.new(1,0,1,0)
+	l.Parent = p; return l
+end
+
+-- Sort inventory by rarity desc then alphabetical
+local function sortedInventory()
+	local out = {}
+	for i, item in ipairs(localInventory) do
+		table.insert(out, {item = item, origIndex = i})
+	end
+	table.sort(out, function(a, b)
+		local ra = RARITY_ORDER[normalRarity(a.item.rarity)] or 5
+		local rb = RARITY_ORDER[normalRarity(b.item.rarity)] or 5
+		if ra ~= rb then return ra < rb end
+		return (a.item.name or "") < (b.item.name or "")
+	end)
+	return out
 end
 
 -- ============================================================
@@ -139,9 +140,9 @@ local function syncHotbar()
 	for i, item in ipairs(localInventory) do
 		if i > NUM then break end
 		ch.SetSlotItem(i, {
-			emoji  = item.emoji or "🍽",
-			name   = item.name or "?",
-			rarity = normaliseRarity(item.rarity),
+			emoji  = item.emoji  or "🍽",
+			name   = item.name   or "?",
+			rarity = normalRarity(item.rarity),
 			paid   = item.paid,
 			weight = item.wt or item.weight or 0,
 			cost   = item.cost or 0,
@@ -151,167 +152,131 @@ local function syncHotbar()
 end
 
 -- ============================================================
--- INVENTORY PANEL — centered, two-panel layout
+-- INVENTORY PANEL — centered modal
 -- ============================================================
 
-local PANEL_W  = 820
-local PANEL_H  = 540
-local LEFT_W   = 300   -- left list column
-local RIGHT_W  = PANEL_W - LEFT_W - 2   -- right detail column
+local PANEL_W = 820
+local PANEL_H = 540
+local LEFT_W  = 290    -- list column
+local HDR_H   = 50
 
 local inventoryGui = Instance.new("ScreenGui")
-inventoryGui.Name = "InventoryPanel"
-inventoryGui.ResetOnSpawn = false
-inventoryGui.DisplayOrder = 10
+inventoryGui.Name           = "InventoryPanel"
+inventoryGui.ResetOnSpawn   = false
+inventoryGui.DisplayOrder   = 10
 inventoryGui.IgnoreGuiInset = true
-inventoryGui.Enabled = false
-inventoryGui.Parent = playerGui
+inventoryGui.Enabled        = false
+inventoryGui.Parent         = playerGui
 
--- Dimmed overlay behind panel (TextButton so it catches clicks)
+-- Background dimmer (TextButton to catch clicks)
 local Dimmer = Instance.new("TextButton", inventoryGui)
-Dimmer.Name = "Dimmer"
-Dimmer.Size = UDim2.new(1, 0, 1, 0)
-Dimmer.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-Dimmer.BackgroundTransparency = 0.5
-Dimmer.BorderSizePixel = 0
-Dimmer.Text = ""
-Dimmer.AutoButtonColor = false
-Dimmer.ZIndex = 10
+Dimmer.Size                = UDim2.new(1, 0, 1, 0)
+Dimmer.BackgroundColor3    = Color3.fromRGB(0, 0, 0)
+Dimmer.BackgroundTransparency = 0.45
+Dimmer.BorderSizePixel     = 0
+Dimmer.Text                = ""; Dimmer.AutoButtonColor = false
+Dimmer.ZIndex              = 10
 
--- Main panel — centered
+-- Main panel
 local Panel = Instance.new("Frame", inventoryGui)
-Panel.Name = "Panel"
-Panel.Size = UDim2.new(0, PANEL_W, 0, PANEL_H)
-Panel.AnchorPoint = Vector2.new(0.5, 0.5)
-Panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+Panel.Name             = "Panel"
+Panel.Size             = UDim2.new(0, PANEL_W, 0, PANEL_H)
+Panel.AnchorPoint      = Vector2.new(0.5, 0.5)
+Panel.Position         = UDim2.new(0.5, 0, 0.5, 0)
 Panel.BackgroundColor3 = C.bg
-Panel.BorderSizePixel = 0
-Panel.ZIndex = 11
-mkCorner(Panel, 16)
-mkStroke(Panel, 1.5, C.stroke)
+Panel.BorderSizePixel  = 0; Panel.ZIndex = 11
+corner(Panel, 16); mkStroke(Panel)
 
--- Header bar
+-- Header
 local Header = Instance.new("Frame", Panel)
-Header.Size = UDim2.new(1, 0, 0, 50)
-Header.Position = UDim2.new(0, 0, 0, 0)
+Header.Size             = UDim2.new(1, 0, 0, HDR_H)
 Header.BackgroundColor3 = Color3.fromRGB(30, 28, 46)
-Header.BorderSizePixel = 0
-Header.ZIndex = 12
-mkCorner(Header, 16)
--- Fill bottom of header rounding
-local hFill = Instance.new("Frame", Header)
-hFill.Size = UDim2.new(1, 0, 0, 16)
-hFill.Position = UDim2.new(0, 0, 1, -16)
-hFill.BackgroundColor3 = Color3.fromRGB(30, 28, 46)
-hFill.BorderSizePixel = 0; hFill.ZIndex = 12
+Header.BorderSizePixel  = 0; Header.ZIndex = 12
+corner(Header, 16)
+-- fill bottom rounding of header
+local hf = Instance.new("Frame", Header)
+hf.Size = UDim2.new(1,0,0,16); hf.Position = UDim2.new(0,0,1,-16)
+hf.BackgroundColor3 = Color3.fromRGB(30,28,46); hf.BorderSizePixel=0; hf.ZIndex=12
 
--- Header: icon + title
 local HeaderTitle = mkLabel(Header, "🧺  Basket Inventory",
 	Enum.Font.GothamBlack, 17, C.white, Enum.TextXAlignment.Left,
 	UDim2.new(0, 16, 0, 0), UDim2.new(0.5, 0, 1, 0))
-HeaderTitle.Name = "HeaderTitle"; HeaderTitle.ZIndex = 13
+HeaderTitle.ZIndex = 13
 
--- Header: weight
 local WeightHeader = mkLabel(Header, "0 / 35 wt",
 	Enum.Font.GothamBold, 13, C.weight, Enum.TextXAlignment.Right,
 	UDim2.new(0.5, 0, 0, 0), UDim2.new(0.35, -50, 1, 0))
 WeightHeader.ZIndex = 13
 
--- Header: close button
 local CloseBtn = Instance.new("TextButton", Header)
-CloseBtn.Text = "Close"
-CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 13
+CloseBtn.Text = "Close"; CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 13
 CloseBtn.TextColor3 = C.white
 CloseBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
 CloseBtn.BorderSizePixel = 0; CloseBtn.AutoButtonColor = false
 CloseBtn.Size = UDim2.new(0, 56, 0, 28)
-CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
-CloseBtn.Position = UDim2.new(1, -12, 0.5, 0)
-CloseBtn.ZIndex = 14
-mkCorner(CloseBtn, 8)
+CloseBtn.AnchorPoint = Vector2.new(1, 0.5); CloseBtn.Position = UDim2.new(1, -12, 0.5, 0)
+CloseBtn.ZIndex = 14; CloseBtn.Parent = Header; corner(CloseBtn, 8)
 
--- Divider between header and body
-local HDR_H = 50
-
--- Left panel — item list
+-- ── Left panel — item list ────────────────────────────────────
 local LeftPanel = Instance.new("Frame", Panel)
-LeftPanel.Name = "LeftPanel"
-LeftPanel.Size = UDim2.new(0, LEFT_W, 1, -HDR_H)
-LeftPanel.Position = UDim2.new(0, 0, 0, HDR_H)
+LeftPanel.Size             = UDim2.new(0, LEFT_W, 1, -HDR_H)
+LeftPanel.Position         = UDim2.new(0, 0, 0, HDR_H)
 LeftPanel.BackgroundColor3 = C.bgDark
-LeftPanel.BorderSizePixel = 0
-LeftPanel.ZIndex = 11
-mkCorner(LeftPanel, 0)
+LeftPanel.BorderSizePixel  = 0; LeftPanel.ZIndex = 11
+corner(LeftPanel, 0)
 
--- Left header
-local LeftHeader = mkLabel(LeftPanel, "ITEMS HELD",
-	Enum.Font.GothamBlack, 10, C.dim,
-	Enum.TextXAlignment.Left,
-	UDim2.new(0, 12, 0, 8), UDim2.new(1, -12, 0, 16))
-LeftHeader.ZIndex = 12
+mkLabel(LeftPanel, "ITEMS HELD",
+	Enum.Font.GothamBlack, 10, C.dim, Enum.TextXAlignment.Left,
+	UDim2.new(0, 12, 0, 8), UDim2.new(1, -12, 0, 16)).ZIndex = 12
 
--- Left scroll
 local LeftScroll = Instance.new("ScrollingFrame", LeftPanel)
-LeftScroll.Size = UDim2.new(1, 0, 1, -28)
-LeftScroll.Position = UDim2.new(0, 0, 0, 28)
+LeftScroll.Size                = UDim2.new(1, 0, 1, -28)
+LeftScroll.Position            = UDim2.new(0, 0, 0, 28)
 LeftScroll.BackgroundTransparency = 1
-LeftScroll.BorderSizePixel = 0
-LeftScroll.ScrollBarThickness = 4
+LeftScroll.BorderSizePixel     = 0
+LeftScroll.ScrollBarThickness  = 4
 LeftScroll.ScrollBarImageColor3 = C.stroke
 LeftScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-LeftScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-LeftScroll.ZIndex = 12
-local LeftLL = Instance.new("UIListLayout", LeftScroll)
-LeftLL.SortOrder = Enum.SortOrder.LayoutOrder
-LeftLL.Padding = UDim.new(0, 2)
-LeftLL.VerticalAlignment = Enum.VerticalAlignment.Top  -- anchor items to top
-local LeftPad = Instance.new("UIPadding", LeftScroll)
-LeftPad.PaddingLeft = UDim.new(0, 6)
-LeftPad.PaddingRight = UDim.new(0, 6)
-LeftPad.PaddingTop = UDim.new(0, 4)
-LeftPad.PaddingBottom = UDim.new(0, 4)
+LeftScroll.CanvasSize          = UDim2.new(0, 0, 0, 0)
+LeftScroll.ZIndex              = 12
+local lLL = Instance.new("UIListLayout", LeftScroll)
+lLL.SortOrder = Enum.SortOrder.LayoutOrder; lLL.Padding = UDim.new(0, 2)
+lLL.VerticalAlignment = Enum.VerticalAlignment.Top
+local lPad = Instance.new("UIPadding", LeftScroll)
+lPad.PaddingLeft = UDim.new(0,6); lPad.PaddingRight = UDim.new(0,6)
+lPad.PaddingTop = UDim.new(0,4); lPad.PaddingBottom = UDim.new(0,4)
 
--- Divider line between left and right
+-- ── Divider ───────────────────────────────────────────────────
 local Divider = Instance.new("Frame", Panel)
-Divider.Size = UDim2.new(0, 1, 1, -HDR_H)
-Divider.Position = UDim2.new(0, LEFT_W, 0, HDR_H)
-Divider.BackgroundColor3 = C.stroke
-Divider.BorderSizePixel = 0; Divider.ZIndex = 12
+Divider.Size = UDim2.new(0,1,1,-HDR_H); Divider.Position = UDim2.new(0,LEFT_W,0,HDR_H)
+Divider.BackgroundColor3 = C.stroke; Divider.BorderSizePixel=0; Divider.ZIndex=12
 
--- Right panel — detail view
+-- ── Right panel — detail view ─────────────────────────────────
 local RightPanel = Instance.new("Frame", Panel)
-RightPanel.Name = "RightPanel"
-RightPanel.Size = UDim2.new(1, -LEFT_W - 1, 1, -HDR_H)
-RightPanel.Position = UDim2.new(0, LEFT_W + 1, 0, HDR_H)
-RightPanel.BackgroundTransparency = 1
-RightPanel.ZIndex = 11
+RightPanel.Size               = UDim2.new(1, -LEFT_W-1, 1, -HDR_H)
+RightPanel.Position           = UDim2.new(0, LEFT_W+1, 0, HDR_H)
+RightPanel.BackgroundTransparency = 1; RightPanel.ZIndex = 11
 
 local RightScroll = Instance.new("ScrollingFrame", RightPanel)
-RightScroll.Size = UDim2.new(1, -16, 1, -8)
-RightScroll.Position = UDim2.new(0, 12, 0, 4)
-RightScroll.BackgroundTransparency = 1
-RightScroll.BorderSizePixel = 0
+RightScroll.Size               = UDim2.new(1,-16,1,-8)
+RightScroll.Position           = UDim2.new(0,12,0,4)
+RightScroll.BackgroundTransparency = 1; RightScroll.BorderSizePixel = 0
 RightScroll.ScrollBarThickness = 4
 RightScroll.ScrollBarImageColor3 = C.stroke
 RightScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-RightScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-RightScroll.ZIndex = 12
-local RightLL = Instance.new("UIListLayout", RightScroll)
-RightLL.SortOrder = Enum.SortOrder.LayoutOrder
-RightLL.Padding = UDim.new(0, 10)
-local RightPad = Instance.new("UIPadding", RightScroll)
-RightPad.PaddingTop = UDim.new(0, 10)
-RightPad.PaddingBottom = UDim.new(0, 10)
+RightScroll.CanvasSize          = UDim2.new(0,0,0,0); RightScroll.ZIndex = 12
+local rLL = Instance.new("UIListLayout", RightScroll)
+rLL.SortOrder = Enum.SortOrder.LayoutOrder; rLL.Padding = UDim.new(0,10)
+local rPad = Instance.new("UIPadding", RightScroll)
+rPad.PaddingTop = UDim.new(0,10); rPad.PaddingBottom = UDim.new(0,10)
 
--- Bottom-left corner rounding on LeftPanel
-local LeftBottomFill = Instance.new("Frame", Panel)
-LeftBottomFill.Size = UDim2.new(0, 16, 0, 16)
-LeftBottomFill.Position = UDim2.new(0, 0, 1, -16)
-LeftBottomFill.BackgroundColor3 = C.bgDark
-LeftBottomFill.BorderSizePixel = 0; LeftBottomFill.ZIndex = 11
+-- ── Bottom-left corner fill (matches LeftPanel dark bg) ───────
+local blFill = Instance.new("Frame", Panel)
+blFill.Size = UDim2.new(0,16,0,16); blFill.Position = UDim2.new(0,0,1,-16)
+blFill.BackgroundColor3 = C.bgDark; blFill.BorderSizePixel=0; blFill.ZIndex=11
 
 -- ============================================================
--- RIGHT PANEL — DETAIL VIEW
+-- DETAIL PANEL
 -- ============================================================
 
 local function clearRight()
@@ -320,157 +285,109 @@ local function clearRight()
 	end
 end
 
-local function showEmptyRight(message)
+local function showPlaceholder(msg)
 	clearRight()
 	local l = Instance.new("TextLabel", RightScroll)
-	l.Size = UDim2.new(1, 0, 0, 120)
+	l.Size = UDim2.new(1,0,0,120); l.LayoutOrder = 0
 	l.BackgroundTransparency = 1
-	l.Text = message or "Select an item to see details."
-	l.Font = Enum.Font.Gotham; l.TextSize = 15
-	l.TextColor3 = C.dim
+	l.Text = msg or "Select an item to see details."
+	l.Font = Enum.Font.Gotham; l.TextSize = 15; l.TextColor3 = C.dim
 	l.TextXAlignment = Enum.TextXAlignment.Center
 	l.TextYAlignment = Enum.TextYAlignment.Center
-	l.TextWrapped = true; l.LayoutOrder = 0; l.ZIndex = 12
+	l.TextWrapped = true; l.ZIndex = 12
 end
 
 local function showDetail(item, origIndex)
 	clearRight()
-	if not item then
-		showEmptyRight("Select an item to see details.")
-		return
-	end
+	if not item then showPlaceholder("Select an item to see details."); return end
 
-	local rarity = normaliseRarity(item.rarity or "Common")
+	local rarity    = normalRarity(item.rarity or "Common")
 	local strokeCol = RARITY_STROKE[rarity] or C.stroke
-	local bgCol     = RARITY_BG[rarity] or C.bgCard
+	local bgCol     = RARITY_BG[rarity]    or C.bgCard
 
-	-- Big emoji + name card
+	-- Top card: emoji + name + status
 	local topCard = Instance.new("Frame", RightScroll)
-	topCard.Size = UDim2.new(1, 0, 0, 120)
+	topCard.Size             = UDim2.new(1,0,0,120)
 	topCard.BackgroundColor3 = bgCol
-	topCard.BorderSizePixel = 0; topCard.LayoutOrder = 1; topCard.ZIndex = 12
-	mkCorner(topCard, 12)
-	local topStroke = mkStroke(topCard, 2, strokeCol)
+	topCard.BorderSizePixel  = 0; topCard.LayoutOrder = 1; topCard.ZIndex = 12
+	corner(topCard, 12); mkStroke(topCard, 2, strokeCol)
 
-	-- Giant emoji
 	mkLabel(topCard, item.emoji or "🍽",
-		Enum.Font.GothamBold, 72, C.white,
-		Enum.TextXAlignment.Center,
-		UDim2.new(0, 0, 0, 0), UDim2.new(0, 110, 1, 0)).ZIndex = 13
+		Enum.Font.GothamBold, 72, C.white, Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,0), UDim2.new(0,110,1,0)).ZIndex = 13
 
-	-- Name + rarity
 	mkLabel(topCard, item.name or "Unknown",
-		Enum.Font.GothamBlack, 26, C.white,
-		Enum.TextXAlignment.Left,
-		UDim2.new(0, 116, 0, 10), UDim2.new(1, -124, 0, 32)).ZIndex = 13
+		Enum.Font.GothamBlack, 26, C.white, Enum.TextXAlignment.Left,
+		UDim2.new(0,116,0,10), UDim2.new(1,-124,0,30)).ZIndex = 13
 
-	local rarityL = mkLabel(topCard, rarity,
-		Enum.Font.GothamBold, 16, strokeCol,
-		Enum.TextXAlignment.Left,
-		UDim2.new(0, 116, 0, 44), UDim2.new(1, -124, 0, 20))
-	rarityL.ZIndex = 13
+	mkLabel(topCard, rarity,
+		Enum.Font.GothamBold, 15, strokeCol, Enum.TextXAlignment.Left,
+		UDim2.new(0,116,0,42), UDim2.new(1,-124,0,18)).ZIndex = 13
 
-	-- Weight + zone
+	-- Zone + weight meta
 	local meta = {}
 	if item.zone then table.insert(meta, "📍 " .. item.zone) end
-	if item.wt or item.weight then
-		table.insert(meta, "⚖ " .. tostring(item.wt or item.weight) .. " wt")
-	end
+	table.insert(meta, "⚖ " .. tostring(item.wt or item.weight or 0) .. " wt")
 	mkLabel(topCard, table.concat(meta, "   "),
-		Enum.Font.Gotham, 14, C.dim,
-		Enum.TextXAlignment.Left,
-		UDim2.new(0, 116, 0, 66), UDim2.new(1, -124, 0, 18)).ZIndex = 13
+		Enum.Font.Gotham, 13, C.dim, Enum.TextXAlignment.Left,
+		UDim2.new(0,116,0,62), UDim2.new(1,-124,0,16)).ZIndex = 13
 
-	-- Status tag
+	-- Status (paid/unpaid or cook state)
 	local stText, stColor
 	if item.cookStatus then
-		if item.cookStatus == "Cooked" then stText = "COOKED ✓"; stColor = C.green
-		elseif item.cookStatus == "Burned" then stText = "BURNED"; stColor = C.red
-		else stText = "UNCOOKED"; stColor = C.gold end
-	elseif item.paid then
-		stText = "✓ PAID"; stColor = C.green
-	else
-		stText = "UNPAID  $" .. tostring(item.cost or 0); stColor = C.orange
-	end
+		if item.cookStatus == "Cooked" then stText="COOKED ✓"; stColor=C.green
+		elseif item.cookStatus == "Burned" then stText="BURNED"; stColor=C.red
+		else stText="UNCOOKED"; stColor=C.gold end
+	elseif item.paid then stText="✓ PAID"; stColor=C.green
+	else stText="UNPAID  $"..tostring(item.cost or 0); stColor=C.orange end
 	mkLabel(topCard, stText,
-		Enum.Font.GothamBlack, 15, stColor,
-		Enum.TextXAlignment.Left,
-		UDim2.new(0, 116, 0, 86), UDim2.new(1, -124, 0, 20)).ZIndex = 13
+		Enum.Font.GothamBlack, 14, stColor, Enum.TextXAlignment.Left,
+		UDim2.new(0,116,0,82), UDim2.new(1,-124,0,22)).ZIndex = 13
 
-	-- Detail section helper
-	local function addSection(title, value, color)
-		if not value or value == "" then return end
-		local row = Instance.new("Frame", RightScroll)
-		row.Size = UDim2.new(1, 0, 0, 0)
-		row.AutomaticSize = Enum.AutomaticSize.Y
-		row.BackgroundColor3 = C.bgLight
-		row.BorderSizePixel = 0
-		row.ZIndex = 12
-		mkCorner(row, 8)
-
-		local pad = Instance.new("UIPadding", row)
-		pad.PaddingLeft = UDim.new(0, 12)
-		pad.PaddingRight = UDim.new(0, 12)
-		pad.PaddingTop = UDim.new(0, 8)
-		pad.PaddingBottom = UDim.new(0, 8)
-
-		local ll = Instance.new("UIListLayout", row)
-		ll.SortOrder = Enum.SortOrder.LayoutOrder
-		ll.Padding = UDim.new(0, 2)
-
-		local titleL = Instance.new("TextLabel", row)
-		titleL.Size = UDim2.new(1, 0, 0, 16)
-		titleL.BackgroundTransparency = 1
-		titleL.Text = title
-		titleL.Font = Enum.Font.GothamBlack; titleL.TextSize = 11
-		titleL.TextColor3 = color or C.dim
-		titleL.TextXAlignment = Enum.TextXAlignment.Left
-		titleL.ZIndex = 13; titleL.LayoutOrder = 1
-
-		local valL = Instance.new("TextLabel", row)
-		valL.Size = UDim2.new(1, 0, 0, 0)
-		valL.AutomaticSize = Enum.AutomaticSize.Y
-		valL.BackgroundTransparency = 1
-		valL.Text = tostring(value)
-		valL.Font = Enum.Font.Gotham; valL.TextSize = 17
-		valL.TextColor3 = C.white
-		valL.TextXAlignment = Enum.TextXAlignment.Left
-		valL.TextWrapped = true; valL.LineHeight = 1.3
-		valL.ZIndex = 13; valL.LayoutOrder = 2
-
-		row.LayoutOrder = RightScroll:FindFirstChildOfClass("Frame") and
-			(#RightScroll:GetChildren()) or 2
-		return row
-	end
-
+	-- Section helper
 	local nextOrder = 2
 	local function section(title, value, color)
-		local row = addSection(title, value, color)
-		if row then row.LayoutOrder = nextOrder; nextOrder = nextOrder + 1 end
+		if not value or value == "" then return end
+		local row = Instance.new("Frame", RightScroll)
+		row.Size = UDim2.new(1,0,0,0); row.AutomaticSize = Enum.AutomaticSize.Y
+		row.BackgroundColor3 = C.bgLight; row.BorderSizePixel=0
+		row.LayoutOrder = nextOrder; nextOrder = nextOrder + 1; row.ZIndex = 12
+		corner(row, 8)
+		local pad = Instance.new("UIPadding", row)
+		pad.PaddingLeft=UDim.new(0,12); pad.PaddingRight=UDim.new(0,12)
+		pad.PaddingTop=UDim.new(0,8);  pad.PaddingBottom=UDim.new(0,8)
+		local ll = Instance.new("UIListLayout", row)
+		ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,2)
+
+		local tl = Instance.new("TextLabel", row)
+		tl.Size=UDim2.new(1,0,0,16); tl.BackgroundTransparency=1
+		tl.Text=title; tl.Font=Enum.Font.GothamBlack; tl.TextSize=11
+		tl.TextColor3=color or C.dim; tl.TextXAlignment=Enum.TextXAlignment.Left
+		tl.ZIndex=13; tl.LayoutOrder=1
+
+		local vl = Instance.new("TextLabel", row)
+		vl.Size=UDim2.new(1,0,0,0); vl.AutomaticSize=Enum.AutomaticSize.Y
+		vl.BackgroundTransparency=1; vl.Text=tostring(value)
+		vl.Font=Enum.Font.Gotham; vl.TextSize=17; vl.TextColor3=C.white
+		vl.TextXAlignment=Enum.TextXAlignment.Left
+		vl.TextWrapped=true; vl.LineHeight=1.3; vl.ZIndex=13; vl.LayoutOrder=2
 	end
 
-	-- Allergy
 	if item.allergy and item.allergy ~= "None" then
 		section("⚠ ALLERGY", item.allergy, C.red)
-	else
-		section("⚠ ALLERGY", "None", C.dim)
 	end
-
 	if item.effect and item.effect ~= "" then
 		section("✨ EFFECT", item.effect, C.gold)
 	end
-
 	if item.cl and item.cl > 0 then
-		section("🧼 CLEANLINESS DAMAGE", "+" .. item.cl .. " CL per hit", C.weight)
+		section("🧼 CL DAMAGE", "+" .. item.cl .. " per hit", C.weight)
 	end
-
 	if item.ingredients then
-		section("📋 INGREDIENTS", table.concat(item.ingredients, "  ·  "), C.green)
+		section("📋 INGREDIENTS", table.concat(item.ingredients, " · "), C.green)
 	end
 	if item.station and item.station ~= "" then
 		section("🍳 STATION", item.station, C.dim)
 	end
-
 	if item.notes and item.notes ~= "" then
 		section("📝 NOTE", item.notes, C.dim)
 	end
@@ -478,64 +395,54 @@ local function showDetail(item, origIndex)
 	-- ── Slot assignment row ───────────────────────────────────
 	if origIndex then
 		local slotRow = Instance.new("Frame", RightScroll)
-		slotRow.Size = UDim2.new(1, 0, 0, 56)
+		slotRow.Size             = UDim2.new(1,0,0,60)
 		slotRow.BackgroundColor3 = C.bgLight
-		slotRow.BorderSizePixel = 0
-		slotRow.LayoutOrder = nextOrder
-		slotRow.ZIndex = 12
-		mkCorner(slotRow, 8)
+		slotRow.BorderSizePixel  = 0
+		slotRow.LayoutOrder      = nextOrder; nextOrder = nextOrder + 1
+		slotRow.ZIndex           = 12
+		corner(slotRow, 8)
 
 		mkLabel(slotRow, "ASSIGN TO HOTBAR SLOT",
 			Enum.Font.GothamBlack, 10, C.dim, Enum.TextXAlignment.Left,
-			UDim2.new(0, 12, 0, 6), UDim2.new(1, -24, 0, 14)).ZIndex = 13
+			UDim2.new(0,12,0,6), UDim2.new(1,-24,0,14)).ZIndex = 13
 
-		-- 1-10 buttons
 		local btnRow = Instance.new("Frame", slotRow)
-		btnRow.Size = UDim2.new(1, -16, 0, 28)
-		btnRow.Position = UDim2.new(0, 8, 0, 22)
+		btnRow.Size = UDim2.new(1,-16,0,30)
+		btnRow.Position = UDim2.new(0,8,0,22)
 		btnRow.BackgroundTransparency = 1; btnRow.ZIndex = 13
-		local btnLL = Instance.new("UIListLayout", btnRow)
-		btnLL.FillDirection = Enum.FillDirection.Horizontal
-		btnLL.Padding = UDim.new(0, 3)
+		local bLL = Instance.new("UIListLayout", btnRow)
+		bLL.FillDirection = Enum.FillDirection.Horizontal
+		bLL.Padding = UDim.new(0,3)
 
 		for si = 1, 10 do
-			local key = si == 10 and "0" or tostring(si)
+			local key      = si == 10 and "0" or tostring(si)
 			local isActive = si == origIndex
-			local sBtn = Instance.new("TextButton", btnRow)
-			sBtn.Text = key
-			sBtn.Font = Enum.Font.GothamBlack; sBtn.TextSize = 12
-			sBtn.TextColor3 = isActive and C.white or C.dim
-			sBtn.BackgroundColor3 = isActive
-				and Color3.fromRGB(80, 30, 30)
-				or Color3.fromRGB(35, 33, 52)
-			sBtn.BorderSizePixel = 0; sBtn.AutoButtonColor = false
-			sBtn.Size = UDim2.new(0, 0, 1, 0)
-			sBtn.AutomaticSize = Enum.AutomaticSize.X
-			sBtn.ZIndex = 14
-			mkCorner(sBtn, 5)
+			local b = Instance.new("TextButton", btnRow)
+			b.Text = key; b.Font = Enum.Font.GothamBlack; b.TextSize = 12
+			b.TextColor3 = isActive and C.white or C.dim
+			b.BackgroundColor3 = isActive
+				and Color3.fromRGB(80,30,30)
+				or Color3.fromRGB(35,33,52)
+			b.BorderSizePixel = 0; b.AutoButtonColor = false
+			b.Size = UDim2.new(0,0,1,0); b.AutomaticSize = Enum.AutomaticSize.X
+			b.ZIndex = 14; b.Parent = btnRow; corner(b, 5)
+			local pad = Instance.new("UIPadding", b)
+			pad.PaddingLeft=UDim.new(0,8); pad.PaddingRight=UDim.new(0,8)
 
-			-- Minimum width via UIPadding
-			local sp = Instance.new("UIPadding", sBtn)
-			sp.PaddingLeft = UDim.new(0, 8); sp.PaddingRight = UDim.new(0, 8)
-
-			local capturedSi = si
-			local capturedOrigI = origIndex
-			sBtn.MouseButton1Click:Connect(function()
-				-- Swap slots capturedOrigI ↔ capturedSi
-				local a = localInventory[capturedOrigI]
-				local b = localInventory[capturedSi]
-				localInventory[capturedOrigI] = b
-				localInventory[capturedSi]    = a
-				-- If selected slot was one of the swapped, update it
-				if selectedSlot == capturedOrigI then
-					selectedSlot = capturedSi
-				elseif selectedSlot == capturedSi then
-					selectedSlot = capturedOrigI
-				end
-				if _G.Chompers and _G.Chompers.SetSelectedSlot then
+			local capSi = si; local capOrig = origIndex
+			b.MouseButton1Click:Connect(function()
+				-- Swap slots
+				local a = localInventory[capOrig]
+				local bItem = localInventory[capSi]
+				localInventory[capOrig] = bItem
+				localInventory[capSi]   = a
+				if selectedSlot == capOrig then selectedSlot = capSi
+				elseif selectedSlot == capSi then selectedSlot = capOrig end
+				if _G.Chompers.SetSelectedSlot then
 					_G.Chompers.SetSelectedSlot(selectedSlot)
 				end
 				syncHotbar()
+				selectedItem = localInventory[capSi]  -- track moved item
 				rebuildPanel()
 			end)
 		end
@@ -543,7 +450,7 @@ local function showDetail(item, origIndex)
 end
 
 -- ============================================================
--- LEFT PANEL — ITEM LIST
+-- LEFT LIST
 -- ============================================================
 
 local selectedListBtn = nil
@@ -557,130 +464,105 @@ local function buildLeftList()
 
 	if #localInventory == 0 then
 		local icon = containerType == "Cart" and "🛒" or "🧺"
-		local emptyL = Instance.new("TextLabel", LeftScroll)
-		emptyL.Size = UDim2.new(1, 0, 0, 80)
-		emptyL.BackgroundTransparency = 1
-		emptyL.Text = icon .. "  Empty!"
-		emptyL.Font = Enum.Font.Gotham; emptyL.TextSize = 13
-		emptyL.TextColor3 = C.dim
-		emptyL.TextXAlignment = Enum.TextXAlignment.Center
-		emptyL.TextYAlignment = Enum.TextYAlignment.Center
-		emptyL.LayoutOrder = 0; emptyL.ZIndex = 13
-		showEmptyRight(icon .. "  Your " .. containerType:lower() .. " is empty!\n\nPick up ingredients to get started.")
-		selectedListBtn = nil; selectedItem = nil
+		local el = Instance.new("TextLabel", LeftScroll)
+		el.Size=UDim2.new(1,0,0,80); el.LayoutOrder=0
+		el.BackgroundTransparency=1
+		el.Text=icon.." Your "..containerType:lower().." is empty!"
+		el.Font=Enum.Font.Gotham; el.TextSize=13; el.TextColor3=C.dim
+		el.TextXAlignment=Enum.TextXAlignment.Center
+		el.TextYAlignment=Enum.TextYAlignment.Center
+		el.TextWrapped=true; el.ZIndex=13
+		showPlaceholder(icon.."  Empty!\n\nPick up ingredients to get started.")
+		selectedListBtn=nil; selectedItem=nil
 		return
 	end
 
 	selectedListBtn = nil
-	if not selectedItem then
-		showEmptyRight("← Select an item to see details.")
-	end
+	if not selectedItem then showPlaceholder("← Select an item to see details.") end
 
-	-- Sort: rarity desc, then alphabetical
 	local sorted = sortedInventory()
-
 	for listPos, entry in ipairs(sorted) do
-		local item = entry.item
+		local item  = entry.item
 		local origI = entry.origIndex
-		local rarity = normaliseRarity(item.rarity or "Common")
+		local rarity    = normalRarity(item.rarity or "Common")
 		local strokeCol = RARITY_STROKE[rarity] or C.stroke
 
 		local row = Instance.new("TextButton", LeftScroll)
-		row.Name = "Row_" .. origI
-		row.Size = UDim2.new(1, 0, 0, 48)
+		row.Name             = "Row_" .. origI
+		row.Size             = UDim2.new(1,0,0,48)
 		row.BackgroundColor3 = origI == selectedSlot
-			and Color3.fromRGB(35, 33, 54) or C.bgLight
-		row.BorderSizePixel = 0; row.AutoButtonColor = false
-		row.LayoutOrder = listPos; row.ZIndex = 13
-		mkCorner(row, 8)
-		local rowStroke = mkStroke(row, origI == selectedSlot and 2 or 1.5,
+			and Color3.fromRGB(35,33,54) or C.bgLight
+		row.BorderSizePixel  = 0; row.AutoButtonColor = false
+		row.LayoutOrder      = listPos; row.ZIndex = 13
+		corner(row, 8)
+		local rowStroke = mkStroke(row,
+			origI == selectedSlot and 2 or 1.5,
 			origI == selectedSlot and C.red or strokeCol)
 
 		-- Slot badge
 		local slotKey = origI == 10 and "0" or tostring(origI)
 		local badge = Instance.new("Frame", row)
-		badge.Size = UDim2.new(0, 20, 0, 16)
-		badge.Position = UDim2.new(0, 4, 0.5, -8)
-		badge.BackgroundColor3 = Color3.fromRGB(40, 38, 60)
-		badge.BorderSizePixel = 0; badge.ZIndex = 14
-		mkCorner(badge, 4)
-		mkLabel(badge, slotKey, Enum.Font.GothamBlack, 9, C.dim).ZIndex = 15
+		badge.Size=UDim2.new(0,20,0,16); badge.Position=UDim2.new(0,4,0.5,-8)
+		badge.BackgroundColor3=Color3.fromRGB(40,38,60); badge.BorderSizePixel=0
+		badge.ZIndex=14; corner(badge,4)
+		mkLabel(badge, slotKey, Enum.Font.GothamBlack, 9, C.dim).ZIndex=15
 
-		-- Emoji
 		mkLabel(row, item.emoji or "🍽",
-			Enum.Font.GothamBold, 22, C.white,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0, 26, 0, 0), UDim2.new(0, 34, 1, 0)).ZIndex = 14
+			Enum.Font.GothamBold, 22, C.white, Enum.TextXAlignment.Center,
+			UDim2.new(0,26,0,0), UDim2.new(0,34,1,0)).ZIndex=14
 
-		-- Name
 		local nameL = mkLabel(row, item.name or "?",
-			Enum.Font.GothamBold, 13, C.white,
-			Enum.TextXAlignment.Left,
-			UDim2.new(0, 64, 0, 4), UDim2.new(1, -72, 0, 20))
-		nameL.ZIndex = 14; nameL.TextTruncate = Enum.TextTruncate.AtEnd
+			Enum.Font.GothamBold, 13, C.white, Enum.TextXAlignment.Left,
+			UDim2.new(0,64,0,4), UDim2.new(1,-72,0,20))
+		nameL.ZIndex=14; nameL.TextTruncate=Enum.TextTruncate.AtEnd
 
-		-- Weight
-		mkLabel(row, "⚖" .. tostring(item.wt or item.weight or 0),
-			Enum.Font.Gotham, 10, C.dim,
-			Enum.TextXAlignment.Left,
-			UDim2.new(0, 64, 0, 26), UDim2.new(1, -72, 0, 14)).ZIndex = 14
+		mkLabel(row, "⚖"..tostring(item.wt or item.weight or 0),
+			Enum.Font.Gotham, 10, C.dim, Enum.TextXAlignment.Left,
+			UDim2.new(0,64,0,26), UDim2.new(1,-72,0,14)).ZIndex=14
 
-		-- Click: show detail
-		local capturedOrigI = origI
-		local capturedItem  = item
+		local capOrigI = origI; local capItem = item
 		row.MouseButton1Click:Connect(function()
 			if selectedListBtn then
 				selectedListBtn.BackgroundColor3 = C.bgLight
 				local s = selectedListBtn:FindFirstChildWhichIsA("UIStroke")
 				if s then
-					local old = tonumber(selectedListBtn.Name:match("%d+"))
-					local oldR = old and localInventory[old]
-						and normaliseRarity(localInventory[old].rarity) or "Common"
-					s.Thickness = 1.5
-					s.Color = RARITY_STROKE[oldR] or C.stroke
+					local oi = tonumber(selectedListBtn.Name:match("%d+"))
+					local or_ = oi and localInventory[oi]
+						and normalRarity(localInventory[oi].rarity) or "Common"
+					s.Thickness=1.5; s.Color=RARITY_STROKE[or_] or C.stroke
 				end
 			end
-			row.BackgroundColor3 = Color3.fromRGB(35, 33, 54)
-			rowStroke.Thickness = 2; rowStroke.Color = C.red
-			selectedListBtn = row
-			selectedItem    = capturedItem
-			showDetail(capturedItem, capturedOrigI)
+			row.BackgroundColor3 = Color3.fromRGB(35,33,54)
+			rowStroke.Thickness=2; rowStroke.Color=C.red
+			selectedListBtn=row; selectedItem=capItem
+			showDetail(capItem, capOrigI)
 		end)
 
-		-- Re-highlight if previously selected
-		if selectedItem and selectedItem.name == item.name
-		and selectedItem.emoji == item.emoji then
-			selectedListBtn = row
-			row.BackgroundColor3 = Color3.fromRGB(35, 33, 54)
-			rowStroke.Thickness = 2; rowStroke.Color = C.red
+		-- Re-highlight previously selected
+		if selectedItem and selectedItem.name==item.name
+		and selectedItem.emoji==item.emoji then
+			selectedListBtn=row
+			row.BackgroundColor3=Color3.fromRGB(35,33,54)
+			rowStroke.Thickness=2; rowStroke.Color=C.red
 			showDetail(item, origI)
 		end
 	end
 end
 
 -- ============================================================
--- REBUILD PANEL
+-- REBUILD / OPEN / CLOSE
 -- ============================================================
 
-local function rebuildPanel()
-	local icon = containerType == "Cart" and "🛒" or "🧺"
-	HeaderTitle.Text = icon .. "  " .. containerType .. " Inventory"
-	WeightHeader.Text = tostring(currentWeight) .. " / " .. tostring(maxWeight) .. " wt"
+function rebuildPanel()
+	local icon = containerType=="Cart" and "🛒" or "🧺"
+	HeaderTitle.Text  = icon.."  "..containerType.." Inventory"
+	WeightHeader.Text = tostring(currentWeight).." / "..tostring(maxWeight).." wt"
 	buildLeftList()
 end
 
--- ============================================================
--- OPEN / CLOSE
--- ============================================================
-
-local function closePanel()
-	panelOpen = false
-	inventoryGui.Enabled = false
-end
-
 local function openPanel()
-	-- Mutual minimize: close Store Guide if open
-	if _G.Chompers and _G.Chompers.CloseStoreGuide then
+	-- Close Store Guide if open
+	if _G.Chompers.IsStoreGuideOpen and _G.Chompers.IsStoreGuideOpen() then
 		_G.Chompers.CloseStoreGuide()
 	end
 	panelOpen = true
@@ -688,15 +570,19 @@ local function openPanel()
 	inventoryGui.Enabled = true
 end
 
+local function closePanel()
+	panelOpen = false
+	inventoryGui.Enabled = false
+end
+
 CloseBtn.MouseButton1Click:Connect(closePanel)
-Dimmer.MouseButton1Click:Connect(closePanel)   -- click backdrop to close
+Dimmer.MouseButton1Click:Connect(closePanel)
 
 -- Listen for InventoryToggle from ChompersBottomBar
 task.spawn(function()
 	local evt = playerGui:WaitForChild("InventoryToggle", 15)
 	if not evt then
-		warn("[InventoryClient] InventoryToggle not found")
-		return
+		warn("[InventoryClient] InventoryToggle event not found"); return
 	end
 	print("[InventoryClient] InventoryToggle connected")
 	evt.Event:Connect(function(isOpen)
@@ -733,7 +619,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	local slot = NUM_KEYS[input.KeyCode]
 	if slot then
 		selectedSlot = slot
-		if _G.Chompers and _G.Chompers.SetSelectedSlot then
+		if _G.Chompers.SetSelectedSlot then
 			_G.Chompers.SetSelectedSlot(selectedSlot)
 		end
 		if panelOpen then buildLeftList() end
@@ -747,7 +633,6 @@ end)
 if UpdateInventoryRemote then
 	UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
 		localInventory = inventory or {}
-		print("[InventoryClient] UpdateInventory fired — " .. #localInventory .. " items")
 		syncHotbar()
 		if panelOpen then rebuildPanel() end
 	end)
@@ -756,21 +641,17 @@ end
 if UpdateWeightRemote then
 	UpdateWeightRemote.OnClientEvent:Connect(function(current, maxW)
 		currentWeight = current or 0
-		maxWeight = maxW or 35
-		if _G.Chompers and _G.Chompers.SetWeight then
-			_G.Chompers.SetWeight(currentWeight, maxWeight)
-		end
+		maxWeight     = maxW or 35
+		_G.Chompers.SetWeight(currentWeight, maxWeight)
 		if panelOpen then
-			WeightHeader.Text = tostring(currentWeight) .. " / " .. tostring(maxWeight) .. " wt"
+			WeightHeader.Text = tostring(currentWeight).." / "..tostring(maxWeight).." wt"
 		end
 	end)
 end
 
 if UpdateMoneyRemote then
 	UpdateMoneyRemote.OnClientEvent:Connect(function(amount)
-		if _G.Chompers and _G.Chompers.SetMoney then
-			_G.Chompers.SetMoney(amount)
-		end
+		_G.Chompers.SetMoney(amount)
 	end)
 end
 
@@ -779,65 +660,62 @@ end
 -- ============================================================
 
 local checkoutGui = Instance.new("ScreenGui")
-checkoutGui.Name = "CheckoutProgressGui"
-checkoutGui.ResetOnSpawn = false; checkoutGui.DisplayOrder = 15
-checkoutGui.IgnoreGuiInset = true; checkoutGui.Enabled = false
-checkoutGui.Parent = playerGui
+checkoutGui.Name="CheckoutProgressGui"; checkoutGui.ResetOnSpawn=false
+checkoutGui.DisplayOrder=15; checkoutGui.IgnoreGuiInset=true
+checkoutGui.Enabled=false; checkoutGui.Parent=playerGui
 
 local cFrame = Instance.new("Frame", checkoutGui)
-cFrame.Size = UDim2.new(0, 400, 0, 80)
-cFrame.AnchorPoint = Vector2.new(0.5, 1)
-cFrame.Position = UDim2.new(0.5, 0, 1, -100)
-cFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32); cFrame.BorderSizePixel = 0
-mkCorner(cFrame, 12)
-local cStroke = Instance.new("UIStroke", cFrame)
-cStroke.Thickness = 2; cStroke.Color = C.money
+cFrame.Size=UDim2.new(0,400,0,80)
+cFrame.AnchorPoint=Vector2.new(0.5,1)
+cFrame.Position=UDim2.new(0.5,0,1,-100)
+cFrame.BackgroundColor3=Color3.fromRGB(20,18,32); cFrame.BorderSizePixel=0
+corner(cFrame,12)
+local cStroke = mkStroke(cFrame,2,C.money)
 
-local cTitle = mkLabel(cFrame, "💵  Checking out...",
-	Enum.Font.GothamBold, 18, C.money, Enum.TextXAlignment.Center,
-	UDim2.new(0, 0, 0, 6), UDim2.new(1, 0, 0, 28))
+local cTitle = mkLabel(cFrame,"💵  Checking out...",
+	Enum.Font.GothamBold,18,C.money,Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,6),UDim2.new(1,0,0,28))
 
-local cTrack = Instance.new("Frame", cFrame)
-cTrack.Size = UDim2.new(1, -24, 0, 10); cTrack.Position = UDim2.new(0, 12, 1, -18)
-cTrack.BackgroundColor3 = Color3.fromRGB(30, 28, 44); cTrack.BorderSizePixel = 0
-mkCorner(cTrack, 5)
-local cFill = Instance.new("Frame", cTrack)
-cFill.Size = UDim2.new(0, 0, 1, 0)
-cFill.BackgroundColor3 = C.money; cFill.BorderSizePixel = 0
-mkCorner(cFill, 5)
+local cTrack = Instance.new("Frame",cFrame)
+cTrack.Size=UDim2.new(1,-24,0,10); cTrack.Position=UDim2.new(0,12,1,-18)
+cTrack.BackgroundColor3=Color3.fromRGB(30,28,44); cTrack.BorderSizePixel=0
+corner(cTrack,5)
+local cFill = Instance.new("Frame",cTrack)
+cFill.Size=UDim2.new(0,0,1,0)
+cFill.BackgroundColor3=C.money; cFill.BorderSizePixel=0; corner(cFill,5)
 
-local checkoutTween = nil
+local cTween = nil
 
 if CheckoutStartRemote then
 	CheckoutStartRemote.OnClientEvent:Connect(function(holdTime, cost)
-		checkoutGui.Enabled = true
-		cFill.Size = UDim2.new(0, 0, 1, 0)
-		if checkoutTween then checkoutTween:Cancel() end
-		checkoutTween = TweenService:Create(cFill,
-			TweenInfo.new(holdTime, Enum.EasingStyle.Linear),
-			{Size = UDim2.new(1, 0, 1, 0)})
-		checkoutTween:Play()
+		checkoutGui.Enabled=true
+		cFill.Size=UDim2.new(0,0,1,0)
+		if cTween then cTween:Cancel() end
+		cTween=TweenService:Create(cFill,
+			TweenInfo.new(holdTime,Enum.EasingStyle.Linear),
+			{Size=UDim2.new(1,0,1,0)})
+		cTween:Play()
 	end)
 end
 
 if CheckoutCompleteRemote then
-	CheckoutCompleteRemote.OnClientEvent:Connect(function(success, newMoney, cost)
-		if checkoutTween then checkoutTween:Cancel(); checkoutTween = nil end
-		checkoutGui.Enabled = true
+	CheckoutCompleteRemote.OnClientEvent:Connect(function(success,_,cost)
+		if cTween then cTween:Cancel(); cTween=nil end
+		checkoutGui.Enabled=true
 		if success then
-			cFrame.BackgroundColor3 = Color3.fromRGB(18, 45, 20)
-			cTitle.Text = "✓  Paid $" .. tostring(cost) .. "!"
-			cTitle.TextColor3 = C.green
+			cFrame.BackgroundColor3=Color3.fromRGB(18,45,20)
+			cTitle.Text="✓  Paid $"..tostring(cost).."!"
+			cTitle.TextColor3=C.green
 		else
-			cFrame.BackgroundColor3 = Color3.fromRGB(45, 15, 15)
-			cTitle.Text = "✗  Not enough money!"
-			cTitle.TextColor3 = C.red
+			cFrame.BackgroundColor3=Color3.fromRGB(45,15,15)
+			cTitle.Text="✗  Not enough money!"
+			cTitle.TextColor3=C.red
 		end
 		task.wait(success and 1.2 or 1.5)
-		checkoutGui.Enabled = false
-		cFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
-		cTitle.Text = "💵  Checking out..."
-		cTitle.TextColor3 = C.money
+		checkoutGui.Enabled=false
+		cFrame.BackgroundColor3=Color3.fromRGB(20,18,32)
+		cTitle.Text="💵  Checking out..."
+		cTitle.TextColor3=C.money
 	end)
 end
 
