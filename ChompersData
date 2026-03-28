@@ -1,0 +1,610 @@
+-- ============================================================
+-- ChompersData — ModuleScript
+-- Location: ReplicatedStorage > ChompersData
+-- Source of Truth: CHOMPERS GAME DESIGN BIBLE v7.0 (LOCKED)
+-- Last updated: March 2026
+--
+-- CL = Cleanliness (HP bar, 0–100). Increases from enemy hits only. Never decays.
+-- FL = Fullness (control/penalty bar, 0–100). Decays slowly over time on its own.
+-- ============================================================
+
+local ChompersData = {}
+
+-- ============================================================
+-- BALANCE CONSTANTS (Part 34 — Balance Patch v1 + Part 8/9/11)
+-- ============================================================
+
+ChompersData.Constants = {
+
+	-- Phase durations (seconds)
+	Phase = {
+		PreglobbyMaxWait    = 90,
+		PreglobbyMinPlayers = 8,
+		Gathering           = 180,
+		Cooking             = 180,
+		CookingGrace        = 10,
+		FoodFight           = 360,
+		Accolades           = 45,
+	},
+
+	-- Cleanliness (CL) bar thresholds
+	CL = {
+		WarnThreshold       = 95,     -- ~95% → 0.75s slow + screen edge effect
+		BathroomThreshold   = 80,     -- 80%+ unlocks bathroom access
+		MaxValue            = 100,
+		WarnSlowDuration    = 0.75,   -- seconds of warning slow
+		GraceWindow         = 1.5,    -- seconds of sub-100% grace after 40+ CL single hit
+		GraceMinHit         = 40,     -- minimum single hit that triggers grace window
+	},
+
+	-- Fullness (FL) bar thresholds
+	FL = {
+		WarnThreshold       = 95,
+		BathroomThreshold   = 80,
+		MaxValue            = 100,
+		WarnSlowDuration    = 0.75,
+		DecaysOverTime      = true,   -- FL decays slowly; CL does not
+		-- Overweight size/speed effects
+		Tier1Min            = 10,     -- 10–20%: +10% size, −10% speed
+		Tier1Max            = 20,
+		Tier1SizeMult       = 1.10,
+		Tier1SpeedMult      = 0.90,
+		Tier2Min            = 20,     -- 20–30%: +25% size, −25% speed
+		Tier2Max            = 30,
+		Tier2SizeMult       = 1.25,
+		Tier2SpeedMult      = 0.75,
+	},
+
+	-- FL per hit (Balance Patch v1 — differentiated by recipe type)
+	FLPerHit = {
+		RawCold  = 1,   -- +1 FL per raw / cold recipe hit
+		Cooked   = 2,   -- +2 FL per cooked recipe hit
+	},
+
+	-- 100% state (applies to either bar hitting 100%)
+	State100 = {
+		CueDuration         = 0.5,    -- dramatic slow + sound cue
+		SpeedPenalty        = 0.30,   -- −30% movement speed after drop
+		DualSpeedPenalty    = 0.60,   -- −60% if BOTH bars hit 100%
+		DropAll             = true,   -- drops entire inventory
+		OwnerLockDuration   = 1.0,    -- 1s before dropped items go free-for-all (Balance Patch v1)
+	},
+
+	-- Minimum movement speed floor (Balance Patch v1)
+	SpeedFloor = 0.35,   -- player speed can never fall below 35% of base
+
+	-- Allergy multipliers (Part 5)
+	Allergy = {
+		MatchMultiplier     = 1.75,   -- allergen hit: ×1.75 CL received
+		NoMatchMultiplier   = 0.75,   -- non-allergen hit: ×0.75 CL received
+	},
+
+	-- Damage formula multipliers (Part 8)
+	Damage = {
+		CookDepth2Bonus     = 0.05,   -- +5% additive
+		CookDepth3Bonus     = 0.10,   -- +10% additive
+		CookDepth4Bonus     = 0.15,   -- +15% additive (4+ ingredients)
+		OilFireMultiplier   = 1.60,   -- oil primer + fire recipe
+		SoftCap1Threshold   = 3.0,    -- ≤3.0× → full value
+		SoftCap2Threshold   = 4.0,    -- 3.0–4.0× → 80% efficiency
+		SoftCap1Efficiency  = 1.00,
+		SoftCap2Efficiency  = 0.80,
+		SoftCap3Efficiency  = 0.65,   -- 4.0×+ → 65% efficiency
+	},
+
+	-- Mark system (Part 9)
+	Marks = {
+		Tomato     = { bonus = 0.15, window = 4 },   -- +15% CL, 4s window
+		SoySauce   = { bonus = 0.20, window = 4 },   -- +20% CL, 4s window
+		BlackGarlic = { bonus = 0.20, window = 4 },  -- +20% CL, 4s window
+		-- One active mark max. Highest value wins.
+	},
+
+	-- Elemental chains (Part 9)
+	Elemental = {
+		OilWindowSeconds    = 3,      -- oil hit must precede fire recipe within 3s
+		OilFireMultiplier   = 1.60,
+		FireRecipes = {
+			"Stir Fry", "Mapo Tofu", "Kimchi Fried Rice", "Inferno Skewer", "Chicken Curry"
+		},
+	},
+
+	-- CC diminishing returns (Part 9)
+	CCDiminish = {
+		Hit1 = 1.00,
+		Hit2 = 0.70,
+		Hit3 = 0.40,
+		Hit4 = 0.20,   -- floor
+		ResetSeconds = 8,
+	},
+
+	-- Freeze cap (Part 9)
+	FreezeCapSeconds = 2.5,
+
+	-- Craving State (Part 5 — Favourite system)
+	Craving = {
+		Multiplier     = 1.50,   -- ×1.5 CL on next throw, consumed on hit
+		WindowSeconds  = 10,
+		CooldownSeconds = 15,
+		-- Trigger: self-consume your favourite recipe
+		-- Also grants: buff duration +8s, fullness cost halved for that consume
+	},
+	-- Enemy hits you with your own favourite → ×2 FL spike to you
+	FavouriteEnemyFLSpike = 2.0,
+
+	-- Throw system (Part 11 — Balance Patch v1)
+	Throw = {
+		BaseSpeed           = 80,    -- studs/s
+		BaseDistance        = 50,    -- studs
+		ArcPeak             = 8,     -- studs
+		Cooldown            = 0.8,   -- seconds (Balance Patch v1, up from 0.4)
+		MinCharge           = 0.3,   -- seconds (40% power)
+		MaxCharge           = 1.5,   -- seconds (100% power)
+	},
+
+	-- AoE falloff (Part 11)
+	AoEFalloff = {
+		{ maxDist = 2,  pct = 1.00 },
+		{ maxDist = 5,  pct = 0.75 },
+		{ maxDist = 8,  pct = 0.50 },
+		{ maxDist = 12, pct = 0.25 },
+	},
+
+	-- Containers (Part 6)
+	Containers = {
+		Basket = { weightLimit = 35, speedMod = 1.05,  detectRadius = 1.00, slots = 6  },
+		Cart   = { weightLimit = 70, speedMod = 0.85,  detectRadius = 1.15, slots = 12 },
+	},
+
+	-- Rarity stack limits (Part 6)
+	RarityStack = {
+		Common    = 3,
+		Uncommon  = 2,
+		Rare      = 1,
+		UltraRare = 1,
+		Legendary = 1,
+	},
+
+	-- Bathroom system (Part 4)
+	Bathroom = {
+		PottyBreaksPerMatch     = 3,
+		ExitGraceSeconds        = 1.5,
+		BufferNoThrowStuds      = 10,
+		SinkResetSeconds        = 3,   -- CL → 0 over ~3s
+		ToiletResetSeconds      = 2,   -- FL → 0 over ~2s
+		MaxStayAfterResetSeconds = 10, -- Balance Patch v1: forced exit 10s after both bars = 0
+		-- Using Sink: costs 1 Potty Break, CL → 0
+		-- Using Toilet: costs 1 Potty Break, FL → 0
+		-- 0 Potty Breaks remaining: ELIMINATED → spectator
+	},
+
+	-- Napkin (Part 3)
+	Napkin = {
+		CLHeal          = 25,
+		UseTimeSeconds  = 2,
+		CooldownSeconds = 20,
+		BreakCost       = 0,   -- free, no Potty Break consumed
+		StartingCount   = 1,
+	},
+
+	-- Starting economy (Part 7)
+	Economy = {
+		StartingCash         = 15,
+		StartingNapkins      = 1,
+		FriendshipBraceletCost = 12,
+		AssistScorePct       = 0.35,  -- 35% of CL dealt as assist score (within 4s)
+		AssistWindowSeconds  = 4,
+	},
+
+	-- Points system (Part 15)
+	Points = {
+		PickupIngredient      = 2,
+		IngredientPaidCheckout = 3,
+		DirectHitPerCL        = 1,
+		DirectHitPerFL        = 0.5,
+		DownEnemy             = 25,
+		Assist                = 15,
+		FormAlliance          = 5,
+		SurviveToEnd          = 10,
+		FinishDishSolo_base   = 10,   -- × rarity multiplier
+		FinishDishSousSide    = 8,    -- × rarity multiplier
+		SousChefContrib_base  = 3,    -- × ingredient rarity multiplier
+		RarityMultiplier = {
+			Common    = 1.0,
+			Uncommon  = 1.5,
+			Rare      = 2.5,
+			UltraRare = 4.0,
+			Legendary = 8.0,
+		},
+	},
+
+	-- Ingredient respawn (Part 16)
+	Respawn = {
+		Common    = 25,
+		Uncommon  = 35,
+		Rare      = 50,
+		UltraRare = 90,
+		Legendary = 0,    -- never respawns
+		Cash_Small = 45,
+		Cash_Stack = 60,
+		Napkin     = 0,
+		Bracelet   = 0,
+	},
+
+	-- Cook times by rarity (Part 10)
+	CookTime = {
+		Common    = 2,
+		Uncommon  = 4,
+		Rare      = 7,
+		UltraRare = 12,
+		Legendary = 20,
+	},
+
+	-- Servings by rarity (Part 10)
+	Servings = {
+		Common    = 3,
+		Uncommon  = 2,
+		Rare      = 1,
+		UltraRare = 1,
+		Legendary = 1,
+	},
+
+	-- Cook depth bonus (Part 10) — additive, not multiplicative
+	CookDepth = {
+		[2] = 0.05,
+		[3] = 0.10,
+		[4] = 0.15,   -- 4+ ingredients all use this
+	},
+
+	-- Cooking bonuses (Part 32)
+	CookBonus = {
+		SpeedBonus      = 0.05,   -- +5% CL (multiplicative)
+		TendingBonus    = 0.10,   -- +10% CL if full green (multiplicative)
+		BurnModifier    = 0.70,   -- ×0.70 CL
+		BurnStatusBonus = 0.30,   -- +30% status strength on burned dish
+		ScorchContrib   = 0.50,   -- that ingredient's CL contribution ×0.50
+		PrepInterruptThreshold = 25,   -- 25+ CL single hit interrupts prep
+		StoveInterruptPresent  = 25,   -- present at stovetop
+		StoveInterruptAway     = 40,   -- away from stovetop
+		ColdRecipePickupDelay  = 2,    -- seconds delay before throwable
+		HotHandsDuration       = 3,    -- seconds
+		HotHandsSpeedBonus     = 0.05, -- +5% throw speed
+	},
+
+	-- Burn windows by recipe rarity (Part 32)
+	BurnWindow = {
+		Simple  = 15,   -- simple stovetop
+		Medium  = 22,
+		Complex = 30,
+	},
+
+	-- Deconstruct penalty (Part 10)
+	Deconstruct = {
+		InitiatorCLPenaltyPerIngredient = 5,  -- −5 CL per ingredient in dish
+		SousChefPenalty = 0,
+	},
+
+	-- Legendary items (Part 14)
+	Legendaries = {
+		GoldenCart = {
+			SpeedBonus        = 0.40,   -- +40% speed for holder
+			ThrowRangeMult    = 2.00,   -- ×2 throw range for holder
+			AllySpeedBonus    = 0.20,   -- +20% speed for allies ≤20 studs
+			AllyThrowMult     = 1.50,   -- ×1.5 throw range for allies
+			AllyRadius        = 20,     -- studs
+			DurationSeconds   = 20,
+		},
+		PortableCooker = {
+			TotalUses         = 4,
+			SlowerThanKitchen = 1.5,    -- 1.5s slower per cook cycle
+			SousChefAllowed   = true,
+		},
+		MillionDollarSteak = {
+			CL                = 70,
+			ServerAnnounce    = true,   -- announced on throw
+		},
+	},
+
+	-- Alliance reconfirmation windows (Part 12)
+	Alliance = {
+		GreyOutSeconds    = 5,
+		Reconfirm2Person  = 15,
+		Reconfirm3Person  = 20,
+		SoloBonusDetectPct = -0.20,  -- −20% detection radius (stealth bonus)
+	},
+
+	-- End-game Together payout (Part 12)
+	TogetherMedalPct = 0.70,  -- 70% of Last One Standing medal value
+
+}
+
+-- ============================================================
+-- INGREDIENTS (65 TOTAL — Part 17, LOCKED)
+-- ⚠️  "Ackee" is NOT in the official 65. Do not add it.
+-- ⚠️  Egg allergy type = "Dairy" (not "Eggs")
+-- ⚠️  Lobster = Rare, wt=5, $9
+-- ============================================================
+
+-- Schema:
+--   name       string   — ingredient name
+--   zone       string   — spawn zone (Produce/Bakery/Dairy/Freezer/Aisles/Stockroom)
+--   rarity     string   — Common/Uncommon/Rare/UltraRare/Legendary
+--   cl         number   — raw Cleanliness damage
+--   wt         number   — weight units
+--   cost       number   — checkout price in $
+--   allergy    string   — allergy type ("None" if none)
+--   effect     string   — brief description of special mechanic
+
+ChompersData.Ingredients = {
+
+	-- ── PRODUCE (23) ──────────────────────────────────────────
+	{ name="Apple",       zone="Produce",   rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce",  effect="Knockback, +2 FL to target" },
+	{ name="Banana",      zone="Produce",   rarity="Common",    cl=5,  wt=1, cost=2,  allergy="Produce",  effect="Peel slip hazard 1s on floor" },
+	{ name="Tomato",      zone="Produce",   rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce",  effect="MARK +15% CL" },
+	{ name="Lettuce",     zone="Produce",   rarity="Common",    cl=5,  wt=1, cost=1,  allergy="Produce",  effect="Minor vision blur" },
+	{ name="Onion",       zone="Produce",   rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce",  effect="AoE accuracy debuff cloud" },
+	{ name="Carrot",      zone="Produce",   rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce",  effect="Fast straight trajectory" },
+	{ name="Spinach",     zone="Produce",   rarity="Common",    cl=5,  wt=1, cost=1,  allergy="Produce",  effect="Sticks to target briefly" },
+	{ name="Peas",        zone="Produce",   rarity="Common",    cl=5,  wt=1, cost=1,  allergy="Produce",  effect="Scatter, hits up to 2 nearby" },
+	{ name="Egg",         zone="Produce",   rarity="Common",    cl=6,  wt=2, cost=2,  allergy="Dairy",    effect="Raw throwable, mini AoE splat" }, -- Egg allergy = Dairy
+	{ name="Potato",      zone="Produce",   rarity="Common",    cl=5,  wt=2, cost=2,  allergy="Produce",  effect="Rolls on floor after impact" },
+	{ name="Basil",       zone="Produce",   rarity="Common",    cl=4,  wt=1, cost=1,  allergy="Produce",  effect="Mild vision blur, mainly cooking" },
+	{ name="Bell Pepper", zone="Produce",   rarity="Uncommon",  cl=6,  wt=1, cost=2,  allergy="Produce",  effect="Scatter on impact" },
+	{ name="Corn",        zone="Produce",   rarity="Uncommon",  cl=6,  wt=2, cost=2,  allergy="Produce",  effect="Ricochets, kernels scatter" },
+	{ name="Mango",       zone="Produce",   rarity="Uncommon",  cl=6,  wt=2, cost=3,  allergy="Produce",  effect="Sticky splash" },
+	{ name="Avocado",     zone="Produce",   rarity="Uncommon",  cl=7,  wt=2, cost=3,  allergy="Produce",  effect="Soft slow on hit" },
+	{ name="Garlic",      zone="Produce",   rarity="Uncommon",  cl=6,  wt=1, cost=3,  allergy="Produce",  effect="Strips 15% from all active buff durations on target" },
+	{ name="Tofu",        zone="Produce",   rarity="Uncommon",  cl=6,  wt=2, cost=3,  allergy="Soy",      effect="Wobble hit, unpredictable bounce" },
+	{ name="Pineapple",   zone="Produce",   rarity="Uncommon",  cl=7,  wt=2, cost=3,  allergy="Produce",  effect="Wide AoE splash burst" },
+	{ name="Plantain",    zone="Produce",   rarity="Rare",      cl=7,  wt=2, cost=3,  allergy="Produce",  effect="Heavy knockback" },
+	{ name="Beet",        zone="Produce",   rarity="Rare",      cl=6,  wt=1, cost=2,  allergy="Produce",  effect="Deep red floor stain 10s" },
+	{ name="Kimchi",      zone="Produce",   rarity="Rare",      cl=7,  wt=2, cost=4,  allergy="Spicy",    effect="AoE cloud, spice primer" },
+	{ name="Coconut",     zone="Produce",   rarity="Rare",      cl=8,  wt=3, cost=5,  allergy="Nuts",     effect="Heavy knockback, AoE amplifier when cooked" },
+	{ name="Truffle",     zone="Produce",   rarity="Rare",      cl=8,  wt=1, cost=15, allergy="Produce",  effect="Next cooked recipe +30% CL +1 serving (consumed on cook)" },
+
+	-- ── BAKERY (10) ───────────────────────────────────────────
+	{ name="Bun",         zone="Bakery",    rarity="Common",    cl=5,  wt=2, cost=2,  allergy="Gluten",   effect="Soft blunt hit" },
+	{ name="Bread Loaf",  zone="Bakery",    rarity="Common",    cl=7,  wt=2, cost=3,  allergy="Gluten",   effect="Blunt knockback" },
+	{ name="Flour",       zone="Bakery",    rarity="Common",    cl=5,  wt=2, cost=2,  allergy="Gluten",   effect="Dust cloud, accuracy debuff" },
+	{ name="Sugar",       zone="Bakery",    rarity="Common",    cl=4,  wt=1, cost=2,  allergy="None",     effect="Combo ingredient only" },
+	{ name="Naan",        zone="Bakery",    rarity="Uncommon",  cl=5,  wt=1, cost=3,  allergy="Gluten",   effect="Frisbee flight — fast and flat" },
+	{ name="Dough",       zone="Bakery",    rarity="Uncommon",  cl=6,  wt=3, cost=3,  allergy="Gluten",   effect="Sticky, clings to target" },
+	{ name="Chocolate",   zone="Bakery",    rarity="Uncommon",  cl=7,  wt=2, cost=3,  allergy="None",     effect="Mild slow on hit" },
+	{ name="Honey",       zone="Bakery",    rarity="Rare",      cl=8,  wt=1, cost=8,  allergy="None",     effect="Root 1s + sticky floor zone 5s" },
+	{ name="Croissant",   zone="Bakery",    rarity="Rare",      cl=9,  wt=2, cost=7,  allergy="Gluten",   effect="Splits into 3 independent projectiles" },
+	{ name="Fondant",     zone="Bakery",    rarity="UltraRare", cl=14, wt=2, cost=14, allergy="Gluten",   effect="−30% speed + vision blur 5s" },
+
+	-- ── DAIRY (8) ─────────────────────────────────────────────
+	{ name="Milk",        zone="Dairy",     rarity="Common",    cl=4,  wt=2, cost=3,  allergy="Dairy",    effect="Self-consume: −10 CL. Throw: weak wide hit" },
+	{ name="Yogurt",      zone="Dairy",     rarity="Common",    cl=5,  wt=2, cost=3,  allergy="Dairy",    effect="Wide sticky splash" },
+	{ name="Cream",       zone="Dairy",     rarity="Uncommon",  cl=6,  wt=2, cost=4,  allergy="Dairy",    effect="Vision blur cloud" },
+	{ name="Cheese Block",zone="Dairy",     rarity="Uncommon",  cl=7,  wt=2, cost=4,  allergy="Dairy",    effect="Slow on hit. ×2 = ROOT 1.5s" },
+	{ name="Butter",      zone="Dairy",     rarity="Uncommon",  cl=6,  wt=2, cost=4,  allergy="Dairy",    effect="Floor slip zone after impact" },
+	{ name="Mayonnaise",  zone="Dairy",     rarity="Uncommon",  cl=7,  wt=2, cost=4,  allergy="Dairy",    effect="Wide splash slow" },
+	{ name="Blue Cheese", zone="Dairy",     rarity="Rare",      cl=9,  wt=2, cost=7,  allergy="Dairy",    effect="Next slow/root on target +50% duration" },
+	{ name="Ice Cream",   zone="Dairy",     rarity="UltraRare", cl=10, wt=2, cost=12, allergy="Dairy",    effect="Freeze 2s (cap 2.5s total)" },
+
+	-- ── FREEZER / MEAT (9) ───────────────────────────────────
+	{ name="Tuna",        zone="Freezer",   rarity="Common",    cl=6,  wt=2, cost=4,  allergy="Seafood",  effect="Fastest throw in the game" },
+	{ name="Chicken",     zone="Freezer",   rarity="Common",    cl=8,  wt=3, cost=5,  allergy="Meat",     effect="Knockback on hit" },
+	{ name="Sausage",     zone="Freezer",   rarity="Common",    cl=8,  wt=3, cost=5,  allergy="Meat",     effect="Rolls as trip hazard after impact" },
+	{ name="Crab",        zone="Freezer",   rarity="Uncommon",  cl=7,  wt=3, cost=5,  allergy="Seafood",  effect="Mini root 0.8s" },
+	{ name="Pork",        zone="Freezer",   rarity="Uncommon",  cl=9,  wt=4, cost=5,  allergy="Meat",     effect="DoT bleed +1 CL/s for 3s" },
+	{ name="Beef",        zone="Freezer",   rarity="Uncommon",  cl=9,  wt=4, cost=6,  allergy="Meat",     effect="High CL spike" },
+	{ name="Shrimp",      zone="Freezer",   rarity="Rare",      cl=8,  wt=2, cost=6,  allergy="Seafood",  effect="Double hit — two CL impacts per throw" },
+	{ name="Lobster",     zone="Freezer",   rarity="Rare",      cl=9,  wt=5, cost=9,  allergy="Seafood",  effect="Heavy stagger on direct hit" },
+	{ name="Wagyu Beef",  zone="Freezer",   rarity="UltraRare", cl=14, wt=5, cost=18, allergy="Meat",     effect="Knockdown. Required for Million Dollar Steak." },
+
+	-- ── AISLES (14) ───────────────────────────────────────────
+	{ name="Rice",         zone="Aisles",   rarity="Common",    cl=5,  wt=2, cost=3,  allergy="None",     effect="Scatter AoE" },
+	{ name="Pasta",        zone="Aisles",   rarity="Common",    cl=6,  wt=2, cost=3,  allergy="Gluten",   effect="Slow on hit" },
+	{ name="Noodles",      zone="Aisles",   rarity="Common",    cl=6,  wt=2, cost=3,  allergy="Gluten",   effect="Entangle. ×2 = trap + pull" },
+	{ name="Tortilla",     zone="Aisles",   rarity="Common",    cl=6,  wt=1, cost=3,  allergy="Gluten",   effect="Fast flat projectile" },
+	{ name="Salt",         zone="Aisles",   rarity="Common",    cl=4,  wt=1, cost=2,  allergy="None",     effect="Anti-heal: −20% CL recovery on target" },
+	{ name="Almond",       zone="Aisles",   rarity="Common",    cl=6,  wt=1, cost=3,  allergy="Nuts",     effect="2nd fastest throw, great Mark executor" },
+	{ name="Chili Powder", zone="Aisles",   rarity="Uncommon",  cl=6,  wt=1, cost=3,  allergy="Spicy",    effect="Burn DoT +1 CL/s for 4s. Spice primer." },
+	{ name="Soy Sauce",    zone="Aisles",   rarity="Uncommon",  cl=5,  wt=1, cost=4,  allergy="Soy",      effect="MARK +20% CL" },
+	{ name="Peanut",       zone="Aisles",   rarity="Uncommon",  cl=6,  wt=1, cost=4,  allergy="Nuts",     effect="Bounces, can hit multiple targets" },
+	{ name="Oil",          zone="Aisles",   rarity="Uncommon",  cl=5,  wt=2, cost=4,  allergy="None",     effect="Fire primer — fire recipe on same target = ×1.6 CL" },
+	{ name="Miso Paste",   zone="Aisles",   rarity="Uncommon",  cl=7,  wt=1, cost=5,  allergy="Soy",      effect="Sticky DoT +1 CL/s for 4s" },
+	{ name="Curry Powder", zone="Aisles",   rarity="Rare",      cl=6,  wt=1, cost=4,  allergy="Spicy",    effect="Spice primer, expanded AoE" },
+	{ name="Black Garlic", zone="Aisles",   rarity="Rare",      cl=6,  wt=1, cost=6,  allergy="None",     effect="MARK +20% CL" },
+	{ name="Saffron",      zone="Aisles",   rarity="UltraRare", cl=8,  wt=1, cost=10, allergy="None",     effect="AoE amplifier for any recipe" },
+
+	-- ── STOCKROOM EXCLUSIVE (1) ───────────────────────────────
+	{ name="Caviar",       zone="Stockroom", rarity="Legendary", cl=9,  wt=1, cost=12, allergy="Seafood",  effect="Precision, no splash. Required for Million Dollar Steak." },
+}
+
+-- ============================================================
+-- RECIPES (66 TOTAL — Part 18, LOCKED)
+-- CL = per serving thrown. Servings by rarity (Common=3, Uncommon=2, Rare/UR/Legendary=1)
+-- Paella CL=35. Saffron Rice CL=44. Lobster Bisque CL=45. (confirmed balanced)
+-- ============================================================
+
+-- Schema:
+--   name         string   — recipe name
+--   rarity       string   — determines servings + cook time
+--   cl           number   — CL per serving
+--   ingredients  table    — list of ingredient names (exact match)
+--   station      string   — "Prep" / "Stovetop" / "Prep+Stove" / "None"
+--   wt           number   — total weight
+--   cost         number   — total ingredient cost at checkout
+--   notes        string?  — optional: special behaviour
+
+ChompersData.Recipes = {
+
+	-- ── COMMON (15) — 3 servings, 2s cook ────────────────────
+	{ name="Burger",            rarity="Common",    cl=12, ingredients={"Bun","Beef","Lettuce","Tomato","Cheese Block"},  station="Prep",       wt=5,  cost=14 },
+	{ name="Taco",              rarity="Common",    cl=10, ingredients={"Tortilla","Beef","Lettuce","Cheese Block"},      station="Prep",       wt=4,  cost=11 },
+	{ name="Fries",             rarity="Common",    cl=8,  ingredients={"Potato","Oil","Salt"},                           station="Stovetop",   wt=3,  cost=6  },
+	{ name="Egg Splat",         rarity="Common",    cl=8,  ingredients={"Egg"},                                           station="None",       wt=2,  cost=3,  notes="Raw — skip kitchen entirely" },
+	{ name="Caprese Skewer",    rarity="Common",    cl=7,  ingredients={"Tomato","Cheese Block","Basil"},                 station="Prep",       wt=2,  cost=8  },
+	{ name="Tofu Scramble",     rarity="Common",    cl=9,  ingredients={"Tofu","Egg","Spinach"},                          station="Prep",       wt=3,  cost=9  },
+	{ name="Pound Cake",        rarity="Common",    cl=0,  ingredients={"Flour","Sugar","Butter","Egg"},                  station="Prep+Stove", wt=4,  cost=10, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Mac and Cheese",    rarity="Common",    cl=12, ingredients={"Pasta","Cheese Block","Milk"},                   station="Prep+Stove", wt=4,  cost=11 },
+	{ name="Sausage Sandwich",  rarity="Common",    cl=12, ingredients={"Bun","Sausage","Lettuce","Tomato"},              station="Prep",       wt=4,  cost=13 },
+	{ name="Hummus Plate",      rarity="Common",    cl=8,  ingredients={"Peanut","Garlic","Flour"},                       station="Prep",       wt=3,  cost=10, notes="Prep (raw)" },
+	{ name="Roti",              rarity="Common",    cl=7,  ingredients={"Flour","Butter","Potato"},                       station="Prep",       wt=3,  cost=8  },
+	{ name="Samosa",            rarity="Common",    cl=9,  ingredients={"Flour","Potato","Peas","Chili Powder"},          station="Prep+Stove", wt=3,  cost=10 },
+	{ name="Crepe",             rarity="Common",    cl=0,  ingredients={"Flour","Egg","Butter"},                          station="Stovetop",   wt=2,  cost=7,  notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Grilled Cheese",    rarity="Common",    cl=10, ingredients={"Bread Loaf","Cheese Block","Butter"},            station="Stovetop",   wt=3,  cost=9  },
+	{ name="Chocolate Banana",  rarity="Common",    cl=0,  ingredients={"Chocolate","Banana"},                            station="Stovetop",   wt=2,  cost=6,  notes="Buff/self-consume only, 0 combat CL" },
+
+	-- ── UNCOMMON (28) — 2 servings, 4s cook ──────────────────
+	{ name="Pizza Slice",       rarity="Uncommon",  cl=25, ingredients={"Dough","Cheese Block","Tomato","Basil"},                    station="Prep+Stove", wt=5,  cost=14 },
+	{ name="Quesadilla",        rarity="Uncommon",  cl=20, ingredients={"Tortilla","Cheese Block","Chili Powder"},                   station="Prep+Stove", wt=4,  cost=11 },
+	{ name="Burrito",           rarity="Uncommon",  cl=25, ingredients={"Tortilla","Rice","Beef","Chili Powder"},                    station="Prep",       wt=5,  cost=14 },
+	{ name="Stir Fry",          rarity="Uncommon",  cl=20, ingredients={"Noodles","Carrot","Bell Pepper","Chicken"},                 station="Prep+Stove", wt=5,  cost=16, notes="Fire recipe — Oil primer triggers ×1.6" },
+	{ name="Chow Mein",         rarity="Uncommon",  cl=18, ingredients={"Noodles","Onion","Soy Sauce"},                             station="Prep+Stove", wt=4,  cost=11 },
+	{ name="Dumplings",         rarity="Uncommon",  cl=15, ingredients={"Flour","Chicken","Garlic"},                                station="Prep+Stove", wt=4,  cost=12 },
+	{ name="Fried Rice",        rarity="Uncommon",  cl=22, ingredients={"Rice","Egg","Carrot","Peas"},                              station="Prep+Stove", wt=4,  cost=12 },
+	{ name="Naan Wrap",         rarity="Uncommon",  cl=0,  ingredients={"Naan","Cheese Block","Spinach"},                           station="Prep",       wt=3,  cost=12, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Spaghetti Pomodoro",rarity="Uncommon",  cl=0,  ingredients={"Pasta","Tomato","Basil"},                                  station="Prep+Stove", wt=4,  cost=11, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Tofu Stir Fry",     rarity="Uncommon",  cl=20, ingredients={"Tofu","Noodles","Bell Pepper","Soy Sauce"},                station="Prep+Stove", wt=4,  cost=14 },
+	{ name="Plantain Chips",    rarity="Uncommon",  cl=12, ingredients={"Plantain","Oil","Salt"},                                   station="Stovetop",   wt=3,  cost=8  },
+	{ name="Garlic Bread",      rarity="Uncommon",  cl=22, ingredients={"Bread Loaf","Butter","Garlic"},                            station="Stovetop",   wt=3,  cost=11, notes="AoE — hits allies too (Garlic Bread is known hazard)" },
+	{ name="Poke Bowl",         rarity="Uncommon",  cl=18, ingredients={"Shrimp","Rice","Soy Sauce","Carrot"},                      station="Prep",       wt=4,  cost=14, notes="Prep (raw)" },
+	{ name="Sushi Roll",        rarity="Uncommon",  cl=22, ingredients={"Rice","Shrimp","Noodles","Soy Sauce"},                     station="Prep",       wt=4,  cost=15, notes="Prep (raw)" },
+	{ name="Shawarma",          rarity="Uncommon",  cl=22, ingredients={"Naan","Chicken","Garlic","Yogurt"},                        station="Prep",       wt=5,  cost=16 },
+	{ name="Jollof Rice",       rarity="Uncommon",  cl=22, ingredients={"Rice","Tomato","Onion","Chili Powder"},                    station="Prep+Stove", wt=4,  cost=13 },
+	{ name="Kimchi Fried Rice", rarity="Uncommon",  cl=24, ingredients={"Rice","Egg","Chili Powder","Garlic"},                      station="Prep+Stove", wt=4,  cost=13, notes="Fire recipe — Oil primer triggers ×1.6" },
+	{ name="Pad Thai",          rarity="Uncommon",  cl=20, ingredients={"Noodles","Shrimp","Egg","Peanut"},                         station="Prep+Stove", wt=5,  cost=17 },
+	{ name="Elote",             rarity="Uncommon",  cl=16, ingredients={"Corn","Butter","Chili Powder"},                            station="Stovetop",   wt=3,  cost=10 },
+	{ name="Mango Lassi",       rarity="Uncommon",  cl=0,  ingredients={"Yogurt","Mango","Sugar"},                                  station="Stovetop",   wt=3,  cost=11, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Milkshake",         rarity="Uncommon",  cl=18, ingredients={"Milk","Chocolate","Sugar"},                                station="Stovetop",   wt=3,  cost=11 },
+	{ name="Banana Pancakes",   rarity="Uncommon",  cl=0,  ingredients={"Flour","Banana","Egg","Sugar"},                            station="Prep+Stove", wt=3,  cost=11, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Shrimp Cocktail",   rarity="Uncommon",  cl=20, ingredients={"Shrimp","Lettuce","Tomato"},                               station="Prep",       wt=4,  cost=12, notes="Prep (raw)" },
+	{ name="Borscht",           rarity="Uncommon",  cl=20, ingredients={"Potato","Onion","Yogurt","Beet"},                          station="Prep+Stove", wt=4,  cost=12 },
+	{ name="Miso Soup",         rarity="Uncommon",  cl=18, ingredients={"Miso Paste","Tofu"},                                       station="Prep+Stove", wt=3,  cost=10 },
+	{ name="Crab Rangoon",      rarity="Uncommon",  cl=22, ingredients={"Crab","Cream","Noodles"},                                  station="Prep+Stove", wt=4,  cost=14 },
+	{ name="Callaloo",          rarity="Uncommon",  cl=24, ingredients={"Spinach","Onion","Coconut","Crab"},                        station="Prep+Stove", wt=5,  cost=15, notes="Uncommon only (no Common/Rare variant)" },
+	{ name="Tuna Melt",         rarity="Uncommon",  cl=20, ingredients={"Tuna","Bread Loaf","Cheese Block"},                        station="Prep+Stove", wt=4,  cost=13 },
+
+	-- ── RARE (15) — 1 serving, 7s cook ───────────────────────
+	{ name="Chicken Curry",     rarity="Rare",      cl=33, ingredients={"Chicken","Curry Powder","Onion"},                          station="Prep+Stove", wt=5,  cost=18, notes="Fire recipe" },
+	{ name="Vegetable Curry",   rarity="Rare",      cl=0,  ingredients={"Carrot","Bell Pepper","Curry Powder"},                     station="Prep+Stove", wt=4,  cost=15, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Baked Potato",      rarity="Rare",      cl=33, ingredients={"Potato","Cheese Block","Butter"},                          station="Stovetop",   wt=4,  cost=14 },
+	{ name="BBQ Ribs",          rarity="Rare",      cl=30, ingredients={"Pork","Garlic","Sugar"},                                   station="Prep+Stove", wt=6,  cost=19 },
+	{ name="Crispy Tofu Bowl",  rarity="Rare",      cl=30, ingredients={"Tofu","Rice","Soy Sauce","Garlic"},                        station="Prep+Stove", wt=4,  cost=16 },
+	{ name="Mapo Tofu",         rarity="Rare",      cl=38, ingredients={"Tofu","Chili Powder","Garlic","Pork"},                     station="Prep+Stove", wt=5,  cost=20, notes="Fire recipe" },
+	{ name="Tamale",            rarity="Rare",      cl=33, ingredients={"Dough","Pork","Chili Powder"},                             station="Prep+Stove", wt=5,  cost=18 },
+	{ name="Groundnut Soup",    rarity="Rare",      cl=35, ingredients={"Peanut","Chicken","Onion","Tomato"},                       station="Prep+Stove", wt=6,  cost=22 },
+	{ name="Paella",            rarity="Rare",      cl=35, ingredients={"Rice","Shrimp","Pork","Saffron"},                          station="Prep+Stove", wt=6,  cost=24 },
+	{ name="Pepper Shrimp",     rarity="Rare",      cl=30, ingredients={"Shrimp","Chili Powder","Garlic","Salt"},                   station="Prep+Stove", wt=5,  cost=17 },
+	{ name="Inferno Skewer",    rarity="Rare",      cl=38, ingredients={"Chili Powder","Beef","Oil"},                               station="Prep+Stove", wt=5,  cost=20, notes="Fire recipe. Oil is in the dish — auto-triggers own ×1.6 chain." },
+	{ name="Almond Croissant",  rarity="Rare",      cl=30, ingredients={"Almond","Croissant","Butter"},                             station="Prep+Stove", wt=4,  cost=18 },
+	{ name="Ice Cream Sundae",  rarity="Rare",      cl=0,  ingredients={"Ice Cream","Sugar"},                                       station="Stovetop",   wt=3,  cost=14, notes="Buff/self-consume only, 0 combat CL" },
+	{ name="Honey Glazed Ribs", rarity="Rare",      cl=33, ingredients={"Honey","Pork","Garlic"},                                   station="Prep+Stove", wt=5,  cost=20 },
+	{ name="Blue Cheese Pasta", rarity="Rare",      cl=33, ingredients={"Blue Cheese","Pasta","Garlic"},                            station="Prep+Stove", wt=5,  cost=20 },
+
+	-- ── ULTRA-RARE (10) — 1 serving, 12s cook ────────────────
+	{ name="Lobster Bisque",       rarity="UltraRare", cl=45, ingredients={"Lobster","Butter","Milk"},                               station="Prep+Stove", wt=7,  cost=30 },
+	{ name="Chicken-Peanut Stew",  rarity="UltraRare", cl=43, ingredients={"Chicken","Peanut","Coconut","Curry Powder"},             station="Prep+Stove", wt=7,  cost=32 },
+	{ name="Truffle Pasta",        rarity="UltraRare", cl=38, ingredients={"Truffle","Pasta","Basil"},                               station="Prep+Stove", wt=5,  cost=28, notes="Alliance bonus: +10% throw range 20s for ally" },
+	{ name="Coconut Curry",        rarity="UltraRare", cl=40, ingredients={"Coconut","Curry Powder","Carrot"},                       station="Prep+Stove", wt=6,  cost=30, notes="AoE — hits allies too (known hazard)" },
+	{ name="Saffron Rice",         rarity="UltraRare", cl=44, ingredients={"Saffron","Rice","Onion"},                                station="Prep+Stove", wt=5,  cost=28 },
+	{ name="Wagyu Burger",         rarity="UltraRare", cl=45, ingredients={"Wagyu Beef","Bun","Cheese Block","Lettuce"},             station="Prep",       wt=8,  cost=35 },
+	{ name="Poke Deluxe",          rarity="UltraRare", cl=44, ingredients={"Lobster","Rice","Caviar","Soy Sauce"},                   station="Prep",       wt=7,  cost=36, notes="Prep (raw). Strongest cold recipe. CL=44 (Balance Patch v1 down from 49)." },
+	{ name="Guacamole Bomb",       rarity="UltraRare", cl=40, ingredients={"Avocado","Onion","Tomato","Coconut"},                    station="Prep",       wt=6,  cost=28 },
+	{ name="Golden Glaze",         rarity="UltraRare", cl=43, ingredients={"Honey","Chicken","Soy Sauce"},                           station="Prep+Stove", wt=6,  cost=32 },
+	{ name="Fondant Collapse",     rarity="UltraRare", cl=39, ingredients={"Chocolate","Fondant","Cream"},                           station="Prep+Stove", wt=6,  cost=30 },
+
+	-- ── LEGENDARY (1) — 1 serving, 20s cook ──────────────────
+	{ name="Million Dollar Steak", rarity="Legendary", cl=70, ingredients={"Wagyu Beef","Truffle","Caviar"},                          station="Prep+Stove", wt=8,  cost=nil, notes="Server-wide announcement on throw. Golden explosion on impact." },
+}
+
+-- ============================================================
+-- WORLD LOOT — LEGENDARY OBJECTS (Part 14)
+-- Exactly 2 world-loot Legendaries per match (Golden Cart / Portable Cooker — variable)
+-- Million Dollar Steak is cook-only, not world loot
+-- ============================================================
+
+ChompersData.LegendaryObjects = {
+	{ name="Golden Cart",    type="WorldLoot",  spawnAnywhere=true, maxPerMatch=1 },
+	{ name="Portable Cooker",type="WorldLoot",  spawnAnywhere=true, maxPerMatch=1 },
+	-- Total world-loot legendaries per match: exactly 2 (may be 0, 1, or 2 of each — variable)
+}
+
+-- ============================================================
+-- HELPER FUNCTIONS
+-- ============================================================
+
+-- GetIngredient: find ingredient data by name
+function ChompersData.GetIngredient(name)
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.name == name then return ing end
+	end
+	return nil
+end
+
+-- GetRecipe: find recipe data by name
+function ChompersData.GetRecipe(name)
+	for _, rec in ipairs(ChompersData.Recipes) do
+		if rec.name == name then return rec end
+	end
+	return nil
+end
+
+-- GetIngredientsByZone: return all ingredients that spawn in a given zone
+function ChompersData.GetIngredientsByZone(zoneName)
+	local result = {}
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.zone == zoneName then
+			table.insert(result, ing)
+		end
+	end
+	return result
+end
+
+-- ApplyCookDepth: returns the additive CL bonus for a given ingredient count
+-- Usage: local bonus = ChompersData.ApplyCookDepth(#ingredientList)
+function ChompersData.ApplyCookDepth(count)
+	local depth = ChompersData.Constants.CookDepth
+	if count >= 4 then return depth[4]
+	elseif count >= 3 then return depth[3]
+	elseif count >= 2 then return depth[2]
+	else return 0
+	end
+end
+
+-- ResolveCleanlinessHit: calculate final CL damage for a single throw
+-- baseCL        = recipe or ingredient base CL value
+-- ingredientCount = number of ingredients in the recipe (for cook depth)
+-- allergyMatch  = true if target's allergy matches the thrown food
+-- cravinActive  = true if thrower is in Craving State
+-- markBonus     = 0.15 or 0.20 if a mark is active on target, else 0
+-- isSoftCapCalc = internal — leave nil on external calls
+function ChompersData.ResolveCleanlinessHit(baseCL, ingredientCount, allergyMatch, cravingActive, markBonus)
+	local C = ChompersData.Constants
+
+	-- Step 1: additive cook depth bonus
+	local depthBonus = ChompersData.ApplyCookDepth(ingredientCount or 1)
+	local adjusted = baseCL * (1 + depthBonus)
+
+	-- Step 2: multipliers (stack multiplicatively)
+	local mult = 1.0
+	if allergyMatch then
+		mult = mult * C.Allergy.MatchMultiplier     -- ×1.75
+	else
+		mult = mult * C.Allergy.NoMatchMultiplier   -- ×0.75
+	end
+	if cravingActive then
+		mult = mult * 1.5                            -- ×1.5 (consumed on hit)
+	end
+	if markBonus and markBonus > 0 then
+		mult = mult * (1 + markBonus)               -- e.g. ×1.15 or ×1.20
+	end
+
+	-- Step 3: soft cap
+	local raw = adjusted * mult
+	local D = C.Damage
+	if mult <= D.SoftCap1Threshold then
+		return math.round(raw * D.SoftCap1Efficiency)
+	elseif mult <= D.SoftCap2Threshold then
+		return math.round(raw * D.SoftCap2Efficiency)
+	else
+		return math.round(raw * D.SoftCap3Efficiency)
+	end
+end
+
+return ChompersData
