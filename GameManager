@@ -18,9 +18,10 @@ local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
-local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
-local PlayerState   = require(ServerScriptService:WaitForChild("PlayerState"))
-local C             = ChompersData.Constants
+local ChompersData      = require(ReplicatedStorage:WaitForChild("ChompersData"))
+local PlayerState       = require(ServerScriptService:WaitForChild("PlayerState"))
+local IngredientSpawner = require(ServerScriptService:WaitForChild("IngredientSpawner"))
+local C                 = ChompersData.Constants
 
 local Remotes       = ReplicatedStorage:WaitForChild("ChompersRemotes")
 local function R(name) return Remotes:WaitForChild(name) end
