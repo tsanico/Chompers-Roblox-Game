@@ -65,10 +65,31 @@ local RARITY_BG = {
 	Legendary      = Color3.fromRGB(50, 38, 10),
 }
 
+-- Rarity sort order (highest priority = lowest number)
+local RARITY_ORDER = {
+	Legendary = 1, UltraRare = 2, ["Ultra-Rare"] = 2,
+	Rare = 3, Uncommon = 4, Common = 5,
+}
+
+-- Sort inventory by rarity (desc) then alphabetically
+local function sortedInventory()
+	local sorted = {}
+	for i, item in ipairs(localInventory) do
+		table.insert(sorted, { item = item, origIndex = i })
+	end
+	table.sort(sorted, function(a, b)
+		local ra = RARITY_ORDER[normaliseRarity(a.item.rarity)] or 5
+		local rb = RARITY_ORDER[normaliseRarity(b.item.rarity)] or 5
+		if ra ~= rb then return ra < rb end
+		return (a.item.name or "") < (b.item.name or "")
+	end)
+	return sorted
+end
+
 -- ── State ─────────────────────────────────────────────────────
 local localInventory = {}
 local selectedSlot   = 1
-local selectedItem   = nil   -- item currently shown in detail panel
+local selectedItem   = nil
 local currentWeight  = 0
 local maxWeight      = 35
 local panelOpen      = false
@@ -312,7 +333,7 @@ local function showEmptyRight(message)
 	l.TextWrapped = true; l.LayoutOrder = 0; l.ZIndex = 12
 end
 
-local function showDetail(item)
+local function showDetail(item, origIndex)
 	clearRight()
 	if not item then
 		showEmptyRight("Select an item to see details.")
@@ -435,17 +456,14 @@ local function showDetail(item)
 		section("⚠ ALLERGY", "None", C.dim)
 	end
 
-	-- Effect / special mechanic
 	if item.effect and item.effect ~= "" then
 		section("✨ EFFECT", item.effect, C.gold)
 	end
 
-	-- CL damage
 	if item.cl and item.cl > 0 then
 		section("🧼 CLEANLINESS DAMAGE", "+" .. item.cl .. " CL per hit", C.weight)
 	end
 
-	-- Recipe-specific fields
 	if item.ingredients then
 		section("📋 INGREDIENTS", table.concat(item.ingredients, "  ·  "), C.green)
 	end
@@ -453,9 +471,74 @@ local function showDetail(item)
 		section("🍳 STATION", item.station, C.dim)
 	end
 
-	-- Notes
 	if item.notes and item.notes ~= "" then
 		section("📝 NOTE", item.notes, C.dim)
+	end
+
+	-- ── Slot assignment row ───────────────────────────────────
+	if origIndex then
+		local slotRow = Instance.new("Frame", RightScroll)
+		slotRow.Size = UDim2.new(1, 0, 0, 56)
+		slotRow.BackgroundColor3 = C.bgLight
+		slotRow.BorderSizePixel = 0
+		slotRow.LayoutOrder = nextOrder
+		slotRow.ZIndex = 12
+		mkCorner(slotRow, 8)
+
+		mkLabel(slotRow, "ASSIGN TO HOTBAR SLOT",
+			Enum.Font.GothamBlack, 10, C.dim, Enum.TextXAlignment.Left,
+			UDim2.new(0, 12, 0, 6), UDim2.new(1, -24, 0, 14)).ZIndex = 13
+
+		-- 1-10 buttons
+		local btnRow = Instance.new("Frame", slotRow)
+		btnRow.Size = UDim2.new(1, -16, 0, 28)
+		btnRow.Position = UDim2.new(0, 8, 0, 22)
+		btnRow.BackgroundTransparency = 1; btnRow.ZIndex = 13
+		local btnLL = Instance.new("UIListLayout", btnRow)
+		btnLL.FillDirection = Enum.FillDirection.Horizontal
+		btnLL.Padding = UDim.new(0, 3)
+
+		for si = 1, 10 do
+			local key = si == 10 and "0" or tostring(si)
+			local isActive = si == origIndex
+			local sBtn = Instance.new("TextButton", btnRow)
+			sBtn.Text = key
+			sBtn.Font = Enum.Font.GothamBlack; sBtn.TextSize = 12
+			sBtn.TextColor3 = isActive and C.white or C.dim
+			sBtn.BackgroundColor3 = isActive
+				and Color3.fromRGB(80, 30, 30)
+				or Color3.fromRGB(35, 33, 52)
+			sBtn.BorderSizePixel = 0; sBtn.AutoButtonColor = false
+			sBtn.Size = UDim2.new(0, 0, 1, 0)
+			sBtn.AutomaticSize = Enum.AutomaticSize.X
+			sBtn.ZIndex = 14
+			mkCorner(sBtn, 5)
+
+			-- Minimum width via UIPadding
+			local sp = Instance.new("UIPadding", sBtn)
+			sp.PaddingLeft = UDim.new(0, 8); sp.PaddingRight = UDim.new(0, 8)
+
+			local capturedSi = si
+			local capturedOrigI = origIndex
+			sBtn.MouseButton1Click:Connect(function()
+				-- Swap slots capturedOrigI ↔ capturedSi
+				local a = localInventory[capturedOrigI]
+				local b = localInventory[capturedSi]
+				localInventory[capturedOrigI] = b
+				localInventory[capturedSi]    = a
+				-- If selected slot was one of the swapped, update it
+				if selectedSlot == capturedOrigI then
+					selectedSlot = capturedSi
+				elseif selectedSlot == capturedSi then
+					selectedSlot = capturedOrigI
+				end
+				if _G.Chompers and _G.Chompers.SetSelectedSlot then
+					_G.Chompers.SetSelectedSlot(selectedSlot)
+				end
+				syncHotbar()
+				rebuildPanel()
+			end)
+		end
 	end
 end
 
@@ -467,23 +550,24 @@ local selectedListBtn = nil
 
 local function buildLeftList()
 	for _, c in ipairs(LeftScroll:GetChildren()) do
-		if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+		if c:IsA("TextButton") or c:IsA("Frame") or c:IsA("TextLabel") then
+			c:Destroy()
+		end
 	end
 
 	if #localInventory == 0 then
 		local icon = containerType == "Cart" and "🛒" or "🧺"
 		local emptyL = Instance.new("TextLabel", LeftScroll)
-		emptyL.Size = UDim2.new(1, 0, 0, 200)
+		emptyL.Size = UDim2.new(1, 0, 0, 80)
 		emptyL.BackgroundTransparency = 1
-		emptyL.Text = icon .. "\nYour " .. containerType:lower() .. " is empty!"
+		emptyL.Text = icon .. "  Empty!"
 		emptyL.Font = Enum.Font.Gotham; emptyL.TextSize = 13
 		emptyL.TextColor3 = C.dim
 		emptyL.TextXAlignment = Enum.TextXAlignment.Center
 		emptyL.TextYAlignment = Enum.TextYAlignment.Center
-		emptyL.TextWrapped = true; emptyL.LayoutOrder = 0; emptyL.ZIndex = 13
+		emptyL.LayoutOrder = 0; emptyL.ZIndex = 13
 		showEmptyRight(icon .. "  Your " .. containerType:lower() .. " is empty!\n\nPick up ingredients to get started.")
-		selectedListBtn = nil
-		selectedItem = nil
+		selectedListBtn = nil; selectedItem = nil
 		return
 	end
 
@@ -492,25 +576,28 @@ local function buildLeftList()
 		showEmptyRight("← Select an item to see details.")
 	end
 
-	for i, item in ipairs(localInventory) do
+	-- Sort: rarity desc, then alphabetical
+	local sorted = sortedInventory()
+
+	for listPos, entry in ipairs(sorted) do
+		local item = entry.item
+		local origI = entry.origIndex
 		local rarity = normaliseRarity(item.rarity or "Common")
 		local strokeCol = RARITY_STROKE[rarity] or C.stroke
 
 		local row = Instance.new("TextButton", LeftScroll)
-		row.Name = "Row_" .. i
+		row.Name = "Row_" .. origI
 		row.Size = UDim2.new(1, 0, 0, 48)
-		row.BackgroundColor3 = i == selectedSlot
-			and Color3.fromRGB(35, 33, 54)
-			or C.bgLight
-		row.BorderSizePixel = 0
-		row.AutoButtonColor = false
-		row.LayoutOrder = i; row.ZIndex = 13
+		row.BackgroundColor3 = origI == selectedSlot
+			and Color3.fromRGB(35, 33, 54) or C.bgLight
+		row.BorderSizePixel = 0; row.AutoButtonColor = false
+		row.LayoutOrder = listPos; row.ZIndex = 13
 		mkCorner(row, 8)
-		local rowStroke = mkStroke(row, i == selectedSlot and 2 or 1.5,
-			i == selectedSlot and C.red or strokeCol)
+		local rowStroke = mkStroke(row, origI == selectedSlot and 2 or 1.5,
+			origI == selectedSlot and C.red or strokeCol)
 
 		-- Slot badge
-		local slotKey = i == 10 and "0" or tostring(i)
+		local slotKey = origI == 10 and "0" or tostring(origI)
 		local badge = Instance.new("Frame", row)
 		badge.Size = UDim2.new(0, 20, 0, 16)
 		badge.Position = UDim2.new(0, 4, 0.5, -8)
@@ -539,37 +626,34 @@ local function buildLeftList()
 			UDim2.new(0, 64, 0, 26), UDim2.new(1, -72, 0, 14)).ZIndex = 14
 
 		-- Click: show detail
-		local capturedI = i
-		local capturedItem = item
+		local capturedOrigI = origI
+		local capturedItem  = item
 		row.MouseButton1Click:Connect(function()
-			-- Deselect old
 			if selectedListBtn then
 				selectedListBtn.BackgroundColor3 = C.bgLight
 				local s = selectedListBtn:FindFirstChildWhichIsA("UIStroke")
 				if s then
 					local old = tonumber(selectedListBtn.Name:match("%d+"))
-					local oldRarity = old and localInventory[old]
+					local oldR = old and localInventory[old]
 						and normaliseRarity(localInventory[old].rarity) or "Common"
 					s.Thickness = 1.5
-					s.Color = RARITY_STROKE[oldRarity] or C.stroke
+					s.Color = RARITY_STROKE[oldR] or C.stroke
 				end
 			end
-			-- Select new
 			row.BackgroundColor3 = Color3.fromRGB(35, 33, 54)
-			rowStroke.Thickness = 2
-			rowStroke.Color = C.red
+			rowStroke.Thickness = 2; rowStroke.Color = C.red
 			selectedListBtn = row
-			selectedItem = capturedItem
-			showDetail(capturedItem)
+			selectedItem    = capturedItem
+			showDetail(capturedItem, capturedOrigI)
 		end)
 
-		-- If this was the previously selected item, re-show its detail
+		-- Re-highlight if previously selected
 		if selectedItem and selectedItem.name == item.name
-			and selectedItem.emoji == item.emoji then
+		and selectedItem.emoji == item.emoji then
 			selectedListBtn = row
 			row.BackgroundColor3 = Color3.fromRGB(35, 33, 54)
 			rowStroke.Thickness = 2; rowStroke.Color = C.red
-			showDetail(item)
+			showDetail(item, origI)
 		end
 	end
 end
