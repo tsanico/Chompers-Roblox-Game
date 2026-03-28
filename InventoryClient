@@ -28,21 +28,24 @@ end
 -- INVENTORY UPDATE → HOTBAR
 -- ============================================================
 UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
+	print("[InventoryClient] UpdateInventory fired — items:", #inventory)
+	print("[InventoryClient] _G.Chompers exists:", _G.Chompers ~= nil)
+	print("[InventoryClient] SetSlotItem exists:", _G.Chompers and _G.Chompers.SetSlotItem ~= nil)
+
 	if not _G.Chompers then return end
 	if not _G.Chompers.SetSlotItem then return end
 
-	-- Clear all slots first
 	local maxSlots = _G.Chompers.GetSlotCount and _G.Chompers.GetSlotCount() or 6
+	print("[InventoryClient] maxSlots:", maxSlots)
+
 	for i = 1, maxSlots do
 		_G.Chompers.SetSlotItem(i, nil)
 	end
 
-	-- Fill slots with inventory items
-	-- NOTE: PlayerState stores weight as item.wt (not item.weight)
-	-- NOTE: PlayerState uses "UltraRare" — BottomBar expects "Ultra-Rare"
 	for i, item in ipairs(inventory) do
 		local rarity = item.rarity
 		if rarity == "UltraRare" then rarity = "Ultra-Rare" end
+		print("[InventoryClient] Setting slot", i, item.name, "rarity:", rarity, "wt:", item.wt, "cost:", item.cost)
 		_G.Chompers.SetSlotItem(i, {
 			emoji  = item.emoji,
 			name   = item.name,
@@ -58,6 +61,7 @@ end)
 -- WEIGHT UPDATE → WEIGHT BAR
 -- ============================================================
 UpdateWeightRemote.OnClientEvent:Connect(function(current, maxW)
+	print("[InventoryClient] UpdateWeight fired — current:", current, "max:", maxW)
 	if _G.Chompers and _G.Chompers.SetWeight then
 		_G.Chompers.SetWeight(current, maxW)
 	end
