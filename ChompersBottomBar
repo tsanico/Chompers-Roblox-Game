@@ -1,31 +1,54 @@
 -- ChompersBottomBar (LocalScript in StarterPlayerScripts)
--- Rewritten: fixed 6-slot hotbar removed.
--- Container icon (basket/cart) replaces it — positioned left of weight bar.
--- Icon shows live item count badge. Clicking or pressing I opens InventoryClient panel.
+-- Bible Part 35 compliant:
+--   • 10-slot hotbar at centre bottom — always visible, auto-fills on pickup
+--   • Container icon (basket/cart) in right cluster, 8px gaps between all elements
+--   • No tooltip text on icon
+--   • Left cluster: Store Guide → Napkin → Bathroom (8px gaps)
 
 local Players           = game:GetService("Players")
 local TweenService      = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
 
 local player  = Players.LocalPlayer
 local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 15)
 
--- ── Layout constants (must match ChompersMeters exactly) ────
+-- ── Layout constants ─────────────────────────────────────────
 local BAR_BOTTOM = 16
-local BAR_H      = 52    -- matches SLOT_SIZE in old code — icon height
+local BAR_H      = 52
+local GAP        = 8     -- consistent gap between all elements
+
+-- Right cluster widths
 local MAP_SIZE   = 180
-local MAP_PAD    = 8
+local MAP_PAD    = 8     -- minimap distance from screen right edge
 local WEIGHT_W   = 52
-local ICON_W     = 52    -- container icon width
-local ICON_GAP   = 6     -- gap between icon and weight bar
+local ICON_W     = 52
+local MONEY_W    = 120
 
--- Weight bar left edge (from right of screen):
--- MAP_PAD + MAP_SIZE + WEIGHT_W + 6 (gap between weight bar and minimap)
--- Container icon sits ICON_GAP to the left of that
-local WEIGHT_BAR_FROM_RIGHT = MAP_PAD + MAP_SIZE + WEIGHT_W + 6
-local ICON_FROM_RIGHT       = WEIGHT_BAR_FROM_RIGHT + ICON_W + ICON_GAP
+-- Right cluster positions (distance from RIGHT edge of screen, left-anchored UDim)
+-- Minimap occupies: MAP_PAD → MAP_PAD + MAP_SIZE from right
+-- Each element stacks left with GAP spacing
+local MINIMAP_X  = MAP_PAD + MAP_SIZE                  -- 188px from right
+local WEIGHT_X   = MINIMAP_X + GAP + WEIGHT_W          -- 248px from right
+local ICON_X     = WEIGHT_X + GAP + ICON_W             -- 308px from right
+local MONEY_X    = ICON_X + GAP + MONEY_W              -- 436px from right
 
+-- Left cluster positions (from LEFT edge)
+local LEFT_EDGE  = 16
+local SG_W       = 140
+local NAP_W      = 130
+local BATH_W     = 130
+local SG_X       = LEFT_EDGE
+local NAP_X      = SG_X + SG_W + GAP
+local BATH_X     = NAP_X + NAP_W + GAP
+
+-- Hotbar
+local SLOT_SIZE  = 52
+local SLOT_GAP   = 6
+local NUM_SLOTS  = 10
+
+-- ── Colours ──────────────────────────────────────────────────
 local C = {
 	bg      = Color3.fromRGB(20, 18, 32),
 	bgLight = Color3.fromRGB(28, 26, 42),
@@ -39,6 +62,22 @@ local C = {
 	napkin  = Color3.fromRGB(100, 180, 255),
 	warn    = Color3.fromRGB(220, 60, 60),
 	weight  = Color3.fromRGB(200, 160, 80),
+}
+local RARITY_BG = {
+	Common         = Color3.fromRGB(40, 38, 55),
+	Uncommon       = Color3.fromRGB(22, 42, 25),
+	Rare           = Color3.fromRGB(18, 28, 52),
+	["Ultra-Rare"] = Color3.fromRGB(35, 20, 50),
+	UltraRare      = Color3.fromRGB(35, 20, 50),
+	Legendary      = Color3.fromRGB(50, 38, 10),
+}
+local RARITY_STROKE = {
+	Common         = Color3.fromRGB(80, 78, 100),
+	Uncommon       = Color3.fromRGB(50, 140, 60),
+	Rare           = Color3.fromRGB(50, 100, 200),
+	["Ultra-Rare"] = Color3.fromRGB(130, 60, 200),
+	UltraRare      = Color3.fromRGB(130, 60, 200),
+	Legendary      = Color3.fromRGB(200, 140, 30),
 }
 
 local Gui = Instance.new("ScreenGui")
@@ -59,7 +98,7 @@ local function mkFrame(parent, name, size, pos, anchor, bg, corner, nostroke)
 	f.Position = pos
 	if anchor then f.AnchorPoint = anchor end
 	f.BackgroundColor3 = bg or C.bg
-	f.BorderSizePixel = 0
+	f.BorderSizePixel  = 0
 	f.Parent = parent
 	Instance.new("UICorner", f).CornerRadius = UDim.new(0, corner or 12)
 	if not nostroke then
@@ -86,14 +125,14 @@ local function mkLabel(parent, text, font, size, color, xAlign, pos, sz)
 end
 
 -- ============================================================
--- LEFT — STORE GUIDE BUTTON
+-- LEFT — STORE GUIDE
 -- ============================================================
 
 local StoreGuideBtn = Instance.new("TextButton")
 StoreGuideBtn.Name             = "StoreGuideBtn"
-StoreGuideBtn.Size             = UDim2.new(0, 140, 0, BAR_H)
+StoreGuideBtn.Size             = UDim2.new(0, SG_W, 0, BAR_H)
 StoreGuideBtn.AnchorPoint      = Vector2.new(0, 1)
-StoreGuideBtn.Position         = UDim2.new(0, BAR_BOTTOM, 1, -BAR_BOTTOM)
+StoreGuideBtn.Position         = UDim2.new(0, SG_X, 1, -BAR_BOTTOM)
 StoreGuideBtn.BackgroundColor3 = C.bg
 StoreGuideBtn.BorderSizePixel  = 0
 StoreGuideBtn.Font             = Enum.Font.GothamBlack
@@ -104,32 +143,27 @@ StoreGuideBtn.AutoButtonColor  = false
 StoreGuideBtn.Parent           = Gui
 Instance.new("UICorner", StoreGuideBtn).CornerRadius = UDim.new(0, 12)
 local sgStroke = Instance.new("UIStroke", StoreGuideBtn)
-sgStroke.Thickness = 1.5
-sgStroke.Color = C.stroke
+sgStroke.Thickness = 1.5; sgStroke.Color = C.stroke
 
--- Pulsing red dot
 local PrefDot = Instance.new("Frame")
 PrefDot.Size             = UDim2.new(0, 8, 0, 8)
 PrefDot.Position         = UDim2.new(1, -12, 0, 5)
 PrefDot.BackgroundColor3 = C.red
 PrefDot.BorderSizePixel  = 0
 PrefDot.ZIndex           = 3
-PrefDot.Visible          = true
 PrefDot.Parent           = StoreGuideBtn
 Instance.new("UICorner", PrefDot).CornerRadius = UDim.new(1, 0)
-
-local dotPulseTween = TweenService:Create(PrefDot,
+TweenService:Create(PrefDot,
 	TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-	{BackgroundTransparency = 0.5})
-dotPulseTween:Play()
+	{BackgroundTransparency = 0.5}):Play()
 
 -- ============================================================
--- LEFT — NAPKIN BUTTON
+-- LEFT — NAPKIN PILL
 -- ============================================================
 
 local NapkinPill = mkFrame(Gui, "NapkinPill",
-	UDim2.new(0, 130, 0, BAR_H),
-	UDim2.new(0, BAR_BOTTOM + 140 + 8, 1, -BAR_BOTTOM),
+	UDim2.new(0, NAP_W, 0, BAR_H),
+	UDim2.new(0, NAP_X, 1, -BAR_BOTTOM),
 	Vector2.new(0, 1))
 
 local NapkinCount = mkLabel(NapkinPill, "🧻 ×1",
@@ -139,36 +173,31 @@ local NapkinCount = mkLabel(NapkinPill, "🧻 ×1",
 NapkinCount.Name = "NapkinCount"
 
 local cdTrack = mkFrame(NapkinPill, "CdTrack",
-	UDim2.new(1, -16, 0, 6),
-	UDim2.new(0, 8, 1, -8),
+	UDim2.new(1, -16, 0, 6), UDim2.new(0, 8, 1, -8),
 	nil, Color3.fromRGB(25, 23, 38), 4, true)
 local cdFill = mkFrame(cdTrack, "CdFill",
-	UDim2.new(1, 0, 1, 0),
-	UDim2.new(0, 0, 0, 0),
+	UDim2.new(1, 0, 1, 0), UDim2.new(0, 0, 0, 0),
 	nil, C.napkin, 4, true)
-cdFill.Name = "CdFill"
-
 local cdLabel = mkLabel(NapkinPill, "",
 	Enum.Font.GothamBold, 13, C.napkin,
 	Enum.TextXAlignment.Center,
 	UDim2.new(0, 0, 0, 42), UDim2.new(1, 0, 0, 16))
-cdLabel.Name = "CdLabel"
 
 local NapkinBtn = Instance.new("TextButton")
-NapkinBtn.Size               = UDim2.new(1, 0, 0, 30)
-NapkinBtn.Position           = UDim2.new(0, 0, 0, 0)
+NapkinBtn.Size = UDim2.new(1, 0, 0, 30)
+NapkinBtn.Position = UDim2.new(0, 0, 0, 0)
 NapkinBtn.BackgroundTransparency = 1
-NapkinBtn.Text               = ""
-NapkinBtn.ZIndex             = 4
-NapkinBtn.Parent             = NapkinPill
+NapkinBtn.Text = ""
+NapkinBtn.ZIndex = 4
+NapkinBtn.Parent = NapkinPill
 
 -- ============================================================
--- LEFT — BATHROOM BREAKS
+-- LEFT — BATHROOM BREAKS PILL
 -- ============================================================
 
 local BathroomPill = mkFrame(Gui, "BathroomPill",
-	UDim2.new(0, 130, 0, BAR_H),
-	UDim2.new(0, BAR_BOTTOM + 140 + 8 + 130 + 8, 1, -BAR_BOTTOM),
+	UDim2.new(0, BATH_W, 0, BAR_H),
+	UDim2.new(0, BATH_X, 1, -BAR_BOTTOM),
 	Vector2.new(0, 1))
 
 mkLabel(BathroomPill, "Bathroom Breaks",
@@ -177,29 +206,28 @@ mkLabel(BathroomPill, "Bathroom Breaks",
 	UDim2.new(0, 0, 0, 4), UDim2.new(1, 0, 0, 14))
 
 local breakFrame = Instance.new("Frame")
-breakFrame.Size                = UDim2.new(1, -16, 0, 28)
-breakFrame.Position            = UDim2.new(0, 8, 0, 18)
+breakFrame.Size = UDim2.new(1, -16, 0, 28)
+breakFrame.Position = UDim2.new(0, 8, 0, 18)
 breakFrame.BackgroundTransparency = 1
-breakFrame.Parent              = BathroomPill
+breakFrame.Parent = BathroomPill
 local breakLL = Instance.new("UIListLayout", breakFrame)
-breakLL.FillDirection          = Enum.FillDirection.Horizontal
-breakLL.HorizontalAlignment    = Enum.HorizontalAlignment.Center
-breakLL.VerticalAlignment      = Enum.VerticalAlignment.Center
-breakLL.Padding                = UDim.new(0, 6)
+breakLL.FillDirection = Enum.FillDirection.Horizontal
+breakLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+breakLL.VerticalAlignment = Enum.VerticalAlignment.Center
+breakLL.Padding = UDim.new(0, 6)
 
 local breakIcons = {}
 for i = 1, 3 do
 	local icon = Instance.new("TextLabel")
-	icon.Size                = UDim2.new(0, 28, 0, 28)
+	icon.Size = UDim2.new(0, 28, 0, 28)
 	icon.BackgroundTransparency = 1
-	icon.Text                = "🚽"
-	icon.Font                = Enum.Font.GothamBold
-	icon.TextSize            = 22
-	icon.TextXAlignment      = Enum.TextXAlignment.Center
-	icon.TextYAlignment      = Enum.TextYAlignment.Center
-	icon.TextTransparency    = 0
-	icon.ZIndex              = 3
-	icon.Parent              = breakFrame
+	icon.Text = "🚽"
+	icon.Font = Enum.Font.GothamBold
+	icon.TextSize = 22
+	icon.TextXAlignment = Enum.TextXAlignment.Center
+	icon.TextYAlignment = Enum.TextYAlignment.Center
+	icon.ZIndex = 3
+	icon.Parent = breakFrame
 	table.insert(breakIcons, icon)
 end
 
@@ -208,39 +236,107 @@ local function updateBreaks(count)
 	breaksRemaining = math.max(0, count)
 	for i = 1, 3 do
 		if i <= breaksRemaining then
-			breakIcons[i].Text             = "🚽"
+			breakIcons[i].Text = "🚽"
 			breakIcons[i].TextTransparency = 0
-			breakIcons[i].TextColor3       = Color3.fromRGB(255, 255, 255)
 		else
-			breakIcons[i].Text             = "❌"
+			breakIcons[i].Text = "❌"
 			breakIcons[i].TextTransparency = 0.4
 		end
 	end
-	if breaksRemaining == 1 then
-		TweenService:Create(BathroomPill, TweenInfo.new(0.3),
-			{BackgroundColor3 = Color3.fromRGB(50, 15, 15)}):Play()
-	elseif breaksRemaining == 0 then
-		TweenService:Create(BathroomPill, TweenInfo.new(0.3),
-			{BackgroundColor3 = Color3.fromRGB(80, 10, 10)}):Play()
-		mkLabel(BathroomPill, "SPECTATING",
-			Enum.Font.GothamBold, 10, C.warn,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0, 0, 1, -14), UDim2.new(1, 0, 0, 12))
-	else
-		TweenService:Create(BathroomPill, TweenInfo.new(0.3),
-			{BackgroundColor3 = Color3.fromRGB(20, 18, 32)}):Play()
-	end
+	local bg = breaksRemaining == 0 and Color3.fromRGB(80, 10, 10)
+		or breaksRemaining == 1 and Color3.fromRGB(50, 15, 15)
+		or C.bg
+	TweenService:Create(BathroomPill, TweenInfo.new(0.3), {BackgroundColor3 = bg}):Play()
 end
 updateBreaks(3)
+
+-- ============================================================
+-- CENTRE — 10-SLOT HOTBAR
+-- Always visible. Auto-fills left→right on pickup.
+-- Keys 1–0 select active slot.
+-- ============================================================
+
+local totalHotbarW = NUM_SLOTS * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP
+
+local HotbarFrame = Instance.new("Frame")
+HotbarFrame.Name = "HotbarFrame"
+HotbarFrame.BackgroundTransparency = 1
+HotbarFrame.AnchorPoint = Vector2.new(0.5, 1)
+HotbarFrame.Position = UDim2.new(0.5, 0, 1, -BAR_BOTTOM)
+HotbarFrame.Size = UDim2.new(0, totalHotbarW, 0, SLOT_SIZE)
+HotbarFrame.Parent = Gui
+
+local inventorySlots = {}
+local selectedSlot   = 1
+
+local function buildHotbar()
+	for _, c in ipairs(HotbarFrame:GetChildren()) do c:Destroy() end
+	inventorySlots = {}
+	for i = 1, NUM_SLOTS do
+		local xPos = (i - 1) * (SLOT_SIZE + SLOT_GAP)
+		local slot = Instance.new("Frame")
+		slot.Name = "Slot_" .. i
+		slot.Size = UDim2.new(0, SLOT_SIZE, 0, SLOT_SIZE)
+		slot.Position = UDim2.new(0, xPos, 0, 0)
+		slot.BackgroundColor3 = C.bgLight
+		slot.BorderSizePixel = 0
+		slot.Parent = HotbarFrame
+		Instance.new("UICorner", slot).CornerRadius = UDim.new(0, 8)
+		local stroke = Instance.new("UIStroke", slot)
+		stroke.Thickness = i == 1 and 2.5 or 1.5
+		stroke.Color = i == 1 and C.red or C.stroke
+
+		local numL = Instance.new("TextLabel")
+		numL.Name = "SlotNum"
+		numL.Size = UDim2.new(0, 18, 0, 14)
+		numL.Position = UDim2.new(0, 3, 1, -16)
+		numL.BackgroundTransparency = 1
+		numL.Text = tostring(i == 10 and 0 or i)
+		numL.Font = Enum.Font.GothamBold
+		numL.TextSize = 10
+		numL.TextColor3 = C.dim
+		numL.TextXAlignment = Enum.TextXAlignment.Left
+		numL.ZIndex = 2
+		numL.Parent = slot
+
+		local ico = Instance.new("TextLabel")
+		ico.Name = "ItemIcon"
+		ico.Size = UDim2.new(1, -4, 1, -18)
+		ico.Position = UDim2.new(0, 2, 0, 2)
+		ico.BackgroundTransparency = 1
+		ico.Text = ""
+		ico.Font = Enum.Font.GothamBold
+		ico.TextSize = 22
+		ico.TextXAlignment = Enum.TextXAlignment.Center
+		ico.TextYAlignment = Enum.TextYAlignment.Center
+		ico.ZIndex = 2
+		ico.Parent = slot
+
+		local wgt = Instance.new("TextLabel")
+		wgt.Name = "ItemWeight"
+		wgt.Size = UDim2.new(0, 22, 0, 14)
+		wgt.Position = UDim2.new(1, -24, 1, -16)
+		wgt.BackgroundTransparency = 1
+		wgt.Text = ""
+		wgt.Font = Enum.Font.GothamBold
+		wgt.TextSize = 9
+		wgt.TextColor3 = C.weight
+		wgt.TextXAlignment = Enum.TextXAlignment.Right
+		wgt.ZIndex = 2
+		wgt.Parent = slot
+
+		table.insert(inventorySlots, slot)
+	end
+end
+buildHotbar()
 
 -- ============================================================
 -- RIGHT — MONEY PILL
 -- ============================================================
 
-local MONEY_W = 120
 local MoneyPill = mkFrame(Gui, "MoneyPill",
 	UDim2.new(0, MONEY_W, 0, BAR_H),
-	UDim2.new(1, -(MAP_PAD + MAP_SIZE + WEIGHT_W + ICON_GAP + ICON_W + ICON_GAP + 24 + MONEY_W), 1, -BAR_BOTTOM),
+	UDim2.new(1, -MONEY_X, 1, -BAR_BOTTOM),
 	Vector2.new(0, 1))
 mkLabel(MoneyPill, "💵",
 	Enum.Font.GothamBold, 20, C.money,
@@ -253,85 +349,62 @@ local MoneyLabel = mkLabel(MoneyPill, "$15",
 MoneyLabel.Name = "MoneyLabel"
 
 -- ============================================================
--- RIGHT — CONTAINER ICON (basket / cart)
--- Sits directly left of the weight bar with ICON_GAP spacing.
--- Clicking or pressing I opens the inventory panel.
+-- RIGHT — CONTAINER ICON
+-- 8px left of weight bar. No tooltip.
 -- ============================================================
 
 local ContainerIcon = Instance.new("TextButton")
-ContainerIcon.Name             = "ContainerIcon"
-ContainerIcon.Size             = UDim2.new(0, ICON_W, 0, BAR_H)
-ContainerIcon.AnchorPoint      = Vector2.new(1, 1)
-ContainerIcon.Position         = UDim2.new(1, -(WEIGHT_BAR_FROM_RIGHT + ICON_GAP), 1, -BAR_BOTTOM)
+ContainerIcon.Name = "ContainerIcon"
+ContainerIcon.Size = UDim2.new(0, ICON_W, 0, BAR_H)
+ContainerIcon.AnchorPoint = Vector2.new(0, 1)
+ContainerIcon.Position = UDim2.new(1, -ICON_X, 1, -BAR_BOTTOM)
 ContainerIcon.BackgroundColor3 = C.bg
-ContainerIcon.BorderSizePixel  = 0
-ContainerIcon.Font             = Enum.Font.GothamBold
-ContainerIcon.TextSize         = 28
-ContainerIcon.Text             = "🧺"    -- default: basket
-ContainerIcon.AutoButtonColor  = false
-ContainerIcon.ZIndex           = 5
-ContainerIcon.Parent           = Gui
+ContainerIcon.BorderSizePixel = 0
+ContainerIcon.Font = Enum.Font.GothamBold
+ContainerIcon.TextSize = 28
+ContainerIcon.Text = "🧺"
+ContainerIcon.AutoButtonColor = false
+ContainerIcon.ZIndex = 5
+ContainerIcon.Parent = Gui
 Instance.new("UICorner", ContainerIcon).CornerRadius = UDim.new(0, 12)
 local ciStroke = Instance.new("UIStroke", ContainerIcon)
-ciStroke.Thickness = 1.5
-ciStroke.Color     = C.stroke
+ciStroke.Thickness = 1.5; ciStroke.Color = C.stroke
 
--- Item count badge (top-right corner of icon)
+-- Item count badge
 local CountBadge = Instance.new("Frame")
-CountBadge.Name             = "CountBadge"
-CountBadge.Size             = UDim2.new(0, 20, 0, 20)
-CountBadge.AnchorPoint      = Vector2.new(1, 0)
-CountBadge.Position         = UDim2.new(1, 2, 0, -4)
+CountBadge.Name = "CountBadge"
+CountBadge.Size = UDim2.new(0, 20, 0, 20)
+CountBadge.AnchorPoint = Vector2.new(1, 0)
+CountBadge.Position = UDim2.new(1, 2, 0, -4)
 CountBadge.BackgroundColor3 = C.red
-CountBadge.BorderSizePixel  = 0
-CountBadge.ZIndex           = 6
-CountBadge.Visible          = false   -- hidden when 0 items
-CountBadge.Parent           = ContainerIcon
+CountBadge.BorderSizePixel = 0
+CountBadge.ZIndex = 6
+CountBadge.Visible = false
+CountBadge.Parent = ContainerIcon
 Instance.new("UICorner", CountBadge).CornerRadius = UDim.new(1, 0)
-
 local CountLabel = mkLabel(CountBadge, "0",
 	Enum.Font.GothamBlack, 11, Color3.fromRGB(255, 255, 255))
-CountLabel.Name   = "CountLabel"
 CountLabel.ZIndex = 7
 
--- Tooltip label below icon
-local IconTooltip = mkLabel(Gui, "Inventory  [I]",
-	Enum.Font.Gotham, 9, C.dim,
-	Enum.TextXAlignment.Center,
-	UDim2.new(1, -(WEIGHT_BAR_FROM_RIGHT + ICON_GAP + ICON_W), 1, -(BAR_BOTTOM - 2)),
-	UDim2.new(0, ICON_W, 0, 12))
-IconTooltip.ZIndex = 4
-
--- ============================================================
--- INVENTORY TOGGLE
--- Fires a BindableEvent that InventoryClient listens to.
--- We use a BindableEvent so BottomBar and InventoryClient
--- stay decoupled — BottomBar doesn't know about the panel.
--- ============================================================
-
+-- InventoryToggle BindableEvent (InventoryClient listens to this)
 local InventoryToggleEvent = Instance.new("BindableEvent")
-InventoryToggleEvent.Name   = "InventoryToggle"
+InventoryToggleEvent.Name = "InventoryToggle"
 InventoryToggleEvent.Parent = player.PlayerGui
 
 local inventoryOpen = false
 local function toggleInventory()
 	inventoryOpen = not inventoryOpen
-	-- Visual feedback on icon
 	TweenService:Create(ContainerIcon, TweenInfo.new(0.1),
 		{BackgroundColor3 = inventoryOpen
-			and Color3.fromRGB(35, 32, 52)
-			or C.bg}):Play()
+			and Color3.fromRGB(35, 32, 52) or C.bg}):Play()
 	ciStroke.Color = inventoryOpen and C.red or C.stroke
 	InventoryToggleEvent:Fire(inventoryOpen)
 end
 
 ContainerIcon.MouseButton1Click:Connect(toggleInventory)
-
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
-	if input.KeyCode == Enum.KeyCode.I then
-		toggleInventory()
-	end
+	if input.KeyCode == Enum.KeyCode.I then toggleInventory() end
 end)
 
 -- ============================================================
@@ -341,21 +414,18 @@ end)
 local napkinCount    = 1
 local napkinCooldown = 0
 local napkinUsing    = false
-local NAPKIN_CD      = 20
-local NAPKIN_USE     = 2
 
 local function updateNapkinUI()
 	NapkinCount.Text = "🧻 ×" .. napkinCount
 	if napkinCooldown > 0 then
-		local pct = 1 - (napkinCooldown / NAPKIN_CD)
+		local pct = 1 - (napkinCooldown / 20)
 		TweenService:Create(cdFill, TweenInfo.new(0.1),
 			{Size = UDim2.new(pct, 0, 1, 0)}):Play()
 		NapkinPill.BackgroundColor3 = Color3.fromRGB(22, 20, 36)
 	else
 		cdFill.Size = UDim2.new(1, 0, 1, 0)
 		NapkinPill.BackgroundColor3 = napkinCount > 0
-			and Color3.fromRGB(18, 28, 40)
-			or Color3.fromRGB(20, 18, 32)
+			and Color3.fromRGB(18, 28, 40) or C.bg
 	end
 end
 
@@ -363,155 +433,196 @@ NapkinBtn.MouseButton1Click:Connect(function()
 	if napkinUsing or napkinCooldown > 0 or napkinCount <= 0 then return end
 	napkinUsing = true
 	cdLabel.Text = "Using..."
-	cdLabel.TextColor3 = C.napkin
-	task.wait(NAPKIN_USE)
+	task.wait(2)
 	if napkinUsing then
-		napkinCount  = napkinCount - 1
-		napkinCooldown = NAPKIN_CD
-		napkinUsing  = false
+		napkinCount    = napkinCount - 1
+		napkinCooldown = 20
+		napkinUsing    = false
 		updateNapkinUI()
 	end
 end)
 
-game:GetService("RunService").Heartbeat:Connect(function(dt)
+RunService.Heartbeat:Connect(function(dt)
 	if napkinCooldown > 0 then
 		napkinCooldown = math.max(0, napkinCooldown - dt)
 		updateNapkinUI()
 	end
 end)
-
 updateNapkinUI()
 
 -- ============================================================
--- PUBLIC API (_G.Chompers)
+-- BUFF ROW (above hotbar)
+-- ============================================================
+
+local BuffRow = Instance.new("Frame")
+BuffRow.Name = "BuffRow"
+BuffRow.Size = UDim2.new(0, 400, 0, 40)
+BuffRow.AnchorPoint = Vector2.new(0.5, 1)
+BuffRow.Position = UDim2.new(0.5, 0, 1, -(BAR_BOTTOM + SLOT_SIZE + 8))
+BuffRow.BackgroundTransparency = 1
+BuffRow.Parent = Gui
+local buffLL = Instance.new("UIListLayout", BuffRow)
+buffLL.FillDirection = Enum.FillDirection.Horizontal
+buffLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+buffLL.VerticalAlignment = Enum.VerticalAlignment.Center
+buffLL.Padding = UDim.new(0, 4)
+
+-- ============================================================
+-- PUBLIC API
 -- ============================================================
 
 _G.Chompers = _G.Chompers or {}
 
--- Store Guide
 _G.Chompers.OnStoreGuideClick = nil
 StoreGuideBtn.MouseButton1Click:Connect(function()
-	if _G.Chompers.OnStoreGuideClick then
-		_G.Chompers.OnStoreGuideClick()
-	end
+	if _G.Chompers.OnStoreGuideClick then _G.Chompers.OnStoreGuideClick() end
 end)
 
-_G.Chompers.HideDot = function()
-	dotPulseTween:Cancel()
-	PrefDot.Visible = false
-end
+_G.Chompers.HideDot = function() PrefDot.Visible = false end
 
--- Money
 _G.Chompers.SetMoney = function(amount)
 	MoneyLabel.Text = "$" .. tostring(amount)
 end
 
--- Napkin
 _G.Chompers.SetNapkins = function(count)
 	napkinCount = count
 	updateNapkinUI()
 end
 
--- Bathroom breaks
-_G.Chompers.SetBreaks = function(count)
-	updateBreaks(count)
-end
+_G.Chompers.SetBreaks = function(count) updateBreaks(count) end
 
--- Container type (called by PrelobbyGuiBuilder after selection)
 _G.Chompers.SetContainerType = function(containerType)
-	-- containerType: "Basket" or "Cart"
 	ContainerIcon.Text = containerType == "Cart" and "🛒" or "🧺"
 end
 
--- Item count badge — called by InventoryClient whenever inventory changes
 _G.Chompers.SetItemCount = function(count)
 	if count and count > 0 then
-		CountLabel.Text  = tostring(count)
+		CountLabel.Text = tostring(count)
 		CountBadge.Visible = true
 	else
 		CountBadge.Visible = false
 	end
 end
 
--- Slot count (always 10 per Bible Part 35)
-_G.Chompers.GetSlotCount = function()
-	return 10
+_G.Chompers.GetSlotCount = function() return NUM_SLOTS end
+
+_G.Chompers.SetSlotItem = function(slotIndex, itemData)
+	local slot = inventorySlots[slotIndex]
+	if not slot then return end
+	local ico    = slot:FindFirstChild("ItemIcon")
+	local wgt    = slot:FindFirstChild("ItemWeight")
+	local stroke = slot:FindFirstChildWhichIsA("UIStroke")
+
+	if not itemData then
+		if ico then ico.Text = "" end
+		if wgt then wgt.Text = "" end
+		slot.BackgroundColor3 = C.bgLight
+		if stroke then
+			stroke.Color     = slotIndex == selectedSlot and C.red or C.stroke
+			stroke.Thickness = slotIndex == selectedSlot and 2.5 or 1.5
+		end
+		local unpaidL = slot:FindFirstChild("UnpaidLabel")
+		if unpaidL then unpaidL:Destroy() end
+		return
+	end
+
+	local rarity = itemData.rarity
+	if ico then ico.Text = itemData.emoji or "🍽" end
+	if wgt then wgt.Text = "⚖" .. tostring(itemData.weight or itemData.wt or 0) end
+	slot.BackgroundColor3 = RARITY_BG[rarity] or C.bgLight
+
+	if stroke then
+		stroke.Color = slotIndex == selectedSlot and C.red
+			or (not itemData.paid and Color3.fromRGB(200, 120, 30))
+			or RARITY_STROKE[rarity] or C.stroke
+		stroke.Thickness = slotIndex == selectedSlot and 2.5 or 1.5
+	end
+
+	local unpaidL = slot:FindFirstChild("UnpaidLabel")
+	if not itemData.paid then
+		if not unpaidL then
+			unpaidL = Instance.new("TextLabel")
+			unpaidL.Name = "UnpaidLabel"
+			unpaidL.Size = UDim2.new(0, 28, 0, 14)
+			unpaidL.Position = UDim2.new(1, -30, 0, 2)
+			unpaidL.BackgroundTransparency = 1
+			unpaidL.Font = Enum.Font.GothamBold
+			unpaidL.TextSize = 9
+			unpaidL.TextColor3 = Color3.fromRGB(200, 120, 30)
+			unpaidL.TextXAlignment = Enum.TextXAlignment.Right
+			unpaidL.ZIndex = 4
+			unpaidL.Parent = slot
+		end
+		unpaidL.Text = "$" .. tostring(itemData.cost or 0)
+		unpaidL.Visible = true
+	elseif unpaidL then
+		unpaidL:Destroy()
+	end
 end
 
--- Selected slot highlight (driven by InventoryClient)
-local _selectedSlot = 1
 _G.Chompers.SetSelectedSlot = function(index)
-	_selectedSlot = index
-	-- InventoryClient handles the highlight inside the panel
-	-- BottomBar no longer renders individual slots
-end
-_G.Chompers.GetSelectedSlot = function()
-	return _selectedSlot
+	local prev = selectedSlot
+	selectedSlot = index
+	for _, i in ipairs({prev, index}) do
+		local slot = inventorySlots[i]
+		if slot then
+			local stroke = slot:FindFirstChildWhichIsA("UIStroke")
+			if stroke then
+				local unpaidL = slot:FindFirstChild("UnpaidLabel")
+				local isUnpaid = unpaidL ~= nil
+				stroke.Color = i == selectedSlot and C.red
+					or isUnpaid and Color3.fromRGB(200, 120, 30)
+					or C.stroke
+				stroke.Thickness = i == selectedSlot and 2.5 or 1.5
+			end
+		end
+	end
 end
 
--- Buff row (above centre — kept for future combat system)
-local BuffRow = Instance.new("Frame")
-BuffRow.Name                 = "BuffRow"
-BuffRow.Size                 = UDim2.new(0, 400, 0, 40)
-BuffRow.AnchorPoint          = Vector2.new(0.5, 1)
-BuffRow.Position             = UDim2.new(0.5, 0, 1, -(BAR_BOTTOM + BAR_H + 8))
-BuffRow.BackgroundTransparency = 1
-BuffRow.Parent               = Gui
-local buffLL = Instance.new("UIListLayout", BuffRow)
-buffLL.FillDirection         = Enum.FillDirection.Horizontal
-buffLL.HorizontalAlignment   = Enum.HorizontalAlignment.Center
-buffLL.VerticalAlignment     = Enum.VerticalAlignment.Center
-buffLL.Padding               = UDim.new(0, 4)
+_G.Chompers.GetSelectedSlot = function() return selectedSlot end
 
 _G.Chompers.AddBuff = function(icon, color, duration)
 	local bf = Instance.new("Frame")
-	bf.Size             = UDim2.new(0, 36, 0, 36)
+	bf.Size = UDim2.new(0, 36, 0, 36)
 	bf.BackgroundColor3 = Color3.fromRGB(28, 26, 42)
-	bf.BorderSizePixel  = 0
-	bf.Parent           = BuffRow
+	bf.BorderSizePixel = 0
+	bf.Parent = BuffRow
 	Instance.new("UICorner", bf).CornerRadius = UDim.new(0, 8)
 	local bfS = Instance.new("UIStroke", bf)
-	bfS.Thickness = 1.5
-	bfS.Color = color
-
+	bfS.Thickness = 1.5; bfS.Color = color
 	local icoL = Instance.new("TextLabel")
-	icoL.Size                = UDim2.new(1, 0, 0.65, 0)
+	icoL.Size = UDim2.new(1, 0, 0.65, 0)
 	icoL.BackgroundTransparency = 1
-	icoL.Text                = icon
-	icoL.Font                = Enum.Font.GothamBold
-	icoL.TextSize            = 18
-	icoL.TextXAlignment      = Enum.TextXAlignment.Center
-	icoL.TextYAlignment      = Enum.TextYAlignment.Center
-	icoL.Parent              = bf
-
+	icoL.Text = icon
+	icoL.Font = Enum.Font.GothamBold
+	icoL.TextSize = 18
+	icoL.TextXAlignment = Enum.TextXAlignment.Center
+	icoL.TextYAlignment = Enum.TextYAlignment.Center
+	icoL.Parent = bf
 	local tBg = Instance.new("Frame")
-	tBg.Size             = UDim2.new(1, -4, 0, 3)
-	tBg.Position         = UDim2.new(0, 2, 1, -5)
-	tBg.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
-	tBg.BorderSizePixel  = 0
-	tBg.Parent           = bf
+	tBg.Size = UDim2.new(1, -4, 0, 3)
+	tBg.Position = UDim2.new(0, 2, 1, -5)
+	tBg.BackgroundColor3 = C.bg
+	tBg.BorderSizePixel = 0
+	tBg.Parent = bf
 	Instance.new("UICorner", tBg).CornerRadius = UDim.new(0, 2)
-
-	local tFill = Instance.new("Frame")
-	tFill.Size             = UDim2.new(1, 0, 1, 0)
+	local tFill = Instance.new("Frame", tBg)
+	tFill.Size = UDim2.new(1, 0, 1, 0)
 	tFill.BackgroundColor3 = color
-	tFill.BorderSizePixel  = 0
-	tFill.Parent           = tBg
+	tFill.BorderSizePixel = 0
 	Instance.new("UICorner", tFill).CornerRadius = UDim.new(0, 2)
-
-	TweenService:Create(tFill,
-		TweenInfo.new(duration, Enum.EasingStyle.Linear),
+	TweenService:Create(tFill, TweenInfo.new(duration, Enum.EasingStyle.Linear),
 		{Size = UDim2.new(0, 0, 1, 0)}):Play()
 	task.delay(duration, function()
 		TweenService:Create(bf, TweenInfo.new(0.2),
 			{BackgroundTransparency = 1}):Play()
-		task.wait(0.2)
-		bf:Destroy()
+		task.wait(0.2); bf:Destroy()
 	end)
 end
 
--- Legacy stubs — kept so nothing errors if old code calls these
-_G.Chompers.SetSlots    = function() end   -- no-op: slots are always 10
-_G.Chompers.SetSlotItem = function() end   -- no-op: InventoryClient owns the panel now
+-- Legacy stubs
+_G.Chompers.SetSlots      = function() end
+_G.Chompers.SetAllergyDot = function() end
+_G.Chompers.SetFavourite  = function() end
 
 print("ChompersBottomBar loaded!")
