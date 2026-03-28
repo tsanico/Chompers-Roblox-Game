@@ -287,18 +287,25 @@ _G.Chompers.UpdateFullness = function(value)
 end
 
 -- ============================================================
--- WEIGHT BAR (right cluster, left of minimap)
+-- WEIGHT BAR (right cluster, immediately left of minimap)
+-- AnchorPoint (1,1) = bottom-right corner anchored to position
 -- ============================================================
 
--- Positions mirror ChompersBottomBar
-local MINIMAP_RIGHT = MAP_PAD + MAP_W            -- 188
-local WEIGHT_RIGHT  = MINIMAP_RIGHT + GAP + WEIGHT_W  -- 248
+-- MINIMAP_RIGHT = 188 (right edge of minimap from screen right)
+-- Weight bar sits GAP (8px) left of minimap left edge
+-- Minimap left edge is at MINIMAP_RIGHT from screen right = 188px
+-- Weight bar right edge = 188 + GAP = 196px from screen right
+local MINIMAP_RIGHT = MAP_PAD + MAP_W   -- 188
 
-local WeightOuter = mkFrame(Gui,
-	UDim2.new(0, WEIGHT_W, 0, WEIGHT_H),
-	UDim2.new(1, -(MINIMAP_RIGHT + GAP + WEIGHT_W),
-		1, -(BAR_BOTTOM + WEIGHT_H)),
-	Color3.fromRGB(22, 20, 34), 10)
+local WeightOuter = Instance.new("Frame", Gui)
+WeightOuter.Name             = "WeightOuter"
+WeightOuter.Size             = UDim2.new(0, WEIGHT_W, 0, WEIGHT_H)
+WeightOuter.AnchorPoint      = Vector2.new(1, 1)
+WeightOuter.Position         = UDim2.new(1, -(MINIMAP_RIGHT + GAP), 1, -BAR_BOTTOM)
+WeightOuter.BackgroundColor3 = Color3.fromRGB(22, 20, 34)
+WeightOuter.BorderSizePixel  = 0
+corner(WeightOuter, 10)
+mkStroke(WeightOuter)
 
 mkLabel(WeightOuter, "⚖️", Enum.Font.GothamBold, 18,
 	C.weight, Enum.TextXAlignment.Center,
@@ -332,12 +339,10 @@ _G.Chompers.SetWeight = function(current, maxW)
 		{Size = UDim2.new(1, 0, pct, 0)}):Play()
 	wDisplay.Text = current .. "/" .. maxW
 	local overweight = pct >= 1
-	local fillCol = overweight and C.warn
-		or pct >= 0.8 and C.gold or C.weight
+	local fillCol = overweight and C.warn or pct >= 0.8 and C.gold or C.weight
 	TweenService:Create(wFill, TweenInfo.new(0.3),
 		{BackgroundColor3 = fillCol}):Play()
-	wDisplay.TextColor3 = overweight and C.warn
-		or Color3.fromRGB(239, 200, 100)
+	wDisplay.TextColor3 = overweight and C.warn or Color3.fromRGB(239, 200, 100)
 	TweenService:Create(WeightOuter, TweenInfo.new(0.3),
 		{BackgroundColor3 = overweight
 			and Color3.fromRGB(40, 18, 18)
@@ -345,14 +350,20 @@ _G.Chompers.SetWeight = function(current, maxW)
 end
 
 -- ============================================================
--- MINIMAP
+-- MINIMAP (bottom-right corner, 8px margin)
+-- AnchorPoint (1,1) = bottom-right corner anchored to position
 -- ============================================================
 
-local MinimapOuter = mkFrame(Gui,
-	UDim2.new(0, MAP_W, 0, MAP_H),
-	UDim2.new(1, -(MAP_PAD + MAP_W), 1, -(BAR_BOTTOM + MAP_H)),
-	Color3.fromRGB(18, 16, 28), 14)
+local MinimapOuter = Instance.new("Frame", Gui)
+MinimapOuter.Name             = "MinimapOuter"
+MinimapOuter.Size             = UDim2.new(0, MAP_W, 0, MAP_H)
+MinimapOuter.AnchorPoint      = Vector2.new(1, 1)
+MinimapOuter.Position         = UDim2.new(1, -MAP_PAD, 1, -BAR_BOTTOM)
+MinimapOuter.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
+MinimapOuter.BorderSizePixel  = 0
 MinimapOuter.ClipsDescendants = true
+corner(MinimapOuter, 14)
+mkStroke(MinimapOuter)
 
 local MapBg = Instance.new("Frame", MinimapOuter)
 MapBg.Size = UDim2.new(1, 0, 1, 0)
