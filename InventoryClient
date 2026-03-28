@@ -1,75 +1,537 @@
--- InventoryClient
--- Receives inventory updates from server and updates HUD
--- Patched: item.wt (PlayerState field name) not item.weight
+-- InventoryClient (LocalScript in StarterPlayerScripts)
+-- Bible Part 35 compliant:
+--   • Drives 10-slot hotbar via _G.Chompers.SetSlotItem
+--   • Updates item count badge via _G.Chompers.SetItemCount
+--   • Keys 1-0 select active slot, Q drops selected
+--   • I / container icon toggles inventory panel
+--   • Scrollable cookbook-style cards with slot reassign + drag hint
+--   • Weight display in panel header
+--   • Checkout progress bar
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
 
-local player  = Players.LocalPlayer
-local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes")
 
-local UpdateInventoryRemote  = Remotes:WaitForChild("UpdateInventory")
-local UpdateWeightRemote     = Remotes:WaitForChild("UpdateWeight")
-local UpdateMoneyRemote      = Remotes:WaitForChild("UpdateMoney")
-local CheckoutCompleteRemote = Remotes:WaitForChild("CheckoutComplete")
-local CheckoutStartRemote    = Remotes:WaitForChild("CheckoutStart")
-local DropItemRemote         = Remotes:WaitForChild("DropItem")
+local function R(name) return Remotes:WaitForChild(name) end
+local UpdateInventoryRemote  = R("UpdateInventory")
+local UpdateWeightRemote     = R("UpdateWeight")
+local UpdateMoneyRemote      = R("UpdateMoney")
+local CheckoutCompleteRemote = R("CheckoutComplete")
+local CheckoutStartRemote    = R("CheckoutStart")
+local DropItemRemote         = R("DropItem")
 
--- Wait for _G.Chompers to exist (set by ChompersBottomBar)
+-- Wait for _G.Chompers (set by ChompersBottomBar)
 local waited = 0
-while not _G.Chompers and waited < 8 do
-	task.wait(0.1)
-	waited = waited + 0.1
+while not (_G.Chompers and _G.Chompers.SetSlotItem) and waited < 8 do
+	task.wait(0.1); waited = waited + 0.1
+end
+
+-- Colours
+local C = {
+	bg      = Color3.fromRGB(20, 18, 32),
+	bgLight = Color3.fromRGB(28, 26, 42),
+	bgCard  = Color3.fromRGB(32, 30, 48),
+	stroke  = Color3.fromRGB(50, 46, 72),
+	red     = Color3.fromRGB(218, 65, 65),
+	gold    = Color3.fromRGB(239, 159, 39),
+	green   = Color3.fromRGB(70, 195, 85),
+	white   = Color3.fromRGB(245, 242, 255),
+	dim     = Color3.fromRGB(105, 100, 138),
+	orange  = Color3.fromRGB(200, 120, 30),
+	money   = Color3.fromRGB(75, 205, 60),
+	weight  = Color3.fromRGB(200, 160, 80),
+}
+local RARITY_STROKE = {
+	Common         = Color3.fromRGB(80, 78, 100),
+	Uncommon       = Color3.fromRGB(50, 140, 60),
+	Rare           = Color3.fromRGB(50, 100, 200),
+	["Ultra-Rare"] = Color3.fromRGB(130, 60, 200),
+	UltraRare      = Color3.fromRGB(130, 60, 200),
+	Legendary      = Color3.fromRGB(200, 140, 30),
+}
+local RARITY_BG = {
+	Common         = Color3.fromRGB(40, 38, 55),
+	Uncommon       = Color3.fromRGB(22, 42, 25),
+	Rare           = Color3.fromRGB(18, 28, 52),
+	["Ultra-Rare"] = Color3.fromRGB(35, 20, 50),
+	UltraRare      = Color3.fromRGB(35, 20, 50),
+	Legendary      = Color3.fromRGB(50, 38, 10),
+}
+
+-- State
+local localInventory = {}
+local selectedSlot   = 1
+local currentWeight  = 0
+local maxWeight      = 35
+local panelOpen      = false
+local rebuildPanel   -- forward declaration
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+
+local function mkFrame(parent, name, size, pos, anchor, bg, corner, nostroke)
+	local f = Instance.new("Frame")
+	f.Name = name or "Frame"
+	f.Size = size
+	f.Position = pos or UDim2.new(0,0,0,0)
+	if anchor then f.AnchorPoint = anchor end
+	f.BackgroundColor3 = bg or C.bg
+	f.BorderSizePixel = 0
+	f.Parent = parent
+	Instance.new("UICorner", f).CornerRadius = UDim.new(0, corner or 12)
+	if not nostroke then
+		local s = Instance.new("UIStroke", f)
+		s.Thickness = 1.5; s.Color = C.stroke
+	end
+	return f
+end
+
+local function mkLabel(parent, text, font, size, color, xAlign, pos, sz)
+	local l = Instance.new("TextLabel")
+	l.Text = text or ""
+	l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14
+	l.TextColor3 = color or C.white
+	l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.BackgroundTransparency = 1
+	l.Position = pos or UDim2.new(0,0,0,0)
+	l.Size = sz or UDim2.new(1,0,1,0)
+	l.Parent = parent
+	return l
+end
+
+local function mkButton(parent, text, pos, sz, bg, corner)
+	local b = Instance.new("TextButton")
+	b.Text = text or ""
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 11
+	b.TextColor3 = C.dim
+	b.BackgroundColor3 = bg or Color3.fromRGB(35, 33, 52)
+	b.BorderSizePixel = 0
+	b.AutoButtonColor = false
+	b.Position = pos or UDim2.new(0,0,0,0)
+	b.Size = sz or UDim2.new(0,60,0,24)
+	b.Parent = parent
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, corner or 6)
+	return b
+end
+
+local function normaliseRarity(r)
+	if r == "UltraRare" then return "Ultra-Rare" end
+	return r or "Common"
 end
 
 -- ============================================================
--- INVENTORY UPDATE → HOTBAR
+-- HOTBAR SYNC
 -- ============================================================
-UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
-	print("[InventoryClient] UpdateInventory fired — items:", #inventory)
-	print("[InventoryClient] _G.Chompers exists:", _G.Chompers ~= nil)
-	print("[InventoryClient] SetSlotItem exists:", _G.Chompers and _G.Chompers.SetSlotItem ~= nil)
 
-	if not _G.Chompers then return end
-	if not _G.Chompers.SetSlotItem then return end
-
-	local maxSlots = _G.Chompers.GetSlotCount and _G.Chompers.GetSlotCount() or 6
-	print("[InventoryClient] maxSlots:", maxSlots)
-
-	for i = 1, maxSlots do
+local function syncHotbar()
+	if not (_G.Chompers and _G.Chompers.SetSlotItem) then return end
+	local NUM = _G.Chompers.GetSlotCount and _G.Chompers.GetSlotCount() or 10
+	for i = 1, NUM do
 		_G.Chompers.SetSlotItem(i, nil)
 	end
-
-	for i, item in ipairs(inventory) do
-		local rarity = item.rarity
-		if rarity == "UltraRare" then rarity = "Ultra-Rare" end
-		print("[InventoryClient] Setting slot", i, item.name, "rarity:", rarity, "wt:", item.wt, "cost:", item.cost)
+	for i, item in ipairs(localInventory) do
+		if i > NUM then break end
 		_G.Chompers.SetSlotItem(i, {
 			emoji  = item.emoji,
 			name   = item.name,
-			rarity = rarity,
+			rarity = normaliseRarity(item.rarity),
 			paid   = item.paid,
-			weight = item.wt,
-			cost   = item.cost,
+			weight = item.wt or item.weight or 0,
+			cost   = item.cost or 0,
 		})
 	end
+	if _G.Chompers.SetItemCount then
+		_G.Chompers.SetItemCount(#localInventory)
+	end
+end
+
+-- ============================================================
+-- INVENTORY PANEL
+-- ============================================================
+
+local PANEL_W = 480
+local PANEL_H = 520
+-- Position: just above the container icon bottom-right
+-- Container icon: 308px from right edge, 16px from bottom, 52px tall
+local PANEL_X_OFFSET = -(8 + 180 + 8 + 52 + 8 + PANEL_W)   -- left of minimap cluster
+local PANEL_Y_CLOSED = -(16 + 52 + 8)
+local PANEL_Y_OPEN   = -(16 + 52 + 8 + PANEL_H)
+
+local inventoryGui = Instance.new("ScreenGui")
+inventoryGui.Name           = "InventoryPanel"
+inventoryGui.ResetOnSpawn   = false
+inventoryGui.DisplayOrder   = 10
+inventoryGui.IgnoreGuiInset = true
+inventoryGui.Enabled        = false
+inventoryGui.Parent         = playerGui
+
+local Panel = mkFrame(inventoryGui, "Panel",
+	UDim2.new(0, PANEL_W, 0, PANEL_H),
+	UDim2.new(1, PANEL_X_OFFSET, 1, PANEL_Y_OPEN),
+	nil, C.bg, 16)
+Panel.ZIndex = 11
+
+-- Header bar
+local Header = mkFrame(Panel, "Header",
+	UDim2.new(1, 0, 0, 48),
+	UDim2.new(0, 0, 0, 0),
+	nil, Color3.fromRGB(30, 28, 46), 16, true)
+Header.ZIndex = 12
+-- Fill bottom corners of header
+local hFill = Instance.new("Frame", Header)
+hFill.Size = UDim2.new(1, 0, 0, 16)
+hFill.Position = UDim2.new(0, 0, 1, -16)
+hFill.BackgroundColor3 = Color3.fromRGB(30, 28, 46)
+hFill.BorderSizePixel = 0; hFill.ZIndex = 12
+
+local headerTitle = mkLabel(Header, "🧺  Inventory",
+	Enum.Font.GothamBlack, 16, C.white,
+	Enum.TextXAlignment.Left,
+	UDim2.new(0, 14, 0, 0), UDim2.new(0.55, 0, 1, 0))
+headerTitle.Name = "HeaderTitle"
+headerTitle.ZIndex = 13
+
+local WeightHeader = mkLabel(Header, "0 / 35 wt",
+	Enum.Font.GothamBold, 13, C.weight,
+	Enum.TextXAlignment.Right,
+	UDim2.new(0.55, 0, 0, 0), UDim2.new(0.3, -10, 1, 0))
+WeightHeader.Name = "WeightHeader"
+WeightHeader.ZIndex = 13
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Text = "✕"
+CloseBtn.Font = Enum.Font.GothamBlack
+CloseBtn.TextSize = 16
+CloseBtn.TextColor3 = C.white
+CloseBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
+CloseBtn.BorderSizePixel = 0
+CloseBtn.AutoButtonColor = false
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
+CloseBtn.Position = UDim2.new(1, -10, 0.5, 0)
+CloseBtn.ZIndex = 14
+CloseBtn.Parent = Header
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+
+-- Scrollable content
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Name = "Scroll"
+Scroll.Size = UDim2.new(1, -16, 1, -56)
+Scroll.Position = UDim2.new(0, 8, 0, 52)
+Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
+Scroll.ScrollBarThickness = 4
+Scroll.ScrollBarImageColor3 = C.stroke
+Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.ZIndex = 12
+Scroll.Parent = Panel
+
+local ScrollLayout = Instance.new("UIListLayout", Scroll)
+ScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ScrollLayout.Padding = UDim.new(0, 8)
+local ScrollPad = Instance.new("UIPadding", Scroll)
+ScrollPad.PaddingTop = UDim.new(0, 6)
+ScrollPad.PaddingBottom = UDim.new(0, 6)
+
+-- Empty state
+local EmptyLabel = mkLabel(Scroll,
+	"Nothing in your inventory yet.\nPick up ingredients to get started!",
+	Enum.Font.Gotham, 14, C.dim,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0, 100))
+EmptyLabel.TextWrapped = true
+EmptyLabel.LayoutOrder = 0
+EmptyLabel.ZIndex = 12
+
+-- Slot picker popup
+local SlotPicker = mkFrame(inventoryGui, "SlotPicker",
+	UDim2.new(0, 260, 0, 62),
+	UDim2.new(0.5, -130, 0.5, -31),
+	nil, C.bg, 12)
+SlotPicker.ZIndex = 20
+SlotPicker.Visible = false
+
+mkLabel(SlotPicker, "Move to slot:",
+	Enum.Font.GothamBold, 12, C.dim,
+	Enum.TextXAlignment.Left,
+	UDim2.new(0, 10, 0, 4), UDim2.new(1, -20, 0, 16)).ZIndex = 21
+
+local spRow = Instance.new("Frame", SlotPicker)
+spRow.Size = UDim2.new(1, -16, 0, 28)
+spRow.Position = UDim2.new(0, 8, 0, 26)
+spRow.BackgroundTransparency = 1
+spRow.ZIndex = 21
+local spLL = Instance.new("UIListLayout", spRow)
+spLL.FillDirection = Enum.FillDirection.Horizontal
+spLL.Padding = UDim.new(0, 3)
+
+local slotPickerCB = nil
+for i = 1, 10 do
+	local key = i == 10 and 0 or i
+	local btn = Instance.new("TextButton")
+	btn.Text = tostring(key)
+	btn.Font = Enum.Font.GothamBlack
+	btn.TextSize = 11
+	btn.TextColor3 = C.white
+	btn.BackgroundColor3 = C.bgLight
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.Size = UDim2.new(0, 22, 1, 0)
+	btn.ZIndex = 22
+	btn.Parent = spRow
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+	btn.MouseButton1Click:Connect(function()
+		if slotPickerCB then slotPickerCB(i); slotPickerCB = nil end
+		SlotPicker.Visible = false
+	end)
+end
+
+-- Cancel picker on outside click
+SlotPicker.MouseButton1Click:Connect(function()
+	slotPickerCB = nil
+	SlotPicker.Visible = false
 end)
 
 -- ============================================================
--- WEIGHT UPDATE → WEIGHT BAR
+-- BUILD ITEM CARDS
 -- ============================================================
-UpdateWeightRemote.OnClientEvent:Connect(function(current, maxW)
-	print("[InventoryClient] UpdateWeight fired — current:", current, "max:", maxW)
-	if _G.Chompers and _G.Chompers.SetWeight then
-		_G.Chompers.SetWeight(current, maxW)
+
+local function buildCard(item, slotIdx)
+	local rarity    = normaliseRarity(item.rarity or "Common")
+	local strokeCol = RARITY_STROKE[rarity] or C.stroke
+	local bgCol     = RARITY_BG[rarity] or C.bgCard
+
+	local card = Instance.new("Frame")
+	card.Name             = "Card_" .. slotIdx
+	card.Size             = UDim2.new(1, 0, 0, 88)
+	card.BackgroundColor3 = bgCol
+	card.BorderSizePixel  = 0
+	card.LayoutOrder      = slotIdx
+	card.ZIndex           = 12
+	card.Parent           = Scroll
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
+	local stroke = Instance.new("UIStroke", card)
+	stroke.Thickness = slotIdx == selectedSlot and 2.5 or 1.5
+	stroke.Color     = slotIdx == selectedSlot and C.red or strokeCol
+
+	-- Slot badge top-left
+	local slotKey = slotIdx == 10 and 0 or slotIdx
+	local badge = mkFrame(card, "Badge",
+		UDim2.new(0, 26, 0, 20), UDim2.new(0, 7, 0, 7),
+		nil, Color3.fromRGB(40, 38, 60), 5, true)
+	badge.ZIndex = 13
+	mkLabel(badge, tostring(slotKey),
+		Enum.Font.GothamBlack, 10, C.dim).ZIndex = 14
+
+	-- Emoji
+	local emojiL = mkLabel(card, item.emoji or "🍽",
+		Enum.Font.GothamBold, 32, C.white,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0, 0, 0, 0), UDim2.new(0, 70, 1, 0))
+	emojiL.ZIndex = 13
+
+	-- Name
+	mkLabel(card, item.name or "Unknown",
+		Enum.Font.GothamBlack, 14, C.white,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0, 74, 0, 7), UDim2.new(1, -168, 0, 18)).ZIndex = 13
+
+	-- Detail: zone · allergy · weight
+	local d1 = {}
+	if item.zone then table.insert(d1, item.zone) end
+	if item.allergy and item.allergy ~= "None" then
+		table.insert(d1, item.allergy .. " allergy")
+	end
+	if item.wt or item.weight then
+		table.insert(d1, "⚖" .. tostring(item.wt or item.weight))
+	end
+	mkLabel(card, table.concat(d1, " · "),
+		Enum.Font.Gotham, 11, C.dim,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0, 74, 0, 27), UDim2.new(1, -168, 0, 14)).ZIndex = 13
+
+	-- Detail: effect / cl
+	local d2 = item.effect or item.notes or ""
+	if item.cl and item.cl > 0 then
+		d2 = "CL " .. item.cl .. (d2 ~= "" and " · " .. d2 or "")
+	end
+	local d2L = mkLabel(card, d2,
+		Enum.Font.Gotham, 11, Color3.fromRGB(155, 150, 185),
+		Enum.TextXAlignment.Left,
+		UDim2.new(0, 74, 0, 43), UDim2.new(1, -168, 0, 14))
+	d2L.ZIndex = 13
+	d2L.TextWrapped = true
+
+	-- Status tag
+	local statusText, statusColor
+	if item.cookStatus then
+		if item.cookStatus == "Cooked" then
+			statusText = "COOKED ✓"; statusColor = C.green
+		elseif item.cookStatus == "Burned" then
+			statusText = "BURNED";   statusColor = C.red
+		else
+			statusText = "UNCOOKED"; statusColor = C.gold
+		end
+	else
+		if item.paid then
+			statusText = "PAID";    statusColor = C.green
+		else
+			statusText = "UNPAID $" .. tostring(item.cost or 0)
+			statusColor = C.orange
+		end
+	end
+	local tagBg = mkFrame(card, "Tag",
+		UDim2.new(0, 82, 0, 18), UDim2.new(0, 74, 0, 62),
+		nil, Color3.fromRGB(20, 18, 32), 5, true)
+	tagBg.ZIndex = 13
+	mkLabel(tagBg, statusText,
+		Enum.Font.GothamBlack, 9, statusColor).ZIndex = 14
+
+	-- "Move to Slot" button
+	local moveBtn = mkButton(card, "Move ▾",
+		UDim2.new(1, -86, 0.5, -12),
+		UDim2.new(0, 70, 0, 24),
+		Color3.fromRGB(35, 33, 52), 6)
+	moveBtn.ZIndex = 13
+	moveBtn.MouseButton1Click:Connect(function()
+		SlotPicker.Visible = true
+		slotPickerCB = function(targetSlot)
+			-- Swap
+			local a = localInventory[slotIdx]
+			local b = localInventory[targetSlot]
+			localInventory[slotIdx]     = b
+			localInventory[targetSlot]  = a
+			syncHotbar()
+			rebuildPanel()
+		end
+	end)
+
+	-- Drag grip hint
+	mkLabel(card, "⠿",
+		Enum.Font.GothamBold, 18, Color3.fromRGB(55, 52, 78),
+		Enum.TextXAlignment.Center,
+		UDim2.new(1, -18, 0, 0), UDim2.new(0, 14, 1, 0)).ZIndex = 13
+
+	return card
+end
+
+-- ============================================================
+-- REBUILD PANEL
+-- ============================================================
+
+rebuildPanel = function()
+	for _, child in ipairs(Scroll:GetChildren()) do
+		if child:IsA("Frame") and child.Name:sub(1, 5) == "Card_" then
+			child:Destroy()
+		end
+	end
+
+	WeightHeader.Text = tostring(currentWeight) .. " / " .. tostring(maxWeight) .. " wt"
+
+	if #localInventory == 0 then
+		EmptyLabel.Visible = true
+		return
+	end
+	EmptyLabel.Visible = false
+
+	for i, item in ipairs(localInventory) do
+		buildCard(item, i)
+	end
+end
+
+-- ============================================================
+-- OPEN / CLOSE
+-- ============================================================
+
+local function openPanel()
+	panelOpen = true
+	rebuildPanel()
+	inventoryGui.Enabled = true
+end
+
+local function closePanel()
+	panelOpen = false
+	SlotPicker.Visible = false
+	inventoryGui.Enabled = false
+end
+
+CloseBtn.MouseButton1Click:Connect(closePanel)
+
+-- Listen to BottomBar InventoryToggle BindableEvent
+task.spawn(function()
+	local evt = playerGui:WaitForChild("InventoryToggle", 10)
+	if not evt then return end
+	evt.Event:Connect(function(isOpen)
+		if isOpen then openPanel() else closePanel() end
+	end)
+end)
+
+-- ============================================================
+-- INPUT
+-- ============================================================
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+
+	if input.KeyCode == Enum.KeyCode.Escape and panelOpen then
+		closePanel(); return
+	end
+
+	if input.KeyCode == Enum.KeyCode.Q then
+		if selectedSlot >= 1 and localInventory[selectedSlot] then
+			DropItemRemote:FireServer(selectedSlot)
+		end
+		return
+	end
+
+	local numKeys = {
+		[Enum.KeyCode.One]=1, [Enum.KeyCode.Two]=2,
+		[Enum.KeyCode.Three]=3, [Enum.KeyCode.Four]=4,
+		[Enum.KeyCode.Five]=5, [Enum.KeyCode.Six]=6,
+		[Enum.KeyCode.Seven]=7, [Enum.KeyCode.Eight]=8,
+		[Enum.KeyCode.Nine]=9, [Enum.KeyCode.Zero]=10,
+	}
+	local slot = numKeys[input.KeyCode]
+	if slot then
+		selectedSlot = slot
+		if _G.Chompers and _G.Chompers.SetSelectedSlot then
+			_G.Chompers.SetSelectedSlot(selectedSlot)
+		end
+		if panelOpen then rebuildPanel() end
 	end
 end)
 
 -- ============================================================
--- MONEY UPDATE → MONEY PILL
+-- REMOTES
 -- ============================================================
+
+UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
+	localInventory = inventory or {}
+	syncHotbar()
+	if panelOpen then rebuildPanel() end
+end)
+
+UpdateWeightRemote.OnClientEvent:Connect(function(current, maxW)
+	currentWeight = current or 0
+	maxWeight     = maxW or 35
+	if _G.Chompers and _G.Chompers.SetWeight then
+		_G.Chompers.SetWeight(currentWeight, maxWeight)
+	end
+	if panelOpen then
+		WeightHeader.Text = tostring(currentWeight) .. " / " .. tostring(maxWeight) .. " wt"
+	end
+end)
+
 UpdateMoneyRemote.OnClientEvent:Connect(function(amount)
 	if _G.Chompers and _G.Chompers.SetMoney then
 		_G.Chompers.SetMoney(amount)
@@ -79,128 +541,71 @@ end)
 -- ============================================================
 -- CHECKOUT PROGRESS BAR
 -- ============================================================
-local playerGui = player:WaitForChild("PlayerGui")
 
 local checkoutGui = Instance.new("ScreenGui")
-checkoutGui.Name            = "CheckoutProgressGui"
-checkoutGui.ResetOnSpawn    = false
-checkoutGui.DisplayOrder    = 15
-checkoutGui.IgnoreGuiInset  = true
-checkoutGui.Enabled         = false
-checkoutGui.Parent          = playerGui
+checkoutGui.Name = "CheckoutProgressGui"
+checkoutGui.ResetOnSpawn = false
+checkoutGui.DisplayOrder = 15
+checkoutGui.IgnoreGuiInset = true
+checkoutGui.Enabled = false
+checkoutGui.Parent = playerGui
 
-local checkoutFrame = Instance.new("Frame")
-checkoutFrame.Size            = UDim2.new(0, 400, 0, 80)
-checkoutFrame.AnchorPoint     = Vector2.new(0.5, 1)
-checkoutFrame.Position        = UDim2.new(0.5, 0, 1, -100)
-checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
-checkoutFrame.BorderSizePixel = 0
-checkoutFrame.Parent          = checkoutGui
-Instance.new("UICorner", checkoutFrame).CornerRadius = UDim.new(0, 12)
+local checkoutFrame = mkFrame(checkoutGui, "Frame",
+	UDim2.new(0, 400, 0, 80),
+	UDim2.new(0.5, -200, 1, -100),
+	nil, Color3.fromRGB(20, 18, 32), 12)
 local cfS = Instance.new("UIStroke", checkoutFrame)
-cfS.Thickness = 2
-cfS.Color     = Color3.fromRGB(75, 205, 60)
+cfS.Thickness = 2; cfS.Color = C.money
 
-local checkoutTitle = Instance.new("TextLabel", checkoutFrame)
-checkoutTitle.Size                 = UDim2.new(1, 0, 0, 28)
-checkoutTitle.Position             = UDim2.new(0, 0, 0, 6)
-checkoutTitle.BackgroundTransparency = 1
-checkoutTitle.Text                 = "💵  Checking out..."
-checkoutTitle.Font                 = Enum.Font.GothamBold
-checkoutTitle.TextSize             = 18
-checkoutTitle.TextColor3           = Color3.fromRGB(75, 205, 60)
-checkoutTitle.TextXAlignment       = Enum.TextXAlignment.Center
+local checkoutTitle = mkLabel(checkoutFrame, "💵  Checking out...",
+	Enum.Font.GothamBold, 18, C.money,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0, 0, 0, 6), UDim2.new(1, 0, 0, 28))
+checkoutTitle.Name = "CheckoutTitle"
 
-local checkoutCostLabel = Instance.new("TextLabel", checkoutFrame)
-checkoutCostLabel.Size                 = UDim2.new(1, 0, 0, 18)
-checkoutCostLabel.Position             = UDim2.new(0, 0, 0, 32)
-checkoutCostLabel.BackgroundTransparency = 1
-checkoutCostLabel.Text                 = ""
-checkoutCostLabel.Font                 = Enum.Font.Gotham
-checkoutCostLabel.TextSize             = 14
-checkoutCostLabel.TextColor3           = Color3.fromRGB(175, 172, 198)
-checkoutCostLabel.TextXAlignment       = Enum.TextXAlignment.Center
+mkLabel(checkoutFrame, "",
+	Enum.Font.Gotham, 14, C.dim,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0, 0, 0, 32), UDim2.new(1, 0, 0, 18))
 
-local barTrack = Instance.new("Frame", checkoutFrame)
-barTrack.Size             = UDim2.new(1, -24, 0, 10)
-barTrack.Position         = UDim2.new(0, 12, 1, -18)
-barTrack.BackgroundColor3 = Color3.fromRGB(30, 28, 44)
-barTrack.BorderSizePixel  = 0
-Instance.new("UICorner", barTrack).CornerRadius = UDim.new(0, 5)
-
-local barFill = Instance.new("Frame", barTrack)
-barFill.Size             = UDim2.new(0, 0, 1, 0)
-barFill.BackgroundColor3 = Color3.fromRGB(75, 205, 60)
-barFill.BorderSizePixel  = 0
-Instance.new("UICorner", barFill).CornerRadius = UDim.new(0, 5)
+local barTrack = mkFrame(checkoutFrame, "Track",
+	UDim2.new(1, -24, 0, 10),
+	UDim2.new(0, 12, 1, -18),
+	nil, Color3.fromRGB(30, 28, 44), 5, true)
+local barFill = mkFrame(barTrack, "Fill",
+	UDim2.new(0, 0, 1, 0),
+	UDim2.new(0, 0, 0, 0),
+	nil, C.money, 5, true)
 
 local checkoutTween = nil
 
 CheckoutStartRemote.OnClientEvent:Connect(function(holdTime, cost)
-	checkoutGui.Enabled         = true
-	checkoutCostLabel.Text      = "Total due: $" .. tostring(cost)
-	barFill.Size                = UDim2.new(0, 0, 1, 0)
+	checkoutGui.Enabled = true
+	barFill.Size = UDim2.new(0, 0, 1, 0)
 	if checkoutTween then checkoutTween:Cancel() end
-	checkoutTween = TweenService:Create(
-		barFill,
+	checkoutTween = TweenService:Create(barFill,
 		TweenInfo.new(holdTime, Enum.EasingStyle.Linear),
-		{ Size = UDim2.new(1, 0, 1, 0) })
+		{Size = UDim2.new(1, 0, 1, 0)})
 	checkoutTween:Play()
 end)
 
 CheckoutCompleteRemote.OnClientEvent:Connect(function(success, newMoney, cost)
-	if checkoutTween then
-		checkoutTween:Cancel()
-		checkoutTween = nil
-	end
-	checkoutGui.Enabled = false
-
+	if checkoutTween then checkoutTween:Cancel(); checkoutTween = nil end
+	checkoutGui.Enabled = true
 	if success then
 		checkoutFrame.BackgroundColor3 = Color3.fromRGB(18, 45, 20)
-		checkoutGui.Enabled            = true
-		checkoutTitle.Text             = "✓  Paid $" .. cost .. "!"
-		checkoutTitle.TextColor3       = Color3.fromRGB(75, 205, 60)
-		task.wait(1.2)
-		checkoutGui.Enabled            = false
-		checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
-		checkoutTitle.Text             = "💵  Checking out..."
-		checkoutTitle.TextColor3       = Color3.fromRGB(75, 205, 60)
+		checkoutTitle.Text = "✓  Paid $" .. tostring(cost) .. "!"
+		checkoutTitle.TextColor3 = C.green
 	else
 		checkoutFrame.BackgroundColor3 = Color3.fromRGB(45, 15, 15)
-		checkoutGui.Enabled            = true
-		checkoutTitle.Text             = "✗  Not enough money!"
-		checkoutTitle.TextColor3       = Color3.fromRGB(220, 60, 60)
-		task.wait(1.5)
-		checkoutGui.Enabled            = false
-		checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
-		checkoutTitle.Text             = "💵  Checking out..."
-		checkoutTitle.TextColor3       = Color3.fromRGB(75, 205, 60)
+		checkoutTitle.Text = "✗  Not enough money!"
+		checkoutTitle.TextColor3 = C.red
 	end
+	task.wait(success and 1.2 or 1.5)
+	checkoutGui.Enabled = false
+	checkoutFrame.BackgroundColor3 = Color3.fromRGB(20, 18, 32)
+	checkoutTitle.Text = "💵  Checking out..."
+	checkoutTitle.TextColor3 = C.money
 end)
 
--- ============================================================
--- Q KEY → DROP SELECTED ITEM
--- ============================================================
-local selectedSlot = 1
-
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-
-	if input.KeyCode == Enum.KeyCode.Q then
-		DropItemRemote:FireServer(selectedSlot)
-	end
-
-	local numKeys = {
-		[Enum.KeyCode.One]   = 1,  [Enum.KeyCode.Two]   = 2,
-		[Enum.KeyCode.Three] = 3,  [Enum.KeyCode.Four]  = 4,
-		[Enum.KeyCode.Five]  = 5,  [Enum.KeyCode.Six]   = 6,
-		[Enum.KeyCode.Seven] = 7,  [Enum.KeyCode.Eight] = 8,
-		[Enum.KeyCode.Nine]  = 9,  [Enum.KeyCode.Zero]  = 10,
-	}
-	if numKeys[input.KeyCode] then
-		selectedSlot = numKeys[input.KeyCode]
-		if _G.Chompers and _G.Chompers.SetSelectedSlot then
-			_G.Chompers.SetSelectedSlot(selectedSlot)
-		end
-	end
-end)
+print("[InventoryClient] Ready")
