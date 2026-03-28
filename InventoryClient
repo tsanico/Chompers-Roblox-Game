@@ -39,13 +39,17 @@ UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
 
 	-- Fill slots with inventory items
 	-- NOTE: PlayerState stores weight as item.wt (not item.weight)
+	-- NOTE: PlayerState uses "UltraRare" — BottomBar expects "Ultra-Rare"
 	for i, item in ipairs(inventory) do
+		local rarity = item.rarity
+		if rarity == "UltraRare" then rarity = "Ultra-Rare" end
 		_G.Chompers.SetSlotItem(i, {
 			emoji  = item.emoji,
 			name   = item.name,
-			rarity = item.rarity,
+			rarity = rarity,
 			paid   = item.paid,
-			weight = item.wt,   -- ← was item.weight, PlayerState uses item.wt
+			weight = item.wt,
+			cost   = item.cost,
 		})
 	end
 end)
