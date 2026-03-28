@@ -473,7 +473,8 @@ buffLL.Padding = UDim.new(0, 4)
 
 _G.Chompers = _G.Chompers or {}
 
-_G.Chompers.OnStoreGuideClick = nil
+-- Store Guide — PrelobbyGuiBuilder assigns this callback
+-- Do NOT set to nil here — that would overwrite PrelobbyGuiBuilder's assignment
 StoreGuideBtn.MouseButton1Click:Connect(function()
 	if _G.Chompers.OnStoreGuideClick then _G.Chompers.OnStoreGuideClick() end
 end)
