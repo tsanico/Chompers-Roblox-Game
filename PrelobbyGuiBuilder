@@ -1,754 +1,2125 @@
--- ============================================================
--- PrelobbyGuiBuilder — LocalScript
--- Location: StarterGui > PrelobbyGui
---
--- Owns: Store Guide panel (always accessible), Preferences tab,
---       Rules tab, Match tab, billboard above head.
---
--- CookbookBuilder hookpoints (do NOT rename or move):
---   • ContentArea  (Frame inside Panel)
---   • tabPanels    (table, CookbookBuilder adds COOKBOOK + ACCOLADES)
---   • FavSelected  (TextLabel, Name="FavSelected")
---   • FavouriteScroll (ScrollingFrame, Name="FavouriteScroll")
---
--- _G.Chompers API exposed:
---   OpenStoreGuide(), CloseStoreGuide(), IsStoreGuideOpen(),
---   RefreshBillboard()
--- ============================================================
+🛒 CHOMPERS' FRESH MARKET
+GAME DESIGN BIBLE — v7.0
+The Unchanging Source of Truth
+> **Status:** LOCKED. All future scripts, rewrites, and systems must conform to this document.
+> No mechanic, number, or rule is changed without updating this Bible first.
+> Last updated: March 2026
+---
+PART 1 — IDENTITY
+Full Name: Chompers' Fresh Market
+Tagline: gather · cook · food fight!
+Engine: Roblox Studio (Lua)
+Genre: Multiplayer Free-For-All Food Fight
+Players: 15–40 per match (lobby max = 40)
+Scale: 3× real-world, cartoonish Costco energy
+Currency: Medals (earned in-match, spent on cosmetics)
+Win Condition: Most total Cleanliness damage dealt. Last player standing is tiebreaker (+15 bonus medals).
+---
+PART 2 — CORE GAME LOOP
+```
+PRELOBBY (Car Park)
+  ↓ Players spawn, select cart/basket, set allergy + favourite, browse cosmetics
+  ↓ No loot spawns during Prelobby phase
+GATHERING PHASE — 3 minutes
+  ↓ Doors open, all loot spawns simultaneously across map
+  ↓ Collect ingredients, pay at Checkout, form alliances
+COOKING PHASE — 3 minutes
+  ↓ Paid ingredients → Prep Table → Stovetop → throwable recipes
+  ↓ Friendship Bracelets can still be offered during Cooking
+  ↓ At phase end: 10s grace period for active cooks to complete
+FOOD FIGHT PHASE — up to 6 minutes
+  ↓ Throw food, deal CL damage, manage FL, use Bathrooms
+  ↓ Gathering, checkout, and cooking ALL remain open during Food Fight
+  ↓ Container swaps allowed at cart/basket racks (unlimited supply)
+  ↓ No new alliances — existing alliances carry over
+  ↓ Alliance reconfirmation window opens at Food Fight start
+  ↓ Match ends EARLY if one player/team remains — 6 min is hard cap only
+END GAME
+  ↓ Last player/team standing declared winner → accolades → medals → rematch vote
+```
+Phase Lengths (LOCKED):
+Phase	Duration
+Prelobby	Until 8+ players ready OR 90s max. Min 8 players to start.
+Gathering	3 minutes
+Cooking	3 minutes (+ 10s grace at end)
+Food Fight	Up to 6 minutes — ends early if one player/team remains
+Accolades	45 seconds
+Total active gameplay	~12 min 45s (may be shorter if match ends early)
+> **Food Fight end condition (Option C — Hybrid):** Match ends the moment one player or one allied team remains. If multiple players/teams survive to the 6-minute hard cap, the timer ends the match. Last One Standing goes to whoever is alive at match end. If timer expires with multiple survivors, all surviving players share Last One Standing.
+---
+PART 3 — THE TWO BARS
+🧼 Cleanliness (CL) — Your HP (0–100)
+Increases ONLY from enemy food hits
+Does NOT decay naturally
+Healed by: Napkin (−25 CL), Sink (→ 0), certain self-consume recipes
+80%+: Bathroom access unlocked. Player can still move and throw freely.
+~95%: 0.75s warning slow + screen edge effect — telegraphs what's coming
+100%: INSTANT debuff state. No grace period at 100%.
+Sub-100% grace window: After any single hit of 40+ CL below 100%, player has 1.5s before consequences resolve — protects against rapid multi-hit combos
+🍔 Fullness (FL) — Control / Penalty Resource (0–100)
+FL is a control and penalty resource only — not a win condition
+Increases from: food hits (+1 FL per raw/cold recipe hit, +2 FL per cooked recipe hit), eating buff recipes, looting trash cans
+Increases from: getting hit by your own favourite thrown by an enemy (×2 FL spike)
+Decays slowly over time on its own
+10–20%: +10% player size, −10% movement speed
+20–30%: +25% player size, −25% movement speed
+80%+: Bathroom access unlocked. Player can still move and throw freely.
+~95%: Same 0.75s warning applies
+100%: INSTANT debuff state. No grace period at 100%.
+Taking any damage: ALL active buff durations reduced by 15%
+> **Design principle:** Cleanliness = survival. Fullness = control and pressure. These roles do not overlap.
+💥 100% State (CL or FL) — LOCKED
+When either bar hits 100%, the following triggers instantly with no grace period:
+Effect	Detail
+0.5s dramatic slow + sound cue	Cinematic moment — turns frustration into drama
+Drops ALL inventory	Every ingredient, dish, and held item drops to floor
+−30% movement speed	Applied immediately after drop
+Still fully vulnerable	CL and FL damage lands normally — intentional humiliation
+Can pick up items	Yes, but weight limit applies and pickup speed scales with overweight
+Both bars at 100% simultaneously:
+−60% movement speed (stacked −30% + −30%)
+Both visuals stacked: maximum mess + maximum bloat
+Needs 2 Potty Breaks to clear (Sink + Toilet)
+> **No action locks.** No "can't throw" or "can't pick up" restrictions. The 0.5s cue, item drop, and speed debuff are the full punishment. Scrambling to recover at −30/−60% speed while being pelted is the intended experience.
+🧻 Napkin (LOCKED)
+Stat	Value
+CL heal	−25 Cleanliness
+Use time	2s (interruptible by hit)
+Cooldown	20s
+Break cost	FREE — no Potty Break consumed
+Starting supply	1 per player
+World loot	Super rare outdoor spawn only, never respawns
+---
+PART 4 — BATHROOM SYSTEM (LOCKED)
+Each player has exactly 3 Potty Breaks per match.
+Safe Zone Rules
+Entire bathroom interior = full immune zone — no damage, no effects land inside
+10-stud buffer zone around all WC entrances — no throwing allowed in this zone
+On exit: 1.5s grace window of full invincibility before combat resumes
+Confirmation prompt before using sink or toilet: "Use the Sink?" / "Use the Toilet?"
+Entry threshold stays at 80% — pushing higher creates more forced-before-reaction situations
+Break Costs
+Action	Threshold	Break cost	Effect
+Voluntary entry	80%+ CL OR 80%+ FL	0	Player enters immune zone
+Bathroom locked	Below 80% both bars	—	Cannot enter
+Sink use	Inside	1 Potty Break	CL → 0 over ~3s
+Toilet use	Inside stall	1 Potty Break	FL → 0 over ~2s
+Both same visit	Inside	2 Potty Breaks	Both → 0
+0 Potty Breaks remaining	—	—	ELIMINATED → spectator
+Reset Values
+Full reset every time — no scaling with break number. Every break is equally valuable.
+---
+PART 5 — ALLERGY & FAVOURITE SYSTEM (LOCKED)
+Allergy
+Stat	Value
+Allergen hit multiplier	×1.75 CL received
+Everything else multiplier	×0.75 CL received
+Special rule	Egg counts as Dairy allergy type
+Allergy types: Dairy, Gluten, Produce, Meat, Seafood, Nuts, Spicy, Soy
+Favourite Recipe — Redesigned
+Passive Effects
+Trigger	Effect
+Self-consume your favourite recipe	Triggers Craving State + buff duration +8s + fullness cost halved
+Enemy hits you with your own favourite	×2 FL spike to you
+> **No offensive throw multiplier.** Favourite food is a setup tool, not a passive damage buff.
+Craving State (LOCKED)
+Stat	Value
+Trigger	Self-consume your favourite recipe
+Window	10 seconds
+Effect	Next dish thrown deals ×1.5 CL — consumed on hit
+Persists through hits	Yes — incoming damage does NOT cancel Craving
+Cooldown	15s after window expires OR is consumed
+Visual	Player glow/aura visible to all — telegraphs the burst
+---
+PART 6 — WEIGHT SYSTEM (LOCKED)
+Containers
+Container	Weight Limit	Speed	Detection Radius
+🧺 Basket	35	+5%	Normal
+🛒 Cart	70	−15%	+15% larger on minimap
+> **Slot limit removed.** Players are capped by weight only — not by a slot count. Every player has 10 inventory slots regardless of container. The container determines weight capacity and speed, not how many items you can hold.
+Inventory Slots (LOCKED)
+10 slots per player, always. Keys 1–0 on keyboard select the active slot for throwing.
+All 10 slots are visible in the Inventory HUD (see Part 35 — HUD Layout).
+Weight capacity (35 or 70) is the only pickup restriction. You can carry any mix of ingredients up to your weight limit across all 10 slots.
+Overloading IS allowed (exceeding weight limit) — penalises speed and pickup time, but is not blocked.
+Ingredient Stacking
+Rarity	Stack per slot
+Common	×3
+Uncommon	×2
+Rare	×1
+Ultra-Rare	×1
+Legendary	×1
+Throw Mechanic
+Input	Charge	Power
+Mouse tap / quick release	0.3s min	40%
+Hold + release	Up to 1.5s	100%
+Charge affects speed and distance only — NOT CL damage
+Charge and ingredient weight are independent axes
+Weight Effects on Movement
+Every +10wt over container limit: −10% movement speed
+Overloading IS allowed — self-punishing by design
+Weight Effects on Throw
+Total Weight	Throw Speed Penalty	Throw Distance Penalty	Run Speed Penalty
+0–10	0%	0%	0%
+11–20	5%	8%	5%
+21–35	12%	18%	10%
+36–50	22%	30%	18%
+51+	35%	45%	25%
+Weight Effects on Knockback + Hitbox
+Ingredient Weight	Knockback	Hitbox Size
+1–2	Minimal	Small
+3–4	Moderate	Medium
+5+	Heavy	Large
+Pickup Speed Penalties (applies always, not just at 100%)
+Weight over limit	Pickup Speed Penalty
+0–10 over	0%
+11–20 over	−20%
+21–35 over	−40%
+36–50 over	−60%
+51+ over	−75%
+---
+PART 7 — ECONOMY & CHECKOUT (LOCKED)
+Starting Resources
+$15 cash + 1 napkin per player per match
+Loot Spawn Rules
+Loot Type	Location	Phase	Notes
+Ingredients	Indoor zones (zone-specific)	Gathering start	Each zone has its own weighted pool
+Cash ($1–$3 small, $10–$25 stacks)	Outdoor only	Gathering start	Car park, alleys, back, front outdoor
+Napkins	Outdoor only	Gathering start	Super rare, never respawns
+Friendship Bracelets	Outdoor only	Gathering start	Ultra-Rare, max 2/match, never respawns
+Stockroom ingredients	Stockroom only	Gathering start	All 65 ingredients, higher density, rarity-scaled
+> Nothing spawns during Prelobby. All loot populates simultaneously at Gathering start.
+> Front outdoor area included (behind food trucks, under trees, on benches).
+Checkout System (LOCKED)
+Both container types can use either checkout type. Natural tendency: basket players favour self-checkout, cart players favour staffed — but no hard restriction.
+No defensive bonus at either checkout type. Players are fully exposed while paying.
+Self-Checkout (Interruptible)
+Approach terminal, click each item individually to scan
+Each item has its own scan bar that must fill completely
+Can exit at any time — already-paid items stay paid, unscanned items remain unpaid
+Hit interrupts current item scan only — progress on that item lost, must rescan it, but can resume immediately
+Already-paid items are never lost from a hit
+Staffed Checkout (Locked-In)
+Approach lane, tap E once to begin
+Locked in until all items are scanned — cannot exit
+Scans automatically — no clicking required
+Hit has no mechanical effect — you committed, you ride it out
+~25% faster scan rate than self-checkout per item
+Queue System
+Multiple lanes: 12 staffed lanes, several self-checkout terminals — congestion rare
+First come first served per lane
+Second player at same lane joins queue and auto-starts when current player finishes
+Partial payment works at both: unscanned items stay unpaid regardless of interruption
+Scan Times — Rarity Primary, Weight Secondary
+Formula: Rarity sets the base scan time. Weight adds +0.1s per weight point above 1.
+Self-Checkout Scan Times
+Rarity	Base	Weight modifier	Example: wt1	Example: wt3	Example: wt5
+Common	0.8s	+0.1s per wt above 1	0.4s	0.6s	0.8s
+Uncommon	0.7s	+0.1s per wt above 1	0.7s	0.9s	1.1s
+Rare	1.2s	+0.1s per wt above 1	1.2s	1.4s	1.6s
+Ultra-Rare	1.8s	+0.1s per wt above 1	1.8s	2.0s	2.2s
+Legendary	3.0s	+0.1s per wt above 1	3.0s	—	—
+Staffed Checkout Scan Times (~25% faster)
+Rarity	Base	Example: wt1	Example: wt3	Example: wt5
+Common	0.3s	0.3s	0.45s	0.6s
+Uncommon	0.53s	0.53s	0.68s	0.83s
+Rare	0.9s	0.9s	1.05s	1.2s
+Ultra-Rare	1.35s	1.35s	1.5s	1.65s
+Legendary	2.25s	2.25s	—	—
+Checkout Time Scenarios (Reference)
+Scenario	Self-Checkout	Staffed	Notes
+Basket, 6 Common (avg wt1.5)	~2.7s	~2.0s	Fast, barely noticeable
+Cart, 12 Common (avg wt1.5)	~6s	~4.5s	Staffed clearly worth it
+Cart, 8 Uncommon + 4 Rare	~12.2s	~9.1s	Real exposure window
+Basket, mixed Uncommon/Rare/UR	~7.2s	~5.4s	Tense for a basket player
+Steak ingredients (Wagyu+Truffle+Caviar)	6.4s for 3 items	~4.8s	Maximum drama
+Single Caviar (Legendary)	3.0s	2.25s	Public declaration
+Trash Cans
+Items dropped at 100% state → nearest trash can
+Loot at −20 CL penalty (real decision, not trivial)
+Inventory Slot Indicators
+State	Visual
+Unpaid ingredient	Orange stroke + price tag
+Paid ingredient	Rarity-coloured stroke
+Uncooked dish	Yellow/amber highlight
+Cooked dish	Green highlight
+Burned dish	Red highlight
+---
+PART 8 — DAMAGE FORMULA (LOCKED)
+Final Damage Formula
+```
+Final Damage = Base CL × (1 + Additive%) × Multipliers → Soft Cap
+```
+Step 1 — Additive Bucket (adds together, not multiplied)
+Source	Bonus
+Cook depth 2 ingredients	+5%
+Cook depth 3 ingredients	+10%
+Cook depth 4+ ingredients	+15%
+Step 2 — Multipliers (multiply together)
+Source	Multiplier
+Allergy match	×1.75
+Non-allergen	×0.75
+Craving State	×1.5 (consumed on hit)
+Mark bonus	×1.15–1.20
+Step 3 — Soft Cap (anti-break safety net)
+Raw multiplier	Actual output
+≤ 3.0×	Full value
+3.0–4.0×	80% efficiency
+4.0×+	65% efficiency
+Worked Example — Full Stack
+Craving active, 4-ingredient Rare dish (Mapo Tofu, CL 38), allergic target:
+38 × 1.15 (cook depth) = 43.7
+Raw multiplier: 1.75 (allergy) × 1.5 (craving) = 2.625×
+2.625× is in ≤3.0× band → full value
+Final: 43.7 × 2.625 = ~115 CL
+> This requires: perfect allergy match, active Craving, 4-ingredient cook. High skill, high payoff. The soft cap kicks in when Mark is also stacked on top.
+---
+PART 9 — CONTROL CHAIN SYSTEM (LOCKED)
+CC Diminishing Returns (LOCKED)
+Application order	Effectiveness
+1st control effect	100% duration
+2nd consecutive	70% duration
+3rd consecutive	40% duration
+4th+ consecutive	20% duration (floor)
+Reset condition: CC counter resets after 8 seconds with no control effect received.
+Marks are NOT control effects and do not trigger diminishing returns.
+Mark System (ONE active, highest value wins)
+Ingredient	Bonus	Window
+Tomato	+15% CL on next hit	4s
+Soy Sauce	+20% CL on next hit	4s
+Black Garlic	+20% CL on next hit	4s
+Higher Mark overwrites lower. In-world icon appears above Marked target.
+Elemental Chains
+Setup	Trigger	Result
+Oil hit (3s window)	Fire recipe hits same target	×1.6 CL
+Spice primer	AoE recipe follows	Expanded radius
+Fire recipes: Stir Fry, Mapo Tofu, Kimchi Fried Rice, Inferno Skewer, Chicken Curry
+Control Chains (subject to diminishing returns)
+Setup	Effect	Base Duration
+Banana → follow-up (3s)	Knockdown	2s
+Cheese Block ×2	ROOT	1.5s (stack expires 8s)
+Noodles ×2	Trap + pull	—
+Honey	Root + floor zone	Root 1s, zone 5s
+Blue Cheese → next slow/root	+50% duration on that effect	—
+Ice Cream	Freeze slow	2s (cap 2.5s total)
+Crab	Mini root	0.8s
+Utility
+Ingredient	Effect
+Garlic	Strips 15% from ALL active buff durations on target
+Truffle	Next cooked recipe +30% CL +1 serving (consumed on cook)
+Tuna / Almond	Fastest projectiles
+Croissant	Splits into 3 independent projectiles
+Pineapple	Wide AoE burst
+Freeze cap: 2.5s total regardless of combo.
+Burned dish +30% status strength applies to control effect durations — diminishing returns still apply on consecutive hits.
+---
+PART 10 — COOKING SYSTEM (LOCKED)
+Flow
+```
+Paid ingredients → Prep Table
+  → Prep-only recipes: done immediately
+  → Stovetop recipes: (Uncooked) state → Stovetop heat bar → Cooked or Burned
+```
+Prep Table Rules
+PAID ingredients only
+Wrong combination = error message, ingredients returned
+Station LOCKED by default — one-click unlock button in UI corner
+Force-exited on hit → all ingredients refunded to correct owners (initiator + sous-chefs)
+Cooking emits sound + +15 studs detection radius while active
+Dish States
+State	Can Throw	Deconstruct	Visual
+Uncooked	❌	✅	Yellow/amber highlight
+Cooked	✅	❌	Green highlight
+Burned	✅	❌	Red highlight
+Burned Dish — Debuffer Build Path
+−20% CL damage vs normal version
++30% status effect strength — roots longer, slows harder, DoTs stronger
+Legitimate alternative build: sacrifice burst damage for enhanced control
+Deconstruct (Uncooked only)
+All ingredients returned to rightful owners individually
+Initiator: −5 CL per ingredient in the dish (4-ingredient dish = −20 CL penalty)
+Sous-chef: no penalty
+Stovetop Heat Bar
+Zone	Result
+Too cold	+50% cook time
+Perfect	+10% CL bonus
+Too hot (3s+)	Burned dish
+Hit while on stovetop → heat bar RESETS (not paused)
+Cook Times by Rarity
+Rarity	Time
+Common	2s
+Uncommon	4s
+Rare	7s
+Ultra-Rare	12s
+Legendary	20s
+Servings by Rarity
+Rarity	Servings
+Common	3
+Uncommon	2
+Rare	1
+Ultra-Rare	1
+Legendary	1 (server announcement on throw)
+Cook Depth Bonus
+Ingredients	Additive bonus
+2	+5%
+3	+10%
+4+	+15%
+Sous-Chef / Shared Cooking
+Default: LOCKED. One-click unlock button in station UI.
+Any player at unlocked station = Sous-Chef. Initiator always owns output.
+Sous-Chef earns points scaled by rarity of ingredients contributed.
+Sous-Chef accolade: Sous-Chef Supreme (most contributions in match, 15 medals).
+Deconstruct: each contributor's ingredients returned to them individually.
+Portable Cooker: sous-chef allowed, lockable.
+Hot Hands
+After cooking: +5% throw speed for 3s. Fresh dish glows slightly.
+Rewards aggression out of kitchen, discourages hoarding.
+Cooking Stations
+Station	Count	Location	Lock
+Prep Tables	12–16	Kitchen	Default LOCKED
+Stovetops	8–10	Kitchen	Default LOCKED
+BBQ Pits	4	2 rear + 1 each sidewalk	Public, no lock
+Portable Cooker	Legendary	Deploy anywhere	Default LOCKED
+Dish in Hand When Hit
+Kept on any hit
+Exception: hitting 100% → 0.5s cue → drops EVERYTHING
+Cooking Phase End
+Active cooks get 10s grace to complete before Food Fight activates
+---
+PART 11 — THROW SYSTEM (LOCKED)
+Base Throw Stats
+Stat	Value
+Min charge	0.3s (40% power)
+Max charge	1.5s (100% power)
+Base throw speed	80 studs/s
+Base throw distance	50 studs
+Arc peak	~8 studs
+Cooldown	0.8s minimum between throws
+Charge scaling: linear. Charge affects speed + distance ONLY — not CL damage.
+Raw Ingredient Throws
+Any ingredient throwable (paid, unpaid, unprepped)
+Raw CL value only — no recipe bonuses, no serving multiplier
+Weight penalties apply. Intentionally viable.
+Throw Modifiers
+Modifier	Effect
+Craving State	×1.5 CL on next hit, consumed
+Burned dish	−15% throw speed, −20% CL, +30% status strength
+Hot Hands	+5% throw speed, 3s
+AoE Falloff
+Distance	Damage %
+0–2 studs	100%
+2–5 studs	75%
+5–8 studs	50%
+8–12 studs	25%
+Projectile Pooling (Optimization)
+Use projectile pooling in Phase 7 implementation — reuse objects rather than create/destroy per throw. Pool size: 80–120 active objects. Prevents GC lag spikes with 40 players.
+---
+PART 12 — ALLIANCE SYSTEM (LOCKED)
+Friendship Bracelet
+> The alliance item is called the **Friendship Bracelet** throughout. Final naming.
+Stat	Value
+Cost	$12 at Trade Hub kiosk
+Phases available	Gathering + Cooking only
+Consumed on decline	No — returned to offerer
+Consumed on accept	Yes
+World loot rarity	Ultra-Rare
+World loot max	2/match (variable — may be 0, 1, or 2)
+World loot locations	Outdoor areas + Stockroom
+Duplicate offer	First accepted wins; second auto-declined + returned
+Unresolved at Food Fight start	Auto-cancelled, returned
+Rules tip	"Act fast — alliances can only be formed during Gathering and Cooking. Stand alone at your own risk!"
+Formation
+Buy or find bracelet → press E near target player
+Target has 10 seconds to accept or decline
+Returned on decline, consumed on accept
+On accept: matching name colour above both heads, visible to all
+Alliance Caps
+Server size	Max allies per player
+1–19	1
+20–29	2
+30–40	3
+Solo Player Bonus
+No active alliance = −20% detection radius (smaller dot on enemy minimaps)
+Disappears the moment they form an alliance
+Soft stealth advantage — makes solo a viable playstyle
+Food Fight Reconfirmation
+Alliances grey out 5s when Food Fight begins
+2-person: 15s window. 3-person: 20s window.
+Press E near ally to reconfirm
+Partial reconfirmation (3-person): A+B confirm, C can't reach → A+B stay allied, C goes solo (public announcement)
+Ally eliminated mid-reconfirmation → alliance breaks immediately
+Minimap shows ally locations during reconfirmation window
+Friendly Fire
+Always ON. Hitting ally doesn't mechanically break alliance.
+Voluntary break: hold E near ally for 2 seconds.
+Garlic Bread + Coconut Curry AoE hits allies — known and intentional hazard.
+End-Game Decision
+"Food Fight to the Finish? Or Leave With a Friend?"
+30s timer. Together = 70% medals each. Fight = FFA until one stands.
+Timer expires → Fight starts automatically. ANY Fight vote = everyone fights.
+3-Person Alliance End-Game:
+Votes are PRIVATE — nobody sees who voted what
+Any single Fight vote = "The alliance fractured — every Chomper for themselves!"
+If one betrays: remaining two become allied AGAINST the betrayer
+After betrayer is eliminated: remaining duo gets their own decision moment
+If 3rd eliminated mid-match before end-game: duo gets their own first decision moment
+Assist Score
+Apply Mark or control effect → ally hits that target within 4s → 35% of CL as assist score
+Edge Cases (Handled)
+Scenario	Resolution
+Ally eliminated mid-reconfirmation	Alliance breaks, prompt closes
+Two players offer same target simultaneously	First accepted wins, second returned
+Offer unresolved at Food Fight start	Auto-cancelled, returned
+3-person: only 2 can reach each other	Partial reconfirmation — 2 stay, 1 goes solo
+---
+PART 13 — TRADE HUB (LOCKED)
+Location: Customer Service Desk, centre of store — safe zone
+Friendship Bracelet kiosk: $12, Gathering + Cooking phase only
+Public ingredient repository: deposit ingredients for anyone to take
+No item cap, no expiration — persists until taken or match ends
+No free drops anywhere else on the map — Trade Hub is the only intentional drop point
+---
+PART 14 — LEGENDARY ITEMS (LOCKED)
+Exactly 2 Legendary world-loot items spawn per match (Golden Cart and/or Portable Cooker — variable, never both guaranteed).
+Million Dollar Steak is cook-only — the only Legendary earned through skill, not luck.
+Item	Type	Effect	Duration	Server Announce
+🛒 Golden Cart	World loot	Holder: +40% speed, ×2 throw range, unlimited weight. Allies ≤20 studs: +20% speed, ×1.5 throw range	20 seconds	On pickup
+🍳 Portable Cooker	World loot	Deploy anywhere, 4 uses, 1.5s slower than kitchen, sous-chef allowed, lockable	Until 4 uses consumed	—
+💰 Million Dollar Steak	Cook-only	CL 70, golden explosion on impact	Single throw	On throw
+> Golden Cart duration is 20s (reduced from 30s). Speed and range values unchanged. Preserves the "main character moment" while reducing match-deciding window.
+---
+PART 15 — POINTS, ACCOLADES & HONORIFICS (LOCKED)
+Two Parallel Tracking Systems
+System	What it tracks	Purpose
+Points	Cumulative efficacy across all actions	Feeds Chomper Champion accolade
+CL + FL Damage	Raw damage output to other players	Feeds Chaos Agent accolade
+These are independent. A player can win Chomper Champion (most points) without winning Chaos Agent (most damage), and vice versa.
+Live Scoreboard
+Tab to toggle — not always visible, tracks from Gathering phase start
+Ranked by total Points scored
+Columns: rank, name, points, CL+FL dealt, recipes cooked (unique), items purchased, status
+Status column: 🟢 Active · 🚽 In Bathroom · 👁 Spectating · ❌ Eliminated
+Points System (feeds Chomper Champion)
+Rarity Multipliers
+Rarity	Multiplier
+Common	×1.0
+Uncommon	×1.5
+Rare	×2.5
+Ultra-Rare	×4.0
+Legendary	×8.0
+Base Points
+Action	Points	Notes
+Pick up any ingredient	2 flat	Per item, any phase
+Pick up cash	1 per $1 found	Scales with cash value
+Ingredient paid at checkout	3 per ingredient	Rewards economic completion
+Finish dish (solo)	10 × rarity multiplier	Highest ingredient rarity used
+Finish dish (sous-chef helped)	8 × rarity multiplier	Initiator gets this
+Sous-Chef contribution	3 × ingredient rarity	Per ingredient contributed
+Direct hit on enemy (CL dealt)	1 per CL dealt	Scales with damage output
+Direct hit (FL dealt)	0.5 per FL dealt	Supplementary
+Down enemy (trigger 100% state)	25 flat	
+Assist (35% of CL within 4s)	15 flat	
+Form an alliance	5 flat	Per bracelet accepted
+Survive to match end	10 flat	Still alive when match ends
+Skill Modifiers (multiply base hit points)
+Condition	Modifier
+Target was Marked when hit	×1.25
+Hit during Craving State	×1.5
+Long-distance hit (30+ studs)	×1.2
+Risk Modifiers (multiply base hit points)
+Condition	Modifier
+You at 80%+ CL when you land a hit	×1.25
+You carrying 51+ weight when you land a hit	×1.2
+Chaos Agent Tracking (separate from points)
+Running total of all CL dealt + all FL dealt to other players
+Every hit contributes regardless of whether it triggers a down or KO
+This is pure output — no skill or risk modifiers applied
+Top 5 Post-Match Accolades (LOCKED)
+The Last One Standing is the match winner — declared first, biggest card, most medals.
+Position	Accolade	Metric	Medals
+1 — Centre (largest card)	🏅 Last One Standing	Final survivor or Together winners	60
+2	🏆 Chomper Champion	Most total Points scored	50
+3	💥 Chaos Agent	Most total CL + FL damage dealt	40
+4	👨‍🍳 Master Chef	Most unique recipes cooked	35
+5	🛒 Super Shopper	Most ingredients purchased at checkout	25
+Bonus Accolades
+Accolade	Metric	Medals
+🧼 Squeaky Clean	Reached Food Fight with 0 Potty Breaks used	25
+🗡️ Executioner	Most 100% state triggers caused	25
+🧑‍🍳 Sous-Chef Supreme	Most sous-chef ingredient contributions	25
+🛒 Resource Raider	Most total items gathered (paid or unpaid)	15
+Base Medals
+Event	Medals
+Participation (completed a match)	5
+Still alive at match end	+15 bonus
+Together victory	70% of Last One Standing value = 42 medals each
+Ties on any accolade	Both players receive full medal value
+Medal Economy Health Check
+Player archetype	Likely accolades	Total medals
+Combat champion (Last Standing + Chaos Agent)	60+40+5+15	120
+All-rounder (Chomper Champion + Master Chef)	50+35+5	90
+Support cook (Sous-Chef Supreme + Super Shopper)	25+25+5	55
+Economic specialist (Super Shopper + Squeaky Clean)	25+25+5	55
+Pure gatherer (Resource Raider + Super Shopper)	15+25+5	45
+Minimum (participation only)	—	5
+> Gap from 5 to 120 is intentional. Every playstyle has a meaningful path to medals. Combat dominance earns most — correct for a food fight game — but support/economic players earn 45–55 which is genuinely rewarding.
+Honorifics System (LOCKED)
+Purchasable titles bought with medals. Separate from accolades (which are earned per-match). Displayed as a badge/title beneath player name. Achievement-gated — must meet lifetime stat to unlock, then purchase with medals.
+Stored in DataStore alongside cosmetics.
+Honorific	Unlock condition	Medal cost
+"Master Chef"	Cook 50 unique recipes lifetime	100
+"Aisle Survivor"	Survive 20 matches without elimination	80
+"The Regular"	Play 100 matches	75
+"Clean Sweep"	Win Squeaky Clean 10 times	90
+"The Butcher"	Cause 50 eliminations lifetime	120
+"Loyalty Card"	Form 30 alliances	70
+"Golden Shopper"	Purchase $500+ worth of ingredients in one match	110
+"Notorious"	Win Chaos Agent 10 times	100
+"The Diplomat"	Win a Together victory 5 times	80
+"Sous-Chef Royale"	Contribute to 100 recipes as Sous-Chef	90
+> More honorifics added in future updates. These are the launch set.
 
-local PrelobbyGui = script.Parent
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService      = game:GetService("TweenService")
-local UserInputService  = game:GetService("UserInputService")
+---
+PART 16 — RESPAWN & LOOT TIMERS (LOCKED)
+Ingredient Respawn
+Rarity	Time
+Common	25s
+Uncommon	35s
+Rare	50s
+Ultra-Rare	90s
+Legendary	Never
+Outdoor Loot Respawn
+Loot	Time
+Cash ($1–$3)	45s
+Cash Stack ($10–$25)	60s
+Napkin	Never
+Friendship Bracelet	Never
+---
+PART 17 — INGREDIENTS (65 TOTAL — LOCKED)
+> ⚠️ Remove "Ackee" from IngredientSpawner — not in official 65.
+> ⚠️ Lobster = Rare (wt=5, $9). Egg allergy = Dairy (not "Eggs").
+Rarity Summary
+Rarity	Count	Stack	Respawn
+Common	30	×3	25s
+Uncommon	19	×2	35s
+Rare	11	×1	50s
+Ultra-Rare	4	×1	90s
+Legendary	1	×1	Never
+PRODUCE (23)
+Name	Rarity	CL	Wt	Cost	Allergy	Effect
+Apple	Common	6	1	$2	Produce	Knockback, +2 FL to target
+Banana	Common	5	1	$2	Produce	Peel slip hazard 1s on floor
+Tomato	Common	6	1	$2	Produce	MARK +15%
+Lettuce	Common	5	1	$1	Produce	Minor vision blur
+Onion	Common	6	1	$2	Produce	AoE accuracy debuff cloud
+Carrot	Common	6	1	$2	Produce	Fast straight trajectory
+Spinach	Common	5	1	$1	Produce	Sticks to target briefly
+Peas	Common	5	1	$1	Produce	Scatter, hits up to 2 nearby
+Egg	Common	6	2	$2	Dairy	Raw throwable, mini AoE splat
+Potato	Common	5	2	$2	Produce	Rolls on floor after impact
+Basil	Common	4	1	$1	Produce	Mild vision blur, mainly cooking
+Bell Pepper	Uncommon	6	1	$2	Produce	Scatter on impact
+Corn	Uncommon	6	2	$2	Produce	Ricochets, kernels scatter
+Mango	Uncommon	6	2	$3	Produce	Sticky splash
+Avocado	Uncommon	7	2	$3	Produce	Soft slow on hit
+Garlic	Uncommon	6	1	$3	Produce	Strips 15% from all active buff durations
+Tofu	Uncommon	6	2	$3	Soy	Wobble hit, unpredictable bounce
+Pineapple	Uncommon	7	2	$3	Produce	Wide AoE splash burst
+Plantain	Rare	7	2	$3	Produce	Heavy knockback
+Beet	Rare	6	1	$2	Produce	Deep red floor stain 10s
+Kimchi	Rare	7	2	$4	Spicy	AoE cloud, spice primer
+Coconut	Rare	8	3	$5	Nuts	Heavy knockback, AoE amplifier when cooked
+Truffle	Rare	8	1	$15	Produce	Next recipe +30% CL +1 serving
+BAKERY (10)
+Name	Rarity	CL	Wt	Cost	Allergy	Effect
+Bun	Common	5	2	$2	Gluten	Soft blunt hit
+Bread Loaf	Common	7	2	$3	Gluten	Blunt knockback
+Flour	Common	5	2	$2	Gluten	Dust cloud, accuracy debuff
+Sugar	Common	4	1	$2	None	Combo ingredient only
+Naan	Uncommon	5	1	$3	Gluten	Frisbee flight — fast and flat
+Dough	Uncommon	6	3	$3	Gluten	Sticky, clings to target
+Chocolate	Uncommon	7	2	$3	None	Mild slow on hit
+Honey	Rare	8	1	$8	None	Root 1s + sticky floor zone 5s
+Croissant	Rare	9	2	$7	Gluten	Splits into 3 independent projectiles
+Fondant	Ultra-Rare	14	2	$14	Gluten	−30% speed + vision blur 5s
+DAIRY (8)
+Name	Rarity	CL	Wt	Cost	Allergy	Effect
+Milk	Common	4	2	$3	Dairy	Self: −10 CL. Throw: weak wide hit
+Yogurt	Common	5	2	$3	Dairy	Wide sticky splash
+Cream	Uncommon	6	2	$4	Dairy	Vision blur cloud
+Cheese Block	Uncommon	7	2	$4	Dairy	Slow. ×2 = ROOT 1.5s
+Butter	Uncommon	6	2	$4	Dairy	Floor slip zone after impact
+Mayonnaise	Uncommon	7	2	$4	Dairy	Wide splash slow
+Blue Cheese	Rare	9	2	$7	Dairy	Next slow/root +50% duration
+Ice Cream	Ultra-Rare	10	2	$12	Dairy	Freeze 2s (cap 2.5s)
+FREEZER / MEAT (9)
+Name	Rarity	CL	Wt	Cost	Allergy	Effect
+Tuna	Common	6	2	$4	Seafood	Fastest throw in the game
+Chicken	Common	8	3	$5	Meat	Knockback on hit
+Sausage	Common	8	3	$5	Meat	Rolls as trip hazard after impact
+Crab	Uncommon	7	3	$5	Seafood	Mini root 0.8s
+Pork	Uncommon	9	4	$5	Meat	DoT bleed +1 CL/s for 3s
+Beef	Uncommon	9	4	$6	Meat	High CL spike
+Shrimp	Rare	8	2	$6	Seafood	Double hit — two CL impacts per throw
+Lobster	Rare	9	5	$9	Seafood	Heavy stagger on direct hit
+Wagyu Beef	Ultra-Rare	14	5	$18	Meat	Knockdown. Required for Million Dollar Steak.
+AISLES (14)
+Name	Rarity	CL	Wt	Cost	Allergy	Effect
+Rice	Common	5	2	$3	None	Scatter AoE
+Pasta	Common	6	2	$3	Gluten	Slow on hit
+Noodles	Common	6	2	$3	Gluten	Entangle. ×2 = trap + pull
+Tortilla	Common	6	1	$3	Gluten	Fast flat projectile
+Salt	Common	4	1	$2	None	Anti-heal: −20% CL recovery
+Almond	Common	6	1	$3	Nuts	2nd fastest, great Mark executor
+Chili Powder	Uncommon	6	1	$3	Spicy	Burn DoT +1 CL/s 4s. Spice primer.
+Soy Sauce	Uncommon	5	1	$4	Soy	MARK +20%
+Peanut	Uncommon	6	1	$4	Nuts	Bounces, can hit multiple targets
+Oil	Uncommon	5	2	$4	None	Fire primer → fire recipe = ×1.6 CL
+Miso Paste	Uncommon	7	1	$5	Soy	Sticky DoT +1 CL/s 4s
+Curry Powder	Rare	6	1	$4	Spicy	Spice primer, expanded AoE
+Black Garlic	Rare	6	1	$6	None	MARK +20%
+Saffron	Ultra-Rare	8	1	$10	None	AoE amplifier for any recipe
+STOCKROOM EXCLUSIVE (1)
+Name	Rarity	CL	Wt	Cost	Allergy	Effect
+Caviar	Legendary	9	1	$12	Seafood	Precision, no splash. Required for Million Dollar Steak.
+---
+PART 18 — RECIPES (69 TOTAL — LOCKED)
+> CL = per throw. Common = 3 throws total. Uncommon = 2. Rare/UR/Legendary = 1.
+> Paella CL = 35. Saffron Rice CL = 44. Lobster Bisque CL = 45. (Balance adjusted.)
+> Note: Header previously said 66. Correct total is 69 (15+28+15+10+1). Confirmed March 2026.
+COMMON (15) — 3 servings, 2s cook
+Name	CL	Total	Ingredients	Station	Wt	Cost
+Burger	12	36	Bun · Beef · Lettuce · Tomato · Cheese Block	Prep	5	$14
+Taco	10	30	Tortilla · Beef · Lettuce · Cheese Block	Prep	4	$11
+Fries	8	24	Potato · Oil · Salt	Stovetop	3	$6
+Egg Splat	8	24	Egg (raw — skip kitchen!)	None	2	$3
+Caprese Skewer	7	21	Tomato · Cheese Block · Basil	Prep	2	$8
+Tofu Scramble	9	27	Tofu · Egg · Spinach	Prep	3	$9
+Pound Cake	0	0	Flour · Sugar · Butter · Egg	Prep+Stove	4	$10
+Mac and Cheese	12	36	Pasta · Cheese Block · Milk	Prep+Stove	4	$11
+Sausage Sandwich	12	36	Bun · Sausage · Lettuce · Tomato	Prep	4	$13
+Hummus Plate	8	24	Peanut · Garlic · Flour	Prep (raw)	3	$10
+Roti	7	21	Flour · Butter · Potato	Prep	3	$8
+Samosa	9	27	Flour · Potato · Peas · Chili Powder	Prep+Stove	3	$10
+Crepe	0	0	Flour · Egg · Butter	Stovetop	2	$7
+Grilled Cheese	10	30	Bread Loaf · Cheese Block · Butter	Stovetop	3	$9
+Chocolate Banana	0	0	Chocolate · Banana	Stovetop	2	$6
+UNCOMMON (28) — 2 servings, 4s cook
+Name	CL	Total	Ingredients	Station	Wt	Cost
+Pizza Slice	25	50	Dough · Cheese Block · Tomato · Basil	Prep+Stove	5	$14
+Quesadilla	20	40	Tortilla · Cheese Block · Chili Powder	Prep+Stove	4	$11
+Burrito	25	50	Tortilla · Rice · Beef · Chili Powder	Prep	5	$14
+Stir Fry	20	40	Noodles · Carrot · Bell Pepper · Chicken	Prep+Stove	5	$16
+Chow Mein	18	36	Noodles · Onion · Soy Sauce	Prep+Stove	4	$11
+Dumplings	15	30	Flour · Chicken · Garlic	Prep+Stove	4	$12
+Fried Rice	22	44	Rice · Egg · Carrot · Peas	Prep+Stove	4	$12
+Naan Wrap	0	0	Naan · Cheese Block · Spinach	Prep	3	$12
+Spaghetti Pomodoro	0	0	Pasta · Tomato · Basil	Prep+Stove	4	$11
+Tofu Stir Fry	20	40	Tofu · Noodles · Bell Pepper · Soy Sauce	Prep+Stove	4	$14
+Plantain Chips	12	24	Plantain · Oil · Salt	Stovetop	3	$8
+Garlic Bread	22	44	Bread Loaf · Butter · Garlic	Stovetop	3	$11
+Poke Bowl	18	36	Shrimp · Rice · Soy Sauce · Carrot	Prep (raw)	4	$14
+Sushi Roll	22	44	Rice · Shrimp · Noodles · Soy Sauce	Prep (raw)	4	$15
+Shawarma	22	44	Naan · Chicken · Garlic · Yogurt	Prep	5	$16
+Jollof Rice	22	44	Rice · Tomato · Onion · Chili Powder	Prep+Stove	4	$13
+Kimchi Fried Rice	24	48	Rice · Egg · Chili Powder · Garlic	Prep+Stove	4	$13
+Pad Thai	20	40	Noodles · Shrimp · Egg · Peanut	Prep+Stove	5	$17
+Elote	16	32	Corn · Butter · Chili Powder	Stovetop	3	$10
+Mango Lassi	0	0	Yogurt · Mango · Sugar	Stovetop	3	$11
+Milkshake	18	36	Milk · Chocolate · Sugar	Stovetop	3	$11
+Banana Pancakes	0	0	Flour · Banana · Egg · Sugar	Prep+Stove	3	$11
+Shrimp Cocktail	20	40	Shrimp · Lettuce · Tomato	Prep (raw)	4	$12
+Borscht	20	40	Potato · Onion · Yogurt · Beet	Prep+Stove	4	$12
+Miso Soup	18	36	Miso Paste · Tofu	Prep+Stove	3	$10
+Crab Rangoon	22	44	Crab · Cream · Noodles	Prep+Stove	4	$14
+Callaloo	24	48	Spinach · Onion · Coconut · Crab	Prep+Stove	5	$15
+Tuna Melt	20	40	Tuna · Bread Loaf · Cheese Block	Prep+Stove	4	$13
+RARE (15) — 1 serving, 7s cook
+Name	CL	Ingredients	Station	Wt	Cost
+Chicken Curry	33	Chicken · Curry Powder · Onion	Prep+Stove	5	$18
+Vegetable Curry	0	Carrot · Bell Pepper · Curry Powder	Prep+Stove	4	$15
+Baked Potato	33	Potato · Cheese Block · Butter	Stovetop	4	$14
+BBQ Ribs	30	Pork · Garlic · Sugar	Prep+Stove	6	$19
+Crispy Tofu Bowl	30	Tofu · Rice · Soy Sauce · Garlic	Prep+Stove	4	$16
+Mapo Tofu	38	Tofu · Chili Powder · Garlic · Pork	Prep+Stove	5	$20
+Tamale	33	Dough · Pork · Chili Powder	Prep+Stove	5	$18
+Groundnut Soup	35	Peanut · Chicken · Onion · Tomato	Prep+Stove	6	$22
+Paella	35	Rice · Shrimp · Pork · Saffron	Prep+Stove	6	$24
+Pepper Shrimp	30	Shrimp · Chili Powder · Garlic · Salt	Prep+Stove	5	$17
+Inferno Skewer	38	Chili Powder · Beef · Oil	Prep+Stove	5	$20
+Almond Croissant	30	Almond · Croissant · Butter	Prep+Stove	4	$18
+Ice Cream Sundae	0	Ice Cream · Sugar	Stovetop	3	$14
+Honey Glazed Ribs	33	Honey · Pork · Garlic	Prep+Stove	5	$20
+Blue Cheese Pasta	33	Blue Cheese · Pasta · Garlic	Prep+Stove	5	$20
+ULTRA-RARE (10) — 1 serving, 12s cook
+Name	CL	Ingredients	Station	Wt	Cost
+Lobster Bisque	45	Lobster · Butter · Milk	Prep+Stove	7	$30
+Chicken-Peanut Stew	43	Chicken · Peanut · Coconut · Curry Powder	Prep+Stove	7	$32
+Truffle Pasta	38	Truffle · Pasta · Basil	Prep+Stove	5	$28
+Coconut Curry	40	Coconut · Curry Powder · Carrot	Prep+Stove	6	$30
+Saffron Rice	44	Saffron · Rice · Onion	Prep+Stove	5	$28
+Wagyu Burger	45	Wagyu Beef · Bun · Cheese Block · Lettuce	Prep	8	$35
+Poke Deluxe	44	Lobster · Rice · Caviar · Soy Sauce	Prep (raw)	7	$36
+Guacamole Bomb	40	Avocado · Onion · Tomato · Coconut	Prep	6	$28
+Golden Glaze	43	Honey · Chicken · Soy Sauce	Prep+Stove	6	$32
+Fondant Collapse	39	Chocolate · Fondant · Cream	Prep+Stove	6	$30
+LEGENDARY (1) — 1 serving, 20s cook
+Name	CL	Ingredients	Station	Wt
+Million Dollar Steak	70	Wagyu Beef · Truffle · Caviar	Prep+Stove	8
+---
+PART 19 — MAP DESIGN (LOCKED)
+Zone Overview
+Zone	Location	Key Contents
+🥦 Produce	Left wall	23 ingredients incl. Truffle (Rare)
+🍞 Bakery	Right wall	10 ingredients incl. Fondant (UR)
+🥛 Dairy	Centre-left freezers	8 ingredients incl. Ice Cream (UR)
+❄️ Freezer/Meat	Centre freezers	9 ingredients incl. Wagyu (UR)
+🏪 Aisles	Centre-right shelves	14 ingredients incl. Saffron (UR)
+📦 Stockroom	Behind kitchen	All 65 ingredients, higher density. Caviar ONLY here.
+🍳 Kitchen	Back of main floor	Prep Tables, Stovetops. Detection + sound zone.
+🛒 Checkout	Front of store	12 staffed lanes + self-checkout terminals. No defensive bonus.
+🚽 Bathrooms	All 4 corners	Full immune zone. Sink (CL→0) + Toilet (FL→0). 1.5s exit grace.
+🤝 Trade Hub	Centre	Safe zone. Bracelet kiosk. Public ingredient repository.
+🚗 Outdoor	Car park + alleys	Cash, rare napkins, ultra-rare bracelets. Under trees, trucks, benches.
+Cooking Stations
+Station	Count	Location	Lock
+Prep Tables	12–16	Kitchen	Default LOCKED
+Stovetops	8–10	Kitchen	Default LOCKED
+BBQ Pits	4	2 rear + 1 each sidewalk	Public, no lock
+Map Dimensions (Reference)
+Store interior: ~700 studs wide × ~500 studs deep
+Cross-map run at base speed (16 studs/s): ~44s corner to corner
+Stockroom to Checkout (full length): ~31s
+Kitchen to outdoor loot: ~37s round trip
+Key Rules
+Ceilings: transparent 0.8 opacity. Store Y=38, WC Y=14. Stockroom open.
+10-stud no-throw buffer around all WC entrances
+Bathroom interior = full immune zone
+Outside areas accessible during Food Fight — no locked doors
+BBQ Pits are outdoor, public, exposed to combat
+---
+PART 20 — SERVER ARCHITECTURE (LOCKED TARGET)
+Core Principles
+Server owns all state. Client sends actions, never results.
+EventBus prevents spaghetti — systems fire events, other systems listen. No direct cross-system calls.
+UpdateClientState sends only changed values per tick — not full dumps.
+Never trust client for: damage dealt, inventory contents, cooking completion, hit position.
+Always validate server-side: distance checks, ownership, recipe legality, weight limits.
+Folder Structure
+```
+ReplicatedStorage
+ ├── Remotes
+ │   ├── RequestPickup
+ │   ├── RequestThrow
+ │   ├── RequestCookStart
+ │   ├── RequestCookFinish
+ │   ├── RequestCheckout
+ │   ├── RequestBathroomUse
+ │   ├── RequestAllianceOffer
+ │   └── UpdateClientState
+ └── Shared
+     ├── IngredientData    ← single source of truth for all ingredient stats
+     ├── RecipeData        ← single source of truth for all recipe stats
+     └── Constants         ← all locked tuning values
 
-local player  = Players.LocalPlayer
-local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+ServerScriptService
+ ├── Core
+ │   ├── PlayerState       ← all per-player state (CL, FL, inventory, alliance, marks, craving)
+ │   ├── DataManager       ← DataStore + session state
+ │   └── EventBus          ← central pub/sub
+ ├── Systems
+ │   ├── BarSystem         ← CL + FL tracking, thresholds, 100% state, debuffs
+ │   ├── InventorySystem   ← pickup, drop, weight, capacity, pickup speed scaling
+ │   ├── CookingSystem     ← recipe validation, timers, burn, sous-chef, deconstruct
+ │   ├── CombatSystem      ← throw validation, hit detection, damage formula, soft cap
+ │   ├── ComboSystem       ← marks, craving state, elemental chains, CC + diminishing returns
+ │   ├── BathroomSystem    ← Potty Break tracking, sink/toilet, elimination
+ │   ├── AllianceSystem    ← bracelet formation, reconfirmation, end-game vote
+ │   ├── EconomySystem     ← budget, checkout (self + staffed), scan timing, queue
+ │   └── PointsSystem      ← scoring, skill modifiers, risk modifiers, accolades
+ └── Managers
+     ├── MatchManager      ← phase transitions and timers
+     ├── SpawnManager      ← ingredient + loot spawn, Legendary placement
+     └── CombatManager     ← projectile lifecycle, pooling, AoE zones
 
-PrelobbyGui.DisplayOrder   = 5
-PrelobbyGui.IgnoreGuiInset = true
+StarterPlayerScripts
+ └── ClientControllers
+     ├── InputController   ← throw charge, interact, scan click inputs
+     ├── UIController      ← all HUD updates from server state
+     └── VFXController     ← splats, effects, status indicators, 100% cue
+```
+---
+PART 21 — VISUAL LANGUAGE (LOCKED)
+Art Style: Readable Stylized Chaos
+Rule	Detail
+Silhouette over texture	Items must read mid-flight — no thin shapes or tiny details
+Scale intentionally wrong	Everything bigger and thicker than realistic
+Colour = gameplay info	Rarity, allergy, combo state readable from model alone
+0.3s recognition test	If it can't be identified mid-flight, it fails
+Rarity Visual Language
+Rarity	Treatment
+Common	Flat, simple. No FX.
+Uncommon	Slight saturation boost. Clean finish.
+Rare	Bright contrast. Subtle glow on ground spawn.
+Ultra-Rare	Visible aura. Slow rotation or hover when grounded.
+Legendary	Gold + particles. Orbiting elements. Unmistakable.
+Status Effect Visualization (In-World, Not Just UI)
+Effect	Visual
+Marked	Floating coloured icon above target head
+Oil primer active	Shiny coating on player
+Spice primer active	Red/orange aura on player
+Root / frozen	Food material visually at player's feet
+Craving State active	Player glow/aura visible to all
+100% CL	Maximum mess/stain accumulation on player model
+100% FL	Bloated visual + strained walk animation
+Both at 100%	Both visuals stacked simultaneously
+Alliance	Matching name colour above head (always visible)
+Solo player	Slightly dimmer name colour
+Projectile Identity
+Type	Motion	Examples
+Heavy	Arc + weight, strong impact	Coconut, Wagyu, Lobster
+Fast	Near-straight line	Tuna, Almond, Naan
+AoE	Burst on impact	Pineapple, Egg, Saffron Rice
+Split	Multi-path mid-air	Croissant, Almond Croissant
+Rolling	Floor hazard on landing	Potato, Sausage
+---
+PART 22 — PROJECT CHECKLIST
+✅ COMPLETE
+[x] 3D Map Build (placeholder blocks, structure complete)
+[x] ChompersBottomBar
+[x] ChompersMeters
+[x] InventoryClient
+[x] PrelobbyGuiBuilder v4
+[x] CookbookBuilder
+[x] IngredientSpawner
+[x] IngredientPickupServer
+[x] PrelobbyManager
+[x] Game Design Bible v7.0
+🔴 PHASE 0 — DATA FIXES (Do first — everything reads from these)
+[ ] CookbookBuilder: Fix serving values (Common=3, Uncommon=2, Rare=1, UR=1, Legendary=1)
+[ ] CookbookBuilder: Fix CL values (Common lower, Paella=35, Saffron Rice=44, Lobster Bisque=45)
+[ ] CookbookBuilder: Fix Portable Cooker "2 uses" → "4 uses"
+[ ] CookbookBuilder: Rename all "Friendship Band" → "Friendship Bracelet"
+[ ] CookbookBuilder: Update favourite food (remove ×1.5 throw bonus, add Craving State)
+[ ] CookbookBuilder: Update burned dish description (−20% CL, +30% status strength)
+[ ] CookbookBuilder: Update Golden Cart duration "30s" → "20s"
+[ ] IngredientSpawner: Fix Egg allergy "Eggs" → "Dairy"
+[ ] IngredientSpawner: Remove "Ackee" (not in official 65)
+[ ] IngredientSpawner: Fix Lobster → Rare (wt=5, $9)
+[ ] IngredientSpawner: Add missing ingredients (Pineapple, Mango, Avocado, Miso Paste, Almond, Tuna)
+[ ] IngredientSpawner: Add Friendship Bracelet as Ultra-Rare outdoor loot (max 2/match, never respawns)
+[ ] IngredientSpawner: Fix folder names to match actual Studio prop names
+[ ] PrelobbyGuiBuilder: Update serving values in Rules text
+[ ] PrelobbyGuiBuilder: Update phase timings (Cooking 3min, Food Fight 6min, Accolades 45s)
+[ ] PrelobbyGuiBuilder: Rename "Friendship Band" → "Friendship Bracelet" everywhere
+[ ] PrelobbyGuiBuilder: Update alliance phase to "Gathering + Cooking"
+[ ] PrelobbyGuiBuilder: Update bathroom to "full immune zone"
+[ ] PrelobbyGuiBuilder: Remove checkout defensive bonus from Rules
+[ ] PrelobbyGuiBuilder: Add checkout system description (self-checkout vs staffed, scan times)
+[ ] PrelobbyGuiBuilder: Add 100% state description (drop items + −30% speed, no action lock, 0.5s cue)
+[ ] PrelobbyGuiBuilder: Add Craving State description to favourite food section
+[ ] PrelobbyGuiBuilder: Add CC diminishing returns to combo rules
+[ ] PrelobbyGuiBuilder: Add burned dish = debuffer build path
+[ ] PrelobbyGuiBuilder: Add Sous-Chef Supreme accolade
+🟡 PHASE 1 — SHARED DATA LAYER
+[ ] Create `ReplicatedStorage/Shared/IngredientData` (single source of truth)
+[ ] Create `ReplicatedStorage/Shared/RecipeData` (single source of truth)
+[ ] Create `ReplicatedStorage/Shared/Constants` (all locked values from Part 24)
+[ ] Create `ReplicatedStorage/Remotes` folder with all RemoteEvents
+[ ] Refactor CookbookBuilder to read from RecipeData + IngredientData
+[ ] Refactor IngredientSpawner to read from IngredientData
+🟡 PHASE 2 — CORE SERVER LAYER
+[ ] Create `Core/PlayerState`
+[ ] Create `Core/EventBus`
+[ ] Create `Core/DataManager`
+🟡 PHASE 3 — MATCH FLOW
+[ ] Create `MatchManager` — phase transitions
+[ ] Wire phase timers (Gathering 3min, Cooking 3min + 10s grace, Food Fight 6min, Accolades 45s)
+[ ] Wire store door open animation on Gathering start
+[ ] Wire loot spawn trigger on Gathering start
+[ ] Wire phase announcements (server messages)
+🟡 PHASE 4 — INVENTORY + ECONOMY
+[ ] Create `InventorySystem` — pickup, drop, weight, capacity
+[ ] Wire pickup speed scaling with overweight amount
+[ ] Wire weight → throw distance + knockback + hitbox
+[ ] Create `EconomySystem` — budget, checkout (both types), scan timing, queue
+[ ] Wire self-checkout: click-per-item, scan bar, interruptible, partial payment
+[ ] Wire staffed checkout: tap E, locked-in, auto-scan, 25% faster
+[ ] Wire scan times (rarity base + weight modifier per Part 7)
+[ ] Wire queue system (first come first served, auto-start on free)
+[ ] Wire Trade Hub public repository (deposit + browse)
+[ ] Wire trash can drop logic (100% state items → nearest can)
+[ ] Wire trash can loot (−20 CL penalty)
+🟡 PHASE 5 — COOKING SYSTEM
+[ ] Create `CookingSystem`
+[ ] Build Prep Table interaction UI (screen-space, proximity triggered)
+[ ] Build Stovetop heat bar UI (screen-space)
+[ ] Build station lock/unlock (one-click button in station UI)
+[ ] Build sous-chef contribution tracking (ingredient ownership per session)
+[ ] Build deconstruct logic (refund per owner, −5 CL per ingredient to initiator)
+[ ] Build dish state indicators (yellow/green/red hotbar highlights)
+[ ] Wire Hot Hands (+5% throw speed 3s after cook, dish glow)
+[ ] Wire cooking sound + detection radius increase (+15 studs while active)
+[ ] Wire BBQ Pit stations (same logic as kitchen, no lock, outdoor)
+[ ] Wire Portable Cooker (deploy animation, 4-use tracking, lockable)
+[ ] Wire 10s cooking grace at Cooking phase end
+🟡 PHASE 6 — BAR SYSTEM + BATHROOM
+[ ] Create `BarSystem`
+[ ] Wire 100% state: 0.5s cue → drop all items → −30% speed (no action locks)
+[ ] Wire dual 100% state: −60% speed stacked
+[ ] Wire both bars fully vulnerable at 100%
+[ ] Wire ~95% warning (0.75s slow + screen edge effect)
+[ ] Wire sub-100% grace window (1.5s after 40+ CL single hit)
+[ ] Wire FL size + speed penalties (10–20%, 20–30%)
+[ ] Wire FL decay over time
+[ ] Wire taking damage reduces all buff durations −15%
+[ ] Create `BathroomSystem`
+[ ] Wire bathroom entry lock (below 80% both bars)
+[ ] Wire sink/toilet confirmation prompts
+[ ] Wire bathroom full immune zone
+[ ] Wire 1.5s exit grace window
+[ ] Wire elimination on 0 Potty Breaks → spectator
+🟡 PHASE 7 — COMBAT + COMBOS
+[ ] Create `CombatSystem` + `CombatManager`
+[ ] Create `ComboSystem`
+[ ] Build throw charge (tap = 40%, hold+release = 100%)
+[ ] Wire charge → speed + distance only (not CL damage)
+[ ] Wire weight → knockback + hitbox (independent of charge)
+[ ] Wire damage formula (Base × Additive × Multipliers → soft cap)
+[ ] Wire Craving State (trigger, 10s window, ×1.5, consumed, 15s cooldown, persists)
+[ ] Wire Craving State visual (glow/aura)
+[ ] Wire soft cap (≤3.0x full, 3.0–4.0x = 80%, 4.0x+ = 65%)
+[ ] Wire burned dish (−20% CL, +30% status strength)
+[ ] Wire CC diminishing returns (100% → 70% → 40% → 20%, resets 8s)
+[ ] Build trajectory arc + preview
+[ ] Wire throw cooldown (0.8s)
+[ ] Wire AoE falloff (0–2/2–5/5–8/8–12 studs)
+[ ] Wire Mark system (one active, in-world icon above head)
+[ ] Wire Oil fire primer chain
+[ ] Wire Spice primer chain
+[ ] Wire all control effects (Banana, Cheese, Noodles, Honey, Blue Cheese, Ice Cream, Crab)
+[ ] Wire floor hazards (banana peel, oil slip, sausage roll, butter, chow mein trail, borscht)
+[ ] Wire Garlic buff strip (−15% all active buffs)
+[ ] Wire Truffle boost (+30% CL +1 serving on next cook)
+[ ] Wire Croissant split-shot (3 independent projectiles)
+[ ] Wire freeze cap (2.5s total)
+[ ] Implement projectile pooling (80–120 objects, prevents GC lag)
+🟡 PHASE 8 — ALLIANCE SYSTEM
+[ ] Create `AllianceSystem`
+[ ] Wire Friendship Bracelet kiosk ($12, Gathering + Cooking only)
+[ ] Wire bracelet offer/accept/decline (returned on decline)
+[ ] Wire duplicate offer handling (first wins, second returned)
+[ ] Wire unresolved offer auto-cancel at Food Fight start
+[ ] Wire name colour sync to all clients
+[ ] Wire solo player −20% detection radius
+[ ] Wire Food Fight reconfirmation (15s/20s windows, partial allowed)
+[ ] Wire ally minimap locations during reconfirmation window
+[ ] Wire end-game decision screen + voting
+[ ] Wire 3-person private vote + betrayer mechanic
+[ ] Wire voluntary alliance break (hold E 2s)
+[ ] Wire alliance break announcements
+🟡 PHASE 9 — POINTS + ACCOLADES
+[ ] Create `PointsSystem`
+[ ] Wire base points + skill modifiers + risk modifiers
+[ ] Wire assist score (35% within 4s of Mark/control)
+[ ] Wire live scoreboard (Tab to toggle)
+[ ] Wire post-match accolades (5 cards + bonus)
+[ ] Wire medal distribution
+🟡 PHASE 10 — LEGENDARY ITEMS
+[ ] Create `LegendaryServer` (2 world-loot per match, variable)
+[ ] Wire Golden Cart (20s buff, holder + ally radius)
+[ ] Wire Portable Cooker (deployment, 4 uses)
+[ ] Wire Million Dollar Steak (cook + throw + server announcement)
+🟡 PHASE 11 — DATASTORE
+[ ] Wire DataManager with DataStore
+[ ] Save/load: medals, cosmetics, lifetime stats
+[ ] Handle failed save/load gracefully
+⚪ PHASE 12 — 3D MODELS
+[ ] 65 ingredient models (geometric primitives, rarity-coded visuals)
+[ ] 66 recipe models (cooked + burned variants)
+[ ] Store fixtures (prep tables, stovetops, shelving, freezers, checkout)
+[ ] Props + decoration
+[ ] Special items (Medal, Portable Cooker prop, Golden Cart prop)
+⚪ PHASE 13 — VFX + SOUND
+[ ] Hit splat VFX (colour-coded per ingredient)
+[ ] Floor stain persistence (borscht, beet, oil, chow mein, butter)
+[ ] Projectile trails in flight
+[ ] 100% state drop cue (0.5s slow + sound)
+[ ] Cooking steam + sizzle
+[ ] Status effect in-world visuals (mark icon, oil coating, spice aura, root visual, craving glow)
+[ ] Player dirtiness progression (CL visual on model)
+[ ] Player fullness visual (size scale + bloat)
+[ ] Legendary VFX (Golden Cart glow, Steak golden explosion)
+[ ] Sound design (throw, hit, sizzle, register, bathroom, announcements)
+⚪ PHASE 14 — POLISH
+[ ] Transparent ceilings + toggle script
+[ ] Loading screen
+[ ] Cosmetics system (cart + basket skins)
+[ ] Cosmetics UI in prelobby
+[ ] Final HUD polish pass
+[ ] Chompers branding on all signage
+[ ] Prelobby cosmetics display
+---
+PART 23 — PENDING DECISIONS
+Topic	Notes
+Future meta rotation	Weekly modifiers (e.g. "Spicy Week" → Chili +20%). Future system, not v1.
+---
+PART 24 — LOCKED CONSTANTS REFERENCE
+Constant	Value
+Throw cooldown	0.8s
+Min charge	0.3s (40% power)
+Max charge	1.5s (100% power)
+Base throw speed	80 studs/s
+Base throw distance	50 studs
+Arc peak	~8 studs
+Charge affects	Speed + distance ONLY (not damage)
+Allergen multiplier	×1.75 CL received
+Non-allergen multiplier	×0.75 CL received
+Craving State trigger	Self-consume favourite recipe
+Craving State window	10s
+Craving State bonus	×1.5 CL on next hit, consumed on hit
+Craving State persists through hits	Yes
+Craving State cooldown	15s after consumed or expired
+Craving State visual	Player glow/aura visible to all
+Hit by own favourite (enemy throw)	×2 FL spike
+Favourite self-consume buff bonus	+8s added to buff duration
+Favourite self-consume FL cost	Halved
+Soft cap ≤3.0×	Full damage
+Soft cap 3.0–4.0×	×0.80 efficiency
+Soft cap 4.0×+	×0.65 efficiency
+Burned dish CL penalty	−20%
+Burned dish status bonus	+30% strength
+CC 1st application	100% duration
+CC 2nd consecutive	70% duration
+CC 3rd consecutive	40% duration
+CC 4th+ consecutive	20% (floor)
+CC reset condition	8s with no control effect received
+Cook depth 2	+5% additive
+Cook depth 3	+10% additive
+Cook depth 4+	+15% additive
+Assist score	35% of CL within 4s of Mark/control
+Together medal share	70% of solo value
+Last standing bonus	+15 medals
+Common respawn	25s
+Uncommon respawn	35s
+Rare respawn	50s
+Ultra-Rare respawn	90s
+Legendary respawn	Never
+Freeze cap	2.5s
+FL per throw received	+2
+Sub-100% grace window	1.5s after 40+ CL single hit
+100% state grace window	None — instant trigger
+100% state drop cue	0.5s dramatic slow + sound
+100% state: drops all items	✅
+100% state: −30% speed	✅
+100% state: action locks	None
+100% state: still vulnerable	✅
+Dual 100% state speed	−60% (stacked)
+Pickup speed 11–20 over	−20%
+Pickup speed 21–35 over	−40%
+Pickup speed 36–50 over	−60%
+Pickup speed 51+ over	−75%
+~95% warning	0.75s slow + screen effect
+Bathroom exit grace	1.5s invincibility
+Bathroom interior	Full immune zone
+Bathroom entry threshold	80%+ CL or FL
+Bathroom confirmation prompt	✅ ("Use the Sink?" / "Use the Toilet?")
+Sink drain time	~3s
+Toilet drain time	~2s
+Potty Breaks per player	3
+Basket weight limit	35wt
+Cart weight limit	70wt
+Basket slots	6
+Cart slots	12
+Basket speed mod	+5%
+Cart speed mod	−15%
+Cart detection radius	+15% larger
+Overload penalty	−10% speed per +10wt over limit
+Self-checkout	Interruptible, click each item, scan bar per item
+Staffed checkout	Locked-in, tap E, auto-scans ~25% faster
+Hit at self-checkout	Interrupts current item scan only
+Hit at staffed checkout	No effect — committed
+Checkout defensive bonus	None
+Checkout queue	First come first served, auto-start on lane free
+Self-checkout scan: Common base	0.4s + 0.1s per wt above 1
+Self-checkout scan: Uncommon base	0.7s + 0.1s per wt above 1
+Self-checkout scan: Rare base	1.2s + 0.1s per wt above 1
+Self-checkout scan: Ultra-Rare base	1.8s + 0.1s per wt above 1
+Self-checkout scan: Legendary base	3.0s + 0.1s per wt above 1
+Staffed checkout speed bonus	~25% faster than self-checkout
+Trash can loot penalty	−20 CL
+Friendship Bracelet cost	$12
+Bracelet returned on decline	✅
+Bracelet phases	Gathering + Cooking only
+Bracelet world loot rarity	Ultra-Rare
+Bracelet world loot max	2/match (variable)
+Starting cash	$15
+Starting napkins	1
+Napkin heal	−25 CL
+Napkin cooldown	20s
+Napkin use time	2s (interruptible)
+Cooking detection increase	+15 studs while active
+Deconstruct CL penalty	−5 CL per ingredient (initiator only)
+Hot Hands buff	+5% throw speed, 3s
+Solo detection bonus	−20% detection radius when unallied
+Golden Cart holder buff	+40% speed, ×2 throw range, unlimited weight
+Golden Cart duration	20 seconds
+Golden Cart ally radius	20 studs
+Golden Cart ally buff	+20% speed, ×1.5 throw range
+Portable Cooker uses	4
+Portable Cooker speed penalty	+1.5s vs kitchen
+Legendaries per match	2 world-loot (variable)
+Million Dollar Steak	Cook-only — not world loot
+Common servings	3
+Uncommon servings	2
+Rare servings	1
+Ultra-Rare servings	1
+Legendary servings	1
+Paella CL	35
+Saffron Rice CL	44
+Lobster Bisque CL	45
+Gathering phase	3 minutes
+Cooking phase	3 minutes + 10s grace
+Food Fight phase	6 minutes
+Accolades	45 seconds
+2-person reconfirmation	15s
+3-person reconfirmation	20s
+Truffle Pasta self effect	FL immunity 30s
+Last One Standing medals	60
+Chomper Champion medals	50
+Chaos Agent medals	40
+Master Chef medals	35 (unique recipes)
+Super Shopper medals	25 (most items purchased)
+Squeaky Clean medals	25
+Executioner medals	25
+Sous-Chef Supreme medals	25
+Resource Raider medals	15 (most items gathered)
+Participation medals	5
+Last standing bonus	+15
+Together victory share	70% of Last One Standing = 42 medals each
+Food Fight end condition	Early if one player/team remains OR 6-min hard cap
+Prelobby minimum players	8
+Container pickup method	E prompt, near-instant
+Cash pickup method	E prompt, near-instant
+Self-consume animation	0.5s, interruptible by hit
+Napkin interrupted	No heal, full cooldown still triggers
+Napkin cooldown start	On activation (not completion)
+Floor hazard stacking	No — second application refreshes duration only
+Allergy/favourite reveal (own)	Free
+Allergy/favourite reveal (other)	5 medals, lasts rest of match
+Rematch vote threshold	50% + 1
+Rematch vote window	30 seconds
+Spectator mode	Free-roam camera, follow any player, no interaction
+Alliance offer range	6 studs
+Minimap dot: normal	2 stud radius
+Minimap dot: cart	2.3 stud radius
+Minimap dot: solo	1.6 stud radius
+Minimap dot: 80%+ CL	3.0 stud radius
+Cooking detection pulse	15-stud flash radius on minimap
+Scoring tracks from	Gathering phase start
+Store open during Food Fight	Yes — all zones, checkout, kitchen fully open
+Container swaps during Food Fight	Allowed at rack locations
+Container supply	Unlimited (playtest limits later)
+Trade Hub repository at match end	All items disappear — no return
+Trade Hub repository active phases	Gathering through Food Fight
+Scoreboard visibility	Tab to toggle, tracks from Gathering start
+Scoreboard status states	Active / In Bathroom / Spectating / Eliminated
+Minimum players for match start	8
+Truffle Pasta ally effect	+10% throw range, 20-stud radius, 20s
+Projectile pool size	80–120 objects
+---
+End of Chompers' Fresh Market Game Design Bible v7.0
+Last updated: March 2026
+Update this Bible before any script change. The checklist is the build order.
+---
+PART 25 — BRAND IDENTITY (LOCKED)
+Naming Architecture
+Element	Value
+Roblox game title	`FOOD FIGHT! 🍅`
+In-world store brand	Chompers' Fresh Market
+Internal shorthand	Chompers
+Primary slogan	gather · cook · food fight!
+Brand symbol	🍅 Tomato splat
+> **Title rationale:** "FOOD FIGHT! 🍅" is short, searchable, and emoji-aided for Roblox feed visibility. "Chompers' Fresh Market" is the in-world brand used on all signage, UI, and loading screens. The Roblox description opens with: *"at Chompers' Fresh Market — gather, cook, food fight!"*
+Mascot
+Element	Value
+Name	Chompy
+Role	Chompers' Fresh Market store mascot and PA announcer
+Personality	Overenthusiastic, corporate-cheerful, slightly deranged, genuinely loves the chaos in his store
+Visual direction	Cheerful grocery mascot — big toothy smile, store apron/vest, eyes a little too excited about everything
+Voice	PA announcer register: warm, welcoming, escalatingly unhinged as match intensity grows
+> Chompy is the voice of every server announcement. He speaks like a sincere supermarket PA system that has gradually accepted that his store is a warzone and is absolutely fine with it.
+Secondary Slogans (LOCKED — for signage, loading screens, UI)
+"Fresh food. Dirty tactics." — primary secondary slogan
+"Shop fast. Throw faster." — action/thumbnail copy
+"Freshness guaranteed. Survival not included." — loading screen / signage
+"Please scan all items before throwing." — in-store policy humour
+"Management is not responsible for splatter damage." — bathroom/kitchen sign
+"Cleanup starts with you." — thematic
+"Cleanup, cleanup, everybody do your share!" — prelobby / loading screen
+"Now hiring aisle survivors." — employee notice board
+Visual Direction
+Element	Direction
+Art style	Bright grocery store branding corrupted by food-fight violence
+Logo feel	Thick rounded letters, inflated forms, supermarket-sign readability
+Colour palette	Tomato red · lettuce green · butter yellow · cream white · aisle-sign orange
+Accent colours	Freezer blue · jam purple · chili red
+UI copy register	Aisle markers, shelf tags, sale stickers, receipt motifs, employee notices
+Typography feel	Chunky rounded display (headlines) · bold clean sans (subheads) · supermarket flyer (body)
+Tone Words
+Keep: playful · cheeky · overenthusiastic · fake-corporate · welcoming but dangerous · slightly unhinged
+Avoid: edgy · gritty · tactical · ironic-detached · gross-out only · meme-random
+> The game should feel like a sincere grocery chain that accidentally built itself around public chaos. Chompy is not alarmed. Chompy is thriving.
+UI Copy Language
+Replace generic game UI terms with grocery-store equivalents:
+Generic	Chompers version
+Inventory	Cart Contents
+Health / HP	Cleanliness
+Status effects	Aisle Alerts
+Settings	Store Policy
+Scoreboard	Customer Rankings
+Match	Shopping Session
+Elimination	Checked Out
+Spectating	Window Shopping
+Loading	Restocking Shelves...
+Connecting	Finding Your Aisle...
+Thumbnail Formula (for reference)
+```
+TOP:    FOOD FIGHT! 🍅 (large, chunky text)
+CENTRE: food projectile in flight → player getting splatted
+BOTTOM: Chompers' Fresh Market logo
+```
+Rotating thumbnail themes: Core Gameplay · Chaos · Cooking · Legendaries · Alliances
+---
+PART 26 — SERVER ANNOUNCEMENTS (LOCKED)
+All announcements are written in Chompy's voice — corporate-cheerful grocery PA, escalating toward gleeful chaos as the match progresses.
+Display Rules
+Rule	Value
+Position	Top of screen, stacked vertically
+Max visible	3 announcements at once (oldest fades on overflow)
+Fade in	0.3s
+Hold duration	4s
+Fade out	0.5s
+Phase countdown (final 5s)	Large numerals, centre-screen only
+Server-wide style	White text, Chompers red accent, slight drop shadow
+Personal warning style	Amber/yellow tint — visually distinct from server announcements
+---
+PRELOBBY ANNOUNCEMENTS
+Trigger	Chompy says
+Lobby forming	"🛒 Welcome to Chompers' Fresh Market! Grab a cart, set your preferences, and try not to make a scene. (You will make a scene.)"
+8+ players ready	"✅ We've got a full cart of Chompers! Gathering phase opens shortly — get ready to shop."
+30s before Gathering	"⏰ Doors open in 30 seconds! The shelves are stocked. The bracelets are priced. The chaos is... pending."
+10s countdown	"10... 9... 8... 7... 6... 5... 4... 3... 2... 1..."
+---
+GATHERING PHASE ANNOUNCEMENTS
+Trigger	Chompy says
+Phase start	"🛒 GATHERING PHASE — the doors are OPEN! Fresh ingredients on every shelf. Cash and napkins outside. Friendship Bracelets while supplies last. SHOP FAST."
+1 minute remaining	"⏰ One minute left to gather! Checkout is open. Whatever's in your cart, that's what you're cooking with. Choose wisely, Chompers."
+30s remaining	"⏰ Thirty seconds! Last chance to grab, pay, and get to the kitchen. Checkout is busy — plan your route!"
+10s countdown	"Cooking phase in 10... 9... 8... get to those prep tables... 5... 4... 3... 2... 1..."
+---
+COOKING PHASE ANNOUNCEMENTS
+Trigger	Chompy says
+Phase start	"🍳 COOKING PHASE — Chompers' Kitchen is officially open! Paid ingredients only at the prep tables, please. Watch the heat bar. Don't burn anything. (Burning is also fine, actually.)"
+1 minute remaining	"⏰ One minute left to cook! If you haven't started, now is the time. If you have — make it count."
+30s remaining	"⏰ Thirty seconds! Whatever's on your stovetop, finish it. The Food Fight waits for no one."
+10s grace period starts	"🔔 Cooking phase ending! 10 seconds to finish your current dish — after that, it's game time."
+5s countdown	"5... 4... 3... 2... 1... PUT DOWN THE SPATULA."
+---
+FOOD FIGHT PHASE ANNOUNCEMENTS
+Trigger	Chompy says
+Phase start	"🥊 FOOD FIGHT! Chompers' Fresh Market is now officially a combat zone. Throw responsibly. (That's not a real rule.)"
+Reconfirmation window opens	"⚡ Alliances — reconfirm with your ally NOW! Press E near them within 15 seconds or the partnership is... dissolved. Like cheese in warm soup."
+Reconfirmation window closing	"⏰ 5 seconds to reconfirm your alliance!"
+2 minutes remaining	"⏰ Two minutes left, Chompers! Make every throw count. The scoreboard is watching."
+1 minute remaining	"⏰ One minute! If you haven't made your move — now or never."
+10s countdown	"10... 9... 8... final throws, Chompers... 5... 4... 3... 2... 1..."
+Phase end	"🛑 FOOD FIGHT OVER! Please put down all produce. Chompers' Fresh Market thanks you for your... participation."
+---
+LOW PLAYER COUNT ANNOUNCEMENTS
+Trigger	Chompy says
+5 players remaining	"👀 Five Chompers left standing. The aisles are getting quieter. The tension is getting louder."
+3 players remaining	"👀 Three Chompers. One winner. Someone's walking out of here clean-ish."
+2 players remaining (unallied)	"👀 It's down to two. May the messiest Chomper win."
+2 players remaining (allied)	"🤝 Two allies remain. The final decision approaches..."
+---
+ALLIANCE ANNOUNCEMENTS
+Trigger	Chompy says
+Alliance formed	"🤝 [Player A] and [Player B] have formed an alliance! Matching colours above their heads — everyone can see it. No secrets here."
+Alliance declined	"😬 [Player B] declined [Player A]'s Friendship Bracelet. The bracelet is gone. The awkwardness remains."
+Alliance broken (voluntary)	"💔 [Player A] and [Player B] have parted ways. Amicably? We'll never know."
+Alliance broken (reconfirmation fail)	"😬 [Player A] went solo — the alliance didn't survive the Food Fight transition. Every Chomper for themselves."
+End-game betrayal	"🗡️ The alliance fractured — every Chomper for themselves! Someone voted Fight. We're not saying who."
+Together victory (2-person)	"🤝 [Player A] and [Player B] chose to Leave With a Friend. Respect. 70% medals each — friendship has its price."
+Together victory (3-person)	"🤝 The full alliance chose friendship. Chompers' Fresh Market salutes you. 70% medals, full hearts."
+---
+LEGENDARY ANNOUNCEMENTS
+Trigger	Chompy says
+Golden Cart found	"🛒 ATTENTION SHOPPERS — [Player] has found the GOLDEN CART! Enhanced speed, unlimited weight, and enough throw range to hit someone in Frozen Foods from Bakery. EVERYONE LOOK OUT."
+Portable Cooker found	"🍳 [Player] just found a PORTABLE COOKER somewhere on the map! A mobile kitchen has entered the building. Keep your ears open for sizzling."
+Steak cooking started	"🔥 Someone has started cooking the MILLION DOLLAR STEAK. The kitchen smells incredible. Someone is about to have a very bad day."
+Steak ready	"⭐ The MILLION DOLLAR STEAK is cooked and ready! Wagyu. Truffle. Caviar. Whoever made that is armed and extremely dangerous."
+Steak thrown	"💰 [Player] just threw the MILLION DOLLAR STEAK at [Target]! That's [CL] cleanliness in one throw. Chompers' is not responsible for the resulting mess."
+Friendship Bracelet world loot found	"💚 [Player] found a rare Friendship Bracelet in the wild! Someone's getting an alliance on the house."
+---
+COMBAT ANNOUNCEMENTS
+Trigger	Chompy says
+First player to 100% CL (first blood)	"👀 First one down — [Player] is absolutely plastered and waddling to the bathroom! That's the first 100% of the match. Someone's having a day."
+Player hits 100% CL (subsequent)	"🧼 [Player] has reached MAXIMUM CLEANLINESS. Their groceries are on the floor. They are moving at reduced speed. Truly a difficult moment."
+Player hits 100% FL	"🍔 [Player] is FULLY STUFFED and has dropped everything. Perhaps next time, fewer snacks."
+Player eliminated	"🚽 [Player] has been CHECKED OUT — zero Potty Breaks remaining! They'll be watching from the sidelines. Better luck next shopping session."
+Last player standing	"👑 [Player] is the LAST CHOMPER STANDING! Somebody get them a clean apron."
+---
+END-GAME / ACCOLADES ANNOUNCEMENTS
+Trigger	Chompy says
+Accolades screen opens	"🏆 Chompers' Fresh Market is proud to present... the post-battle accolades! Results may not reflect actual grocery shopping performance."
+Chomper Champion awarded	"🏆 CHOMPER CHAMPION — [Player] dealt the most Cleanliness damage this session. A messy honour, truly."
+Master Chef awarded	"👨‍🍳 MASTER CHEF — [Player] cooked the most unique recipes. Chompers' Fresh Market's kitchen has never seen such output."
+Last One Standing awarded	"🏅 LAST ONE STANDING — [Player] survived to the end. Whether by skill, strategy, or hiding near the bathrooms."
+Executioner awarded	"🗡️ EXECUTIONER — [Player] sent the most Chompers to the bathroom. Permanently. Truly a customer of distinction."
+Squeaky Clean awarded	"🧼 SQUEAKY CLEAN — [Player] reached the Food Fight phase without using a single Potty Break. Remarkable hygiene."
+Sous-Chef Supreme awarded	"🧑‍🍳 SOUS-CHEF SUPREME — [Player] contributed to the most recipes as Sous-Chef. A team player. A kitchen hero. A legend."
+Medals distributed	"🏅 Medals have been distributed to your account! Spend them in the Accolades tab on cosmetics. Chompers thanks you for your business."
+Rematch vote	"🔄 Vote to rematch! Majority wins. The shelves are already restocking. Chompers' Fresh Market is always open."
+Rematch confirmed	"🛒 REMATCH! The doors are opening again. Same store. Same chaos. New groceries."
+Lobby reset	"👋 Thanks for shopping at Chompers' Fresh Market! Returning to lobby... The cleanup crew is already crying."
+---
+PERSONAL WARNINGS (private — amber tint, never server-wide)
+Trigger	Personal message
+80%+ CL reached	"🚽 Bathroom unlocked — Cleanliness at 80%. You can go voluntarily. Just saying."
+80%+ FL reached	"🚽 Bathroom unlocked — Fullness at 80%. Your body is sending signals."
+Both at 80%+	"🚽 Bathroom unlocked — both bars over 80%. Chompers strongly recommends a visit."
+~95% CL	"🚨 CLEANLINESS CRITICAL — find a sink before something terrible happens."
+~95% FL	"🚨 FULLNESS CRITICAL — the toilet is right there. Please."
+100% CL	"💀 MAXIMUM CLEANLINESS — your groceries are on the floor. Get to a sink."
+100% FL	"💀 MAXIMUM FULLNESS — your groceries are on the floor. Get to a toilet."
+Both at 100%	"💀 BOTH MAXED — you have dropped everything and are moving very slowly. This is your lowest moment. Chompers believes in you."
+2nd Potty Break used	"⚠️ 1 Potty Break remaining. Your Napkin is free healing — use it before you have to go again."
+3rd Potty Break used	"🚨 LAST BREAK USED. One more bathroom visit ends your shopping session. Permanently."
+Craving State triggered	"🔥 Craving State active — 10 seconds! Your next throw hits 1.5× harder. Don't waste it."
+Craving State expired (unused)	"😬 Craving window closed. Next time, eat and act faster."
+Hot Hands active	"✨ Hot Hands! +5% throw speed for 3 seconds. Fresh out of the kitchen."
+---
+End of Part 26 — Server Announcements
+---
+PART 27 — BLIND SPOT AUDIT — ALL LOCKED DECISIONS
+All 25 items from the final pre-code blind spot audit, locked and ready for implementation.
+🔴 HIGH PRIORITY
+1. Container pickup (cart/basket)
+E prompt on approach in car park — activates instantly (near-zero hold time)
+First player to press E wins if two players reach same container simultaneously
+Unlimited supply of carts and baskets at racks (playtest supply limits later)
+Container swaps allowed during Food Fight at cart/basket racks
+2. Spectator mode
+Free-roam camera after elimination
+Can follow any player by clicking their name on scoreboard
+Sees all players, all bars, all HUD elements
+Cannot interact with anything in the world
+Cannot use game chat (Roblox platform chat only)
+Spectators appear as ghost icons on minimap (visible to other spectators only)
+3. Minimap specification
+Shows ALL players as coloured dots at all times
+Ally = matching alliance colour. Solo = slightly dimmer white. Enemy = white.
+Shows zone labels (Produce, Bakery, Dairy, Freezer, Aisles, Kitchen, etc.)
+Does NOT show ingredient locations — preserves exploration incentive
+Dot size scales with detection radius (normal = 2 stud dot, cart = 2.3, solo = 1.6, 80%+ CL = 3.0)
+Cooking players: dot pulses briefly when cooking detection triggers (+15 stud pulse radius flash)
+4. Proximity interaction distances
+Station	Distance
+Prep Table	8 studs
+Stovetop	8 studs
+BBQ Pit	8 studs
+Checkout terminal	6 studs
+Sink	5 studs
+Toilet (stall)	5 studs
+Trade Hub	10 studs
+Alliance offer (press E near player)	6 studs
+Ingredient pickup prompt	8 studs (existing in IngredientSpawner)
+5. Phase transitions — inventory rules
+Unpaid items stay in gathering inventory indefinitely — never auto-removed
+Players CAN gather, checkout, and cook during Cooking phase — store stays fully open
+Players CAN gather, checkout, and cook during Food Fight phase — store stays fully open throughout match
+No hard locks on any zone at any phase transition
+6. Floor hazards
+Visible to all players as coloured floor decals
+Do NOT stack — second application of same hazard refreshes duration, does not double
+Walk-over trigger (not thrown-into trigger)
+Persist until their timer expires mid-match
+All floor hazards cleared automatically at match end
+7. Self-consume mechanic
+Hold E while item is selected in hotbar = self-consume
+0.5s animation (eating)
+Interruptible by hit — same rules as Napkin
+Cannot self-consume while mid-throw-charge
+Enemies cannot directly prevent it but the 0.5s window is their opportunity
+8. Throw aim system
+Hold RMB (desktop) or hold aim button (mobile) = aim mode
+Trajectory arc preview shown while charging
+Arc is perfectly accurate — no spread or inaccuracy
+Release = throw
+Mobile: dedicated aim joystick + separate throw button
+Trajectory arc always visible while charging, disappears on release
+9. Player position at 100% hit
+No physical knockback at 100% trigger
+Player stays exactly where they are
+0.5s slow cue plays in place
+Items drop around them at their feet
+They then walk from that exact position at −30% speed
+10. Trade Hub repository at match end
+All deposited items disappear at match end — no return to depositors
+Repository is accessible and active from Gathering phase through Food Fight
+Items can be deposited and taken at any point during these phases
+---
+🟡 MEDIUM PRIORITY
+11. Allergy/favourite reveal
+Revealing your own allergy/favourite = FREE (cosmetic flex, encourages self-expression)
+Revealing another player's allergy/favourite = 5 medals (tactical purchase, mid-match)
+Reveal lasts the rest of the match once purchased
+Available during all phases from Gathering onwards
+12. Rematch vote
+Simple majority threshold: 50% + 1 vote
+30-second voting window
+Eliminated/spectator players CAN vote — they participated in the match
+Exactly tied vote = no rematch, lobby resets
+Players who leave during vote count as "no"
+13. Player disconnect mid-match
+Their inventory drops to floor at their last known position (same as 100% state drop)
+Their alliance auto-breaks with public Chompy announcement
+Any sous-chef session they were part of — all ingredients return to respective owners
+Their player slot opens for the next match
+Eliminated players who reconnect can only spectate for remainder of match
+14. Gathering and cooking during Food Fight — CONFIRMED OPEN
+Store stays fully open all phases
+All zones, checkout, and kitchen remain accessible during Food Fight
+This is intentional — creates rich risk/reward decisions throughout the full match
+Players who cook mid-fight gain ammo but sacrifice safety and mobility
+This should be noted explicitly in the Rules tab
+15. Scoring tie resolution
+Tie on CL dealt AND points simultaneously → both players receive full medal value for that accolade
+Last One Standing: cannot tie (someone always eliminated first, or Together winners are defined)
+If timer expires with multiple survivors still alive → all surviving players share Last One Standing (all receive 60 medals)
+16. Milk self-drink mechanic
+Milk is the only raw ingredient with a defined self-use mechanic (besides Napkin)
+Hold E on selected Milk = self-drink: −10 CL to yourself, 0.5s animation, interruptible
+Throw Milk = weak wide hit (existing)
+No cooking required for either use
+Milk dual-use noted explicitly in CookbookBuilder ingredient card
+17. Detection radius — precise definition
+Detection radius = the size of your dot on OTHER players' minimaps
+Normal dot size = 2 stud visual radius
+Cart (+15%) = 2.3 stud dot
+Solo player (−20%) = 1.6 stud dot
+80%+ CL = 3.0 stud dot (visibly larger — enemies track you easier)
+Cooking = your dot pulses to a 15-stud flash radius briefly — not a permanent size increase
+18. Phase transition — player spawn and movement
+Players spawn in car park during Prelobby — no forced movement at any time
+When Gathering starts: store doors animate open, no teleport
+Players walk in naturally under their own control
+Zone suggestion markers appear on floor near each zone entrance as visual guides only
+No forced routing, no teleportation, no movement locks at any phase transition
+The only forced movement is walking to bathroom when at 100% (player controlled, just debuffed)
+19. Scoring phase tracking
+Points tracking begins at Gathering phase start
+Scoreboard accessible via Tab from Gathering phase onwards
+All accolades draw from full-match stats (Gathering through Food Fight)
+Ingredient pickups during Gathering count for Resource Raider and points
+Checkout purchases during any phase count for Super Shopper
+20. Napkin edge cases
+Interrupted at any point = NO heal, zero CL recovered
+Cooldown starts on activation (not completion) — prevents spam-attempting
+Can use Napkin while moving
+Partial heals do not exist — all or nothing
+Rationale: food hits are what interrupt it — you can't use a napkin to clean yourself while food is actively hitting you
+---
+⚪ LOWER PRIORITY
+21. Cart and basket visuals
+Cart follows player as an attached visual prop (no hitbox change)
+Basket worn on arm or carried visually
+Purely cosmetic — no collision impact
+Model swaps on pickup/putdown
+Container swaps mid-Food Fight allowed at rack locations — model updates immediately
+Weight system adjusts instantly on swap (overweight penalties apply immediately if new limit is lower)
+22. Scoreboard status column
+States: 🟢 Active · 🚽 In Bathroom · 👁 Spectating · ❌ Eliminated
+Updates in real time
+No "Cooking" status — cooking is revealed by in-world sound + detection radius, not scoreboard
+No "Gathering" status — Active covers all in-game states
+23. Million Dollar Steak announcement
+Announcement fires ON THROW (not on hit) — the throw is the dramatic moment
+Message: "[Player] just threw the MILLION DOLLAR STEAK!"
+On successful hit, follow-up message: "[Player] HIT [Target] with the MILLION DOLLAR STEAK! [CL] cleanliness in one throw."
+If it misses: no follow-up (the miss speaks for itself)
+Multi-target AoE hits: announcement names the primary target (closest to impact point)
+24. Prelobby minimum player count
+Minimum 8 players required to start a match
+If 90s prelobby timer expires with fewer than 8 players: lobby resets, returns to matchmaking
+No match starts with fewer than 8 — game systems require minimum population
+This minimum may be reduced in later testing if matchmaking is slow
+25. Cash pickup
+E prompt on approach — short hold (same system as ingredients, near-instant)
+Cash added instantly to player budget on successful pickup
+No pickup animation — frictionless
+Respawn timers apply per loot type (Part 16)
+---
+End of Part 27 — Blind Spot Audit Locked Decisions
+---
+PART 28 — VERTICAL SLICE STRATEGY (LOCKED)
+Design Phase Status: COMPLETE
+The Chompers' Fresh Market Game Design Bible is now complete. No new mechanics will be designed before the vertical slice is playtested. Future additions go through the Bible first — no exceptions.
+> **Freeze point:** All systems, numbers, mechanics, and edge cases are locked as of Bible v7.0 final. Only bug fixes and playtest-driven balance tuning may change values going forward. Any change requires updating this document first.
+---
+Why a Vertical Slice First
+Building all 66 recipes and 65 ingredients before testing if throwing and cooking feel good together is a production mistake. The vertical slice proves the systems work before scaling the content.
+What we need to test:
+Does throwing feel satisfying at base weight and full weight?
+Does the Prep Table → Stovetop flow feel intuitive under pressure?
+Does the checkout exposure create real tension or just annoyance?
+Do bathroom breaks feel like strategic resources or random punishments?
+Does alliance reconfirmation create drama or confusion?
+Does the 100% state drop feel cinematic or frustrating?
+None of these questions need 66 recipes to answer.
+---
+Vertical Slice Scope (LOCKED)
+Category	Full game	Vertical slice
+Ingredients	65	20
+Recipes	12	12
+Legendaries	3	1 (Golden Cart only)
+Map zones	All	All (already built)
+Core systems	All	All
+VFX	Full	Placeholder only
+3D models	Custom	Placeholder blocks
+Announcements	Full Chompy system	Subset (phase transitions + key events)
+---
+Vertical Slice — 20 Ingredients
+Chosen to cover all 8 allergy types, all rarities, and a spread of effects:
+Name	Rarity	Allergy	Why included
 
--- Wait for _G.Chompers (ChompersBottomBar sets stubs before us)
-local waited = 0
-while not (_G.Chompers and _G.Chompers.SetMoney) and waited < 6 do
-	task.wait(0.1); waited = waited + 0.1
-end
-
--- ── Colours ──────────────────────────────────────────────────
-local C = {
-	bg      = Color3.fromRGB(20, 18, 32),
-	bgLight = Color3.fromRGB(28, 26, 42),
-	stroke  = Color3.fromRGB(50, 46, 72),
-	red     = Color3.fromRGB(218, 65, 65),
-	gold    = Color3.fromRGB(239, 159, 39),
-	green   = Color3.fromRGB(70, 195, 85),
-	white   = Color3.fromRGB(245, 242, 255),
-	dim     = Color3.fromRGB(105, 100, 138),
-	money   = Color3.fromRGB(75, 205, 60),
+Tomato	Common	Produce	MARK — core combo
+Egg	Common	Dairy	Raw throwable, dual allergy rule
+Chicken	Common	Meat	Knockback, high CL
+Rice	Common	None	AoE, core recipe ingredient
+Pasta	Common	Gluten	Slow, core recipe
+Milk	Common	Dairy	Self-drink mechanic
+Flour	Common	Gluten	Core recipe ingredient
+Soy Sauce	Uncommon	Soy	MARK +20%, fastest marks
+Cheese Block	Uncommon	Dairy	ROOT chain
+Noodles	Uncommon	Gluten	Trap + pull chain
+Oil	Uncommon	None	Fire primer chain
+Chili Powder	Uncommon	Spicy	Spice primer, DoT
+Honey	Rare	None	Root + floor zone
+Blue Cheese	Rare	Dairy	CC duration amplifier
+Shrimp	Rare	Seafood	Double hit
+Truffle	Rare	Produce	Recipe boost mechanic
+Ice Cream	Ultra-Rare	Dairy	Freeze mechanic
+Wagyu Beef	Ultra-Rare	Meat	Knockdown, Steak ingredient
+Saffron	Ultra-Rare	None	AoE amplifier
+Caviar	Legendary	Seafood	Steak ingredient, Stockroom only
+---
+Vertical Slice — 12 Recipes
+Two per rarity tier, covering all three cook paths (Prep-only, Stovetop, Raw):
+Name	Rarity	Station	Why included
+Egg Splat	Common	Raw (none)	Tests raw throw flow
+Grilled Cheese	Common	Stovetop	Tests full cook flow
+Chow Mein	Uncommon	Prep+Stovetop	Tests 2-step cook
+Naan Wrap	Uncommon	Prep only	Tests buff-only recipe
+Chicken Curry	Rare	Prep+Stovetop	Tests fire combo
+Blue Cheese Pasta	Rare	Prep+Stovetop	Tests CC amplifier
+Truffle Pasta	Ultra-Rare	Prep+Stovetop	Tests UR + ally buff
+Wagyu Burger	Ultra-Rare	Prep only	Tests UR raw assembly
+Million Dollar Steak	Legendary	Prep+Stovetop	Tests Legendary cook flow
+> Note: That's only 9 — leaving 3 slots for recipes that feel most natural to add during testing based on what ingredients players gravitate toward.
+---
+Vertical Slice — 1 Legendary World Loot
+Golden Cart only. It's the simplest legendary to implement (pickup + buff application) and creates the most immediately visible drama (server announcement + player speedboost). Portable Cooker requires deployment logic — save for after vertical slice.
+---
+Build Order for Vertical Slice
+Follow the Phase checklist exactly (Parts 0–10) but with reduced content scope:
+Phase 0 — Data fixes on existing scripts (full — this must be clean)
+Phase 1 — Shared data layer with 20 ingredients + 12 recipes only
+Phase 2 — Core server layer (full)
+Phase 3 — Match flow (full)
+Phase 4 — Inventory + Economy (full, all checkout logic)
+Phase 5 — Cooking system (full logic, 12 recipes)
+Phase 6 — Bar system + Bathroom (full)
+Phase 7 — Combat + Combos (full system, subset of combos matching 20 ingredients)
+Phase 8 — Alliance system (full)
+Phase 9 — Points + Accolades (full system, subset of awards)
+Phase 10 — Golden Cart only
+Playtest with 8–20 players. Tune. Then scale content.
+---
+What to Watch in Playtesting
+Test goal	What to observe
+A — Baseline fight pacing	Do two average players with common food fight for 20–40s without it feeling random?
+B — Burst fairness	When someone gets hit by a high-setup combo, does it feel earned or random?
+C — Kitchen pressure	Can 15–40 players use kitchen and checkout without traffic jams?
+D — Alliance drama	Does the reconfirmation window create tension or confusion?
+E — 100% state feel	Does dropping everything feel cinematic or just frustrating?
+F — Checkout exposure	Does checkout create genuine danger or just annoyance?
+---
+The 6 Moments That Will Make This Game Viral
+Based on the systems we've built, these are the moments that will be clipped and shared:
+The Kitchen Betrayal — Someone cooking the Million Dollar Steak mid-Food Fight, alliance partner steals an ingredient, then throws it at them.
+The Grocery Scramble — Player hits 100%, drops everything, tries to recover their Wagyu and Truffle while being pelted at −30% speed.
+The Golden Cart Chase — Player finds Golden Cart, server announces, entire lobby pivots to hunt them for 20 seconds.
+The Alliance Fracture — End-game betrayal vote where one player secretly votes Fight, the announcement fires, and the other two realize they were betrayed.
+The Legendary Throw — Million Dollar Steak flies across the store with server announcement and golden explosion. Everyone stops to watch.
+The Bathroom Walk of Shame — Player waddles from Checkout to the nearest bathroom at −60% speed (both bars maxed) while enemies trail behind them throwing food.
+These moments are already designed in. They just need to be built.
+---
+End of Part 28 — Vertical Slice Strategy
+Design phase complete. Begin coding.
+---
+PART 29 — MOVEMENT RULES (LOCKED)
+> Confirmed during map finalization session, March 2026.
+> These values go directly into the CharacterController script. Do not deviate without updating this Bible.
+---
+Jump Settings
+Setting	Value	Rationale
+JumpPower	38–42	Below Roblox default (50). Reduces floatiness, prevents bunny-hop spam
+JumpHeight	~6–7 studs	Clears small props (benches, bins). Cannot clear shelves or counters
+AirControl	Low	Reduces mid-air directional changes. Throws remain readable
+JumpCooldown	0.2–0.3s	Prevents spam. Allows meaningful dodge hops without rhythm abuse
+Design intent: Jumping should feel snappy and purposeful — not floaty. Players can hop over spilled ingredients, dodge a single incoming throw, or jump onto a bench. They cannot bunny-hop to negate combat.
+---
+Climbing — PROHIBITED
+Climbing is disabled entirely. No surfaces in the map are climbable by design.
+Prohibited climb surfaces:
+Aisle shelves (Y=10 — too tall to mantle at JumpPower 40)
+Deli counters (Y=5 — borderline; JumpPower reduction prevents consistent mantling)
+Food trucks (permanent sniper nests if reachable)
+Stockroom crates and TallStacks
+Awnings
+Implementation: Avoid ladder-like geometry, angled wedge ramps, and stacked parts that form staircases. Roblox characters mantle naturally — prevent this through geometry discipline, not scripting hacks.
+---
+Micro-Verticality — ALLOWED
+Players may jump onto small props up to 2–3 studs tall:
+Benches ✅
+Pallets ✅
+Curbs and floor lips ✅
+Small produce bins ✅
+BBQ pad edges ✅
+These add movement flavour without granting vertical combat dominance.
+---
+Movement Feel Reference
+Target feel: Splatoon / Gang Beasts / Party Animals
+Not: Fortnite / Apex / obbies
+Fast horizontal movement. Minimal vertical dominance. Readable throw arcs at all times.
+---
+Floor Hazard System — PHASE 2 (Design locked, build deferred)
+Spilled ingredients create temporary surface effects on the floor tile beneath them.
+Confirmed effects (implement in Phase 2):
+Ingredient / Cause	Floor Effect	Duration
+Oil spill	Slide 6–8 studs, reduced friction	Until cleaned
+Banana peel	Trip — brief stumble animation	Single trigger
+Butter	Reduced friction zone	Until cleaned
+Chow mein	Trip	Single trigger
+Implementation note: The `floorEffect` field must be added to the ingredient data table from Phase 1 even though the logic ships in Phase 2. This prevents a schema migration later.
+Floor hazard data schema (add to ingredient table now):
+```lua
+floorEffect = {
+    type     = "slide" | "trip" | "friction" | nil,
+    duration = number,   -- seconds (nil = single trigger)
+    studs    = number,   -- slide distance if type="slide"
 }
-
-local ALLERGY_TYPES = {
-	{name="Dairy",   color=Color3.fromRGB(180,220,255), icon="🥛"},
-	{name="Gluten",  color=Color3.fromRGB(230,190,120), icon="🌾"},
-	{name="Produce", color=Color3.fromRGB(100,210,80),  icon="🥦"},
-	{name="Meat",    color=Color3.fromRGB(220,100,80),  icon="🥩"},
-	{name="Seafood", color=Color3.fromRGB(80,160,230),  icon="🦐"},
-	{name="Nuts",    color=Color3.fromRGB(180,130,70),  icon="🥜"},
-	{name="Spicy",   color=Color3.fromRGB(240,90,50),   icon="🌶️"},
-	{name="Soy",     color=Color3.fromRGB(210,185,120), icon="🧃"},
-}
-
--- ── State ────────────────────────────────────────────────────
-local Selections = {cart="basket", allergy=nil, favourite=nil, confirmed=false}
-local isOpen     = false
-local gatheringStarted = false  -- Preferences lock flag
-local activeTab  = "PREFERENCES"
-
--- ── Helpers ──────────────────────────────────────────────────
-local function corner(p, r)
-	Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 12)
-end
-local function mkStroke(p, t, c)
-	local s = Instance.new("UIStroke", p)
-	s.Thickness = t or 1.5; s.Color = c or C.stroke; return s
-end
-local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
-	local l = Instance.new("TextLabel")
-	l.Text=text or ""; l.Font=font or Enum.Font.Gotham
-	l.TextSize=size or 16; l.TextColor3=color or C.white
-	l.TextXAlignment=xAlign or Enum.TextXAlignment.Left
-	l.TextYAlignment=Enum.TextYAlignment.Center
-	l.BackgroundTransparency=1
-	l.Position=pos or UDim2.new(0,0,0,0)
-	l.Size=sz or UDim2.new(1,0,1,0)
-	l.Parent=p; return l
-end
-local function mkScroll(p, name, size, pos, barColor)
-	local sf = Instance.new("ScrollingFrame")
-	sf.Name=name; sf.Size=size; sf.Position=pos
-	sf.BackgroundTransparency=1; sf.BorderSizePixel=0
-	sf.ScrollBarThickness=7
-	sf.ScrollBarImageColor3=barColor or C.red
-	sf.AutomaticCanvasSize=Enum.AutomaticSize.Y
-	sf.CanvasSize=UDim2.new(0,0,0,0); sf.Parent=p
-	local pad=Instance.new("UIPadding",sf)
-	pad.PaddingTop=UDim.new(0,6);pad.PaddingBottom=UDim.new(0,6)
-	pad.PaddingLeft=UDim.new(0,6);pad.PaddingRight=UDim.new(0,6)
-	local ll=Instance.new("UIListLayout",sf)
-	ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,6)
-	return sf
-end
-
--- ============================================================
--- BILLBOARD (allergy + favourite, always visible above head)
--- ============================================================
-
-local function updateBillboard()
-	local char = player.Character
-	if not char then return end
-	local head = char:FindFirstChild("Head")
-	if not head then return end
-	local ex = head:FindFirstChild("ChompersBillboard")
-	if ex then ex:Destroy() end
-	if not Selections.allergy and not Selections.favourite then return end
-
-	local bb = Instance.new("BillboardGui")
-	bb.Name="ChompersBillboard"; bb.ResetOnSpawn=false
-	bb.Size=UDim2.new(0,280,0,60); bb.StudsOffset=Vector3.new(0,3.2,0)
-	bb.AlwaysOnTop=false; bb.Parent=head
-
-	local ll=Instance.new("UIListLayout",bb)
-	ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,2)
-	ll.HorizontalAlignment=Enum.HorizontalAlignment.Center
-
-	if Selections.allergy then
-		local col=Color3.fromRGB(226,75,74)
-		for _,a in ipairs(ALLERGY_TYPES) do
-			if a.name==Selections.allergy then col=a.color; break end
-		end
-		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,28); l.BackgroundTransparency=1
-		l.Text="⚠ Allergic to "..Selections.allergy
-		l.Font=Enum.Font.GothamBold; l.TextSize=15
-		l.TextColor3=col; l.TextStrokeTransparency=0.3
-		l.TextStrokeColor3=Color3.fromRGB(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center
-		l.LayoutOrder=1
-	end
-	if Selections.favourite then
-		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,28); l.BackgroundTransparency=1
-		l.Text="⭐ Loves "..Selections.favourite
-		l.Font=Enum.Font.GothamBold; l.TextSize=15
-		l.TextColor3=C.gold; l.TextStrokeTransparency=0.3
-		l.TextStrokeColor3=Color3.fromRGB(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center
-		l.LayoutOrder=2
-	end
-end
-
--- Billboard on every spawn
-player.CharacterAdded:Connect(function()
-	task.wait(1); updateBillboard()
-end)
-if player.Character then task.delay(1, updateBillboard) end
-
--- ============================================================
--- MAIN OVERLAY + PANEL
--- ============================================================
-
-local PANEL_TOP = 50
-local PANEL_BTM = 80
-
-local Overlay = Instance.new("Frame")
-Overlay.Name="StoreGuideOverlay"
-Overlay.Size=UDim2.new(1,0,1,0)
-Overlay.BackgroundColor3=Color3.fromRGB(8,6,16)
-Overlay.BackgroundTransparency=0.25
-Overlay.BorderSizePixel=0
-Overlay.Visible=false; Overlay.ZIndex=8
-Overlay.Parent=PrelobbyGui
-
-local Panel = Instance.new("Frame",Overlay)
-Panel.Name="Panel"
-Panel.Size=UDim2.new(0.86,0,1,-(PANEL_TOP+PANEL_BTM))
-Panel.Position=UDim2.new(0.5,0,0,PANEL_TOP)
-Panel.AnchorPoint=Vector2.new(0.5,0)
-Panel.BackgroundColor3=Color3.fromRGB(18,16,28)
-Panel.BorderSizePixel=0; Panel.ZIndex=9; corner(Panel,16)
-
--- Header
-local HDR_H = 58
-local HeaderBar = Instance.new("Frame",Panel)
-HeaderBar.Size=UDim2.new(1,0,0,HDR_H)
-HeaderBar.BackgroundColor3=C.red
-HeaderBar.BorderSizePixel=0; HeaderBar.ZIndex=10; corner(HeaderBar,16)
--- fill bottom corners
-local hf=Instance.new("Frame",HeaderBar)
-hf.Size=UDim2.new(1,0,0,16);hf.Position=UDim2.new(0,0,1,-16)
-hf.BackgroundColor3=C.red;hf.BorderSizePixel=0;hf.ZIndex=10
-
-mkLabel(HeaderBar,"Chompers' Store Guide",
-	Enum.Font.GothamBlack,28,Color3.fromRGB(253,248,240),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,16,0,0),UDim2.new(0.44,0,1,0))
-
-mkLabel(HeaderBar,"gather · cook · food fight!",
-	Enum.Font.GothamBold,16,Color3.fromRGB(255,225,100),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0.44,0,0,0),UDim2.new(0.38,0,1,0))
-
-local CloseBtn = Instance.new("TextButton",HeaderBar)
-CloseBtn.Size=UDim2.new(0,90,0,40)
-CloseBtn.Position=UDim2.new(1,-100,0.5,-20)
-CloseBtn.BackgroundColor3=Color3.fromRGB(175,30,30)
-CloseBtn.BorderSizePixel=0; CloseBtn.AutoButtonColor=false
-CloseBtn.Font=Enum.Font.GothamBold; CloseBtn.TextSize=15
-CloseBtn.TextColor3=C.white; CloseBtn.Text="Close"; CloseBtn.ZIndex=11
-corner(CloseBtn,10)
-CloseBtn.MouseEnter:Connect(function()
-	TweenService:Create(CloseBtn,TweenInfo.new(0.1),
-		{BackgroundColor3=Color3.fromRGB(220,45,45)}):Play()
-end)
-CloseBtn.MouseLeave:Connect(function()
-	TweenService:Create(CloseBtn,TweenInfo.new(0.1),
-		{BackgroundColor3=Color3.fromRGB(175,30,30)}):Play()
-end)
-
--- Tab bar
-local TAB_H = 46
-local TabBar = Instance.new("Frame",Panel)
-TabBar.Name="TabBar"; TabBar.Size=UDim2.new(1,0,0,TAB_H)
-TabBar.Position=UDim2.new(0,0,0,HDR_H)
-TabBar.BackgroundColor3=Color3.fromRGB(22,20,34)
-TabBar.BorderSizePixel=0; TabBar.ZIndex=10
-local tabLL=Instance.new("UIListLayout",TabBar)
-tabLL.FillDirection=Enum.FillDirection.Horizontal
-tabLL.HorizontalAlignment=Enum.HorizontalAlignment.Left
-tabLL.VerticalAlignment=Enum.VerticalAlignment.Center
-tabLL.Padding=UDim.new(0,2)
-
--- ContentArea — CookbookBuilder finds this by name
-local ContentArea = Instance.new("Frame",Panel)
-ContentArea.Name="ContentArea"
-ContentArea.Size=UDim2.new(1,0,1,-(HDR_H+TAB_H))
-ContentArea.Position=UDim2.new(0,0,0,HDR_H+TAB_H)
-ContentArea.BackgroundTransparency=1; ContentArea.ZIndex=9
-
--- tabPanels — CookbookBuilder adds COOKBOOK and ACCOLADES entries
-local tabPanels = {}
-local tabButtons = {}
-
-local TABS = {
-	{id="RULES",       label="📜 Rules",       color=C.red,                          order=1},
-	{id="COOKBOOK",    label="📖 Cookbook",     color=Color3.fromRGB(65,48,128),      order=2},
-	{id="PREFERENCES", label="😋 Preferences",  color=Color3.fromRGB(46,140,60),      order=3},
-	{id="ACCOLADES",   label="🏅 Accolades",    color=Color3.fromRGB(180,140,50),     order=4},
-	{id="MATCH",       label="📋 Match",        color=Color3.fromRGB(50,70,100),      order=5},
-}
-
-local function switchTab(tabId)
-	activeTab = tabId
-	for _, child in ipairs(ContentArea:GetChildren()) do
-		if child:IsA("Frame") then child.Visible=false end
-	end
-	local pnl = tabPanels[tabId]
-	if pnl then pnl.Visible=true end
-	for _, t in ipairs(TABS) do
-		local btn = tabButtons[t.id]
-		if not btn then continue end
-		if t.id==tabId then
-			btn.BackgroundColor3=t.color
-			btn.TextColor3=Color3.fromRGB(253,248,240)
-		else
-			btn.BackgroundColor3=Color3.fromRGB(30,28,44)
-			btn.TextColor3=Color3.fromRGB(105,100,135)
-		end
-	end
-end
-
-for _, t in ipairs(TABS) do
-	local btn=Instance.new("TextButton",TabBar)
-	btn.Name=t.id.."Tab"; btn.LayoutOrder=t.order
-	btn.Size=UDim2.new(0.2,-2,0,TAB_H-4)
-	btn.BackgroundColor3=Color3.fromRGB(30,28,44)
-	btn.BorderSizePixel=0; btn.Font=Enum.Font.GothamBold
-	btn.TextSize=13; btn.TextColor3=Color3.fromRGB(105,100,135)
-	btn.Text=t.label; btn.AutoButtonColor=false; btn.ZIndex=11
-	corner(btn,8); tabButtons[t.id]=btn
-	local tId=t.id
-	btn.MouseButton1Click:Connect(function() switchTab(tId) end)
-end
-
--- Placeholder panels for CookbookBuilder
-local function makePlaceholder(name, tabId)
-	local f=Instance.new("Frame",ContentArea)
-	f.Name=name; f.Size=UDim2.new(1,0,1,0)
-	f.BackgroundTransparency=1; f.Visible=false; f.ZIndex=9
-	tabPanels[tabId]=f; return f
-end
-makePlaceholder("CookPanel","COOKBOOK")
-makePlaceholder("AccoladesPanel","ACCOLADES")
-
--- ============================================================
--- OPEN / CLOSE
--- ============================================================
-
-local function closeGuide()
-	isOpen=false
-	TweenService:Create(Overlay,TweenInfo.new(0.18),
-		{BackgroundTransparency=1}):Play()
-	TweenService:Create(Panel,
-		TweenInfo.new(0.22,Enum.EasingStyle.Back,Enum.EasingDirection.In),
-		{Position=UDim2.new(0.5,0,0,PANEL_TOP+10)}):Play()
-	task.wait(0.24)
-	if not isOpen then Overlay.Visible=false end
-end
-
-local function openGuide(tabId)
-	isOpen=true
-	Overlay.Visible=true
-	Overlay.BackgroundTransparency=0.6
-	Panel.Position=UDim2.new(0.5,0,0,PANEL_TOP+10)
-	TweenService:Create(Overlay,TweenInfo.new(0.18),
-		{BackgroundTransparency=0.25}):Play()
-	TweenService:Create(Panel,
-		TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
-		{Position=UDim2.new(0.5,0,0,PANEL_TOP)}):Play()
-	switchTab(tabId or activeTab or "PREFERENCES")
-end
-
-CloseBtn.MouseButton1Click:Connect(function() closeGuide() end)
-
--- Escape closes
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode==Enum.KeyCode.Escape and isOpen then
-		closeGuide()
-	end
-end)
-
--- Expose to _G.Chompers
-_G.Chompers.OpenStoreGuide  = openGuide
-_G.Chompers.CloseStoreGuide = closeGuide
-_G.Chompers.IsStoreGuideOpen = function() return isOpen end
-_G.Chompers.RefreshBillboard = updateBillboard
-
--- ============================================================
--- PREFERENCES TAB
--- ============================================================
-
-local PrefPanel=Instance.new("Frame",ContentArea)
-PrefPanel.Name="PrefPanel"; PrefPanel.Size=UDim2.new(1,0,1,0)
-PrefPanel.BackgroundTransparency=1; PrefPanel.Visible=false; PrefPanel.ZIndex=9
-tabPanels["PREFERENCES"]=PrefPanel
-
--- Lock overlay (shown when gatheringStarted=true)
-local PrefLockOverlay=Instance.new("Frame",PrefPanel)
-PrefLockOverlay.Name="PrefLockOverlay"
-PrefLockOverlay.Size=UDim2.new(1,0,1,0)
-PrefLockOverlay.BackgroundColor3=Color3.fromRGB(8,6,16)
-PrefLockOverlay.BackgroundTransparency=0.35
-PrefLockOverlay.BorderSizePixel=0; PrefLockOverlay.ZIndex=50
-PrefLockOverlay.Visible=false; corner(PrefLockOverlay,12)
-mkLabel(PrefLockOverlay,"🔒 Preferences Locked\nYou can view them but can't\nchange allergy or favourite\nduring a match.",
-	Enum.Font.GothamBold,20,C.white,Enum.TextXAlignment.Center,
-	UDim2.new(0.1,0,0.25,0),UDim2.new(0.8,0,0.5,0)).TextWrapped=true
-
-local PAD = 16
-
--- Cart selection
-mkLabel(PrefPanel,"Choose your container",
-	Enum.Font.GothamMedium,17,C.dim,
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,10),UDim2.new(1,-PAD*2,0,22))
-
-local CartRow=Instance.new("Frame",PrefPanel)
-CartRow.Size=UDim2.new(1,-PAD*2,0,64)
-CartRow.Position=UDim2.new(0,PAD,0,34)
-CartRow.BackgroundTransparency=1
-
-local function mkCartBtn(name,text,xPos,selected)
-	local b=Instance.new("TextButton",CartRow)
-	b.Name=name; b.Size=UDim2.new(0.485,0,1,0)
-	b.Position=UDim2.new(xPos,0,0,0)
-	b.BackgroundColor3=selected and C.red or Color3.fromRGB(32,30,46)
-	b.BorderSizePixel=0; b.Font=Enum.Font.GothamBold; b.TextSize=17
-	b.TextColor3=selected and Color3.fromRGB(253,248,240) or Color3.fromRGB(82,80,105)
-	b.Text=text; b.AutoButtonColor=false; b.ZIndex=10; corner(b,10); return b
-end
-local BasketBtn = mkCartBtn("BasketBtn","🧺 Basket — 35wt · +5% spd",0,true)
-local CartBtn   = mkCartBtn("CartBtn",  "🛒 Cart   — 70wt · −15% spd",0.515,false)
-
-local function selectCart(choice)
-	if gatheringStarted and Selections.confirmed then return end
-	Selections.cart=choice
-	if choice=="basket" then
-		BasketBtn.BackgroundColor3=C.red
-		BasketBtn.TextColor3=Color3.fromRGB(253,248,240)
-		CartBtn.BackgroundColor3=Color3.fromRGB(32,30,46)
-		CartBtn.TextColor3=Color3.fromRGB(82,80,105)
-	else
-		CartBtn.BackgroundColor3=C.red
-		CartBtn.TextColor3=Color3.fromRGB(253,248,240)
-		BasketBtn.BackgroundColor3=Color3.fromRGB(32,30,46)
-		BasketBtn.TextColor3=Color3.fromRGB(82,80,105)
-	end
-	_G.Chompers.SetContainerType(choice=="basket" and "Basket" or "Cart")
-	if Remotes then
-		local r=Remotes:FindFirstChild("PlayerSelectCart")
-		if r then r:FireServer(choice) end
-	end
-end
-
-BasketBtn.MouseButton1Click:Connect(function() selectCart("basket") end)
-CartBtn.MouseButton1Click:Connect(function() selectCart("cart") end)
-selectCart("basket")
-
--- Divider
-local div=Instance.new("Frame",PrefPanel)
-div.Size=UDim2.new(1,-PAD*2,0,1); div.Position=UDim2.new(0,PAD,0,108)
-div.BackgroundColor3=Color3.fromRGB(40,38,54); div.BorderSizePixel=0
-
--- Allergy + Favourite headers
-local alHY=118; local descY=alHY+30; local selY=descY+56; local scrollY=selY+24
-
-mkLabel(PrefPanel,"⚠ Your Allergy",
-	Enum.Font.GothamBold,22,Color3.fromRGB(226,75,74),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
-
-local aDesc=mkLabel(PrefPanel,
-	"Your kryptonite. Get hit by it → ×1.75 CL. Anything else → ×0.75.",
-	Enum.Font.Gotham,15,Color3.fromRGB(215,185,185),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,descY),UDim2.new(0.5,-PAD-4,0,54))
-aDesc.TextWrapped=true; aDesc.LineHeight=1.4
-
-mkLabel(PrefPanel,"⭐ Favourite Food",
-	Enum.Font.GothamBold,22,C.gold,
-	Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
-
-local fDesc=mkLabel(PrefPanel,
-	"Self-consume your fav → Craving ×1.5. Enemy hits you with it → ×2 FL spike.",
-	Enum.Font.Gotham,15,Color3.fromRGB(215,205,175),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,descY),UDim2.new(0.5,-PAD-4,0,54))
-fDesc.TextWrapped=true; fDesc.LineHeight=1.4
-
-local AllergySelected=mkLabel(PrefPanel,"None selected",
-	Enum.Font.GothamMedium,14,Color3.fromRGB(210,78,78),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,20))
-
--- FavSelected — CookbookBuilder finds this by Name
-local FavSelected=mkLabel(PrefPanel,"None selected",
-	Enum.Font.GothamMedium,14,Color3.fromRGB(210,148,42),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,20))
-FavSelected.Name="FavSelected"
-
--- Allergy scroll
-local AllergyScroll=mkScroll(PrefPanel,"AllergyScroll",
-	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),
-	UDim2.new(0,PAD,0,scrollY))
-
--- FavouriteScroll — CookbookBuilder populates this
-local FavouriteScroll=mkScroll(PrefPanel,"FavouriteScroll",
-	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),
-	UDim2.new(0.5,PAD/2,0,scrollY),C.gold)
-
--- Confirm button
-local ConfirmBtn=Instance.new("TextButton",PrefPanel)
-ConfirmBtn.Name="ConfirmButton"
-ConfirmBtn.Size=UDim2.new(1,-PAD*2,0,50)
-ConfirmBtn.Position=UDim2.new(0,PAD,1,-58)
-ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66)
-ConfirmBtn.BorderSizePixel=0; ConfirmBtn.Font=Enum.Font.GothamBold
-ConfirmBtn.TextSize=19; ConfirmBtn.TextColor3=Color3.fromRGB(220,255,224)
-ConfirmBtn.Text="✓ Ready to Shop!"; ConfirmBtn.AutoButtonColor=false; ConfirmBtn.ZIndex=10
-corner(ConfirmBtn,10)
-
--- Allergy buttons
-local selectedAllergyBtn=nil
-for _, atype in ipairs(ALLERGY_TYPES) do
-	local btn=Instance.new("TextButton",AllergyScroll)
-	btn.Name=atype.name; btn.Size=UDim2.new(1,0,0,70)
-	btn.BackgroundColor3=Color3.fromRGB(28,26,42)
-	btn.BorderSizePixel=0; btn.AutoButtonColor=false; btn.ZIndex=10
-	corner(btn,10)
-	local accent=Instance.new("Frame",btn)
-	accent.Size=UDim2.new(0,5,1,-10); accent.Position=UDim2.new(0,5,0,5)
-	accent.BackgroundColor3=atype.color; accent.BorderSizePixel=0; corner(accent,2)
-	mkLabel(btn,atype.icon.." "..atype.name,
-		Enum.Font.GothamBold,22,atype.color,
-		Enum.TextXAlignment.Left,
-		UDim2.new(0,16,0,0),UDim2.new(1,-20,1,0))
-
-	btn.MouseButton1Click:Connect(function()
-		if gatheringStarted then return end
-		if Selections.allergy==atype.name then
-			Selections.allergy=nil
-			AllergySelected.Text="None selected"
-			btn.BackgroundColor3=Color3.fromRGB(28,26,42)
-			selectedAllergyBtn=nil
-		else
-			if selectedAllergyBtn then
-				selectedAllergyBtn.BackgroundColor3=Color3.fromRGB(28,26,42)
-			end
-			Selections.allergy=atype.name
-			AllergySelected.Text="✓ "..atype.name
-			btn.BackgroundColor3=Color3.fromRGB(55,18,18)
-			selectedAllergyBtn=btn
-		end
-		if Remotes then
-			local r=Remotes:FindFirstChild("PlayerSelectAllergy")
-			if r then r:FireServer(Selections.allergy) end
-		end
-		updateBillboard()
-	end)
-end
-
-ConfirmBtn.MouseButton1Click:Connect(function()
-	if Selections.confirmed then
-		if not gatheringStarted then
-			Selections.confirmed=false
-			ConfirmBtn.Text="✓ Ready to Shop!"
-			ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66)
-		end
-		return
-	end
-	Selections.confirmed=true
-	_G.Chompers.HideDot()
-	ConfirmBtn.Text="Locked In!"
-	ConfirmBtn.BackgroundColor3=Color3.fromRGB(30,110,46)
-	task.wait(0.6); closeGuide()
-end)
-
--- ============================================================
--- RULES TAB
--- ============================================================
-
-local RulesPanel=Instance.new("Frame",ContentArea)
-RulesPanel.Name="RulesPanel"; RulesPanel.Size=UDim2.new(1,0,1,0)
-RulesPanel.BackgroundTransparency=1; RulesPanel.Visible=false; RulesPanel.ZIndex=9
-tabPanels["RULES"]=RulesPanel
-
-local rulesScroll=Instance.new("ScrollingFrame",RulesPanel)
-rulesScroll.Size=UDim2.new(1,-24,1,-12); rulesScroll.Position=UDim2.new(0,12,0,6)
-rulesScroll.BackgroundTransparency=1; rulesScroll.BorderSizePixel=0
-rulesScroll.ScrollBarThickness=7; rulesScroll.ScrollBarImageColor3=C.red
-rulesScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
-rulesScroll.CanvasSize=UDim2.new(0,0,0,0); rulesScroll.ZIndex=10
-local rLL=Instance.new("UIListLayout",rulesScroll)
-rLL.SortOrder=Enum.SortOrder.LayoutOrder; rLL.Padding=UDim.new(0,10)
-local rPad=Instance.new("UIPadding",rulesScroll)
-rPad.PaddingTop=UDim.new(0,10);rPad.PaddingBottom=UDim.new(0,10)
-rPad.PaddingLeft=UDim.new(0,4);rPad.PaddingRight=UDim.new(0,4)
-
-local function addRuleSection(title, color, rules)
-	local hdr=Instance.new("TextLabel",rulesScroll)
-	hdr.Size=UDim2.new(1,0,0,36); hdr.BackgroundTransparency=1
-	hdr.Text=title; hdr.Font=Enum.Font.GothamBold; hdr.TextSize=22
-	hdr.TextColor3=color; hdr.TextXAlignment=Enum.TextXAlignment.Left; hdr.ZIndex=11
-	for _, rule in ipairs(rules) do
-		local rf=Instance.new("Frame",rulesScroll)
-		rf.Size=UDim2.new(1,0,0,0); rf.AutomaticSize=Enum.AutomaticSize.Y
-		rf.BackgroundColor3=Color3.fromRGB(26,24,40); rf.BorderSizePixel=0; rf.ZIndex=11
-		corner(rf,10)
-		local rfp=Instance.new("UIPadding",rf)
-		rfp.PaddingTop=UDim.new(0,12);rfp.PaddingBottom=UDim.new(0,12)
-		rfp.PaddingLeft=UDim.new(0,16);rfp.PaddingRight=UDim.new(0,16)
-		local dot=Instance.new("Frame",rf)
-		dot.Size=UDim2.new(0,6,0,6);dot.Position=UDim2.new(0,-10,0,12)
-		dot.BackgroundColor3=color;dot.BorderSizePixel=0;dot.ZIndex=12;corner(dot,99)
-		local rl=Instance.new("TextLabel",rf)
-		rl.Size=UDim2.new(1,0,0,0);rl.AutomaticSize=Enum.AutomaticSize.Y
-		rl.BackgroundTransparency=1;rl.Text=rule
-		rl.Font=Enum.Font.Gotham;rl.TextSize=18
-		rl.TextColor3=Color3.fromRGB(215,212,230)
-		rl.TextXAlignment=Enum.TextXAlignment.Left
-		rl.TextYAlignment=Enum.TextYAlignment.Top
-		rl.TextWrapped=true;rl.LineHeight=1.4;rl.ZIndex=12
-	end
-end
-
-addRuleSection("💰 Economy",C.gold,{
-	"Start with $15 and 1 napkin. Ingredients must be PAID before cooking or throwing.",
-	"Cash ($1–25) and napkins spawn outdoors — car park, back/side alleys only.",
-})
-addRuleSection("⚖️ Weight",Color3.fromRGB(200,160,80),{
-	"🧺 Basket: 35wt limit, +5% speed.  🛒 Cart: 70wt limit, −15% speed.",
-	"Every +10wt over your limit: −10% speed penalty.",
-})
-addRuleSection("🧼 Cleanliness (CL) — Your HP",Color3.fromRGB(65,185,235),{
-	"CL = your HP (0–100). Rises from food hits. Non-allergen ×0.75, allergen ×1.75, oil+fire ×1.6.",
-	"At 100%: FORCED bathroom (costs 1 break, drops ALL items). 1.5s grace window after a 40+ CL hit.",
-	"🧻 NAPKIN: −25 CL, 2s use time, 20s cooldown. Recharges to ×1 after cooldown.",
-})
-addRuleSection("🍔 Fullness (FL) — Self-Risk",Color3.fromRGB(235,155,35),{
-	"FL rises from food hits (+2 raw / +2 cooked), eating buff food, or trash pickup. Decays over time.",
-	"At 100%: FORCED bathroom. 80%+: bathroom access unlocked.",
-})
-addRuleSection("🚽 Bathroom Breaks",Color3.fromRGB(100,180,255),{
-	"3 breaks per match. 🚿 Sink = CL reset (1 break). 🚽 Toilet = FL reset (1 break).",
-	"At 0 breaks: ELIMINATED → spectator mode.",
-})
-addRuleSection("⚠️ Allergy & ⭐ Favourite",Color3.fromRGB(226,75,74),{
-	"Set BEFORE match starts — locked once Gathering begins.",
-	"Allergen hits: ×1.75 CL. Favourite (self-consume): Craving ×1.5. Enemy hits you with fav: ×2 FL spike.",
-})
-addRuleSection("🍳 Cooking",Color3.fromRGB(85,210,130),{
-	"Bring PAID ingredients to a Prep Table then Stovetop. Cook depth bonus: 2 ingr=+5%, 3=+10%, 4+=+15% CL.",
-	"Perfect temp=+10% bonus, burned=−20%. One active mark at a time (Tomato+15%, Soy/BlackGarlic+20%).",
-})
-addRuleSection("🤝 Alliance",Color3.fromRGB(100,210,255),{
-	"Friendship Bands ($12) from Trade Hub kiosk. Press E near player to offer. Consumed regardless.",
-	"Food Fight start: 15s reconfirm window or alliance breaks publicly. Friendly fire always ON.",
-})
-addRuleSection("🏁 End-Game",C.gold,{
-	"Last allied pair: 30s vote — Fight or Leave Together. Default = Fight. Together = 70% medals.",
-	"Most CL damage dealt wins. Last standing = +15 bonus medals.",
-})
-
--- ============================================================
--- MATCH TAB (Scoreboard / Keybindings / Volume sub-tabs)
--- ============================================================
-
-local MatchPanel=Instance.new("Frame",ContentArea)
-MatchPanel.Name="MatchPanel"; MatchPanel.Size=UDim2.new(1,0,1,0)
-MatchPanel.BackgroundTransparency=1; MatchPanel.Visible=false; MatchPanel.ZIndex=9
-tabPanels["MATCH"]=MatchPanel
-
--- Sub-tab bar
-local MSB_H=38
-local mSubBar=Instance.new("Frame",MatchPanel)
-mSubBar.Size=UDim2.new(1,0,0,MSB_H)
-mSubBar.BackgroundColor3=Color3.fromRGB(20,18,32); mSubBar.BorderSizePixel=0; mSubBar.ZIndex=10
-local msLL=Instance.new("UIListLayout",mSubBar)
-msLL.FillDirection=Enum.FillDirection.Horizontal
-msLL.HorizontalAlignment=Enum.HorizontalAlignment.Left
-msLL.VerticalAlignment=Enum.VerticalAlignment.Center; msLL.Padding=UDim.new(0,2)
-
-local mContent=Instance.new("Frame",MatchPanel)
-mContent.Size=UDim2.new(1,0,1,-MSB_H); mContent.Position=UDim2.new(0,0,0,MSB_H)
-mContent.BackgroundTransparency=1; mContent.ZIndex=9
-
-local MATCH_SUBTABS={
-	{id="KEYBINDINGS",label="⌨️ Keybindings",order=1},
-	{id="VOLUME",     label="🔊 Volume",      order=2},
-}
-local mSubBtns={}; local mSubPanels={}
-
-local function switchMatchSub(subId)
-	for _,st in ipairs(MATCH_SUBTABS) do
-		local btn=mSubBtns[st.id]; local pnl=mSubPanels[st.id]
-		if st.id==subId then
-			btn.BackgroundColor3=Color3.fromRGB(50,70,100)
-			btn.TextColor3=Color3.fromRGB(160,190,230)
-			if pnl then pnl.Visible=true end
-		else
-			btn.BackgroundColor3=Color3.fromRGB(26,24,40)
-			btn.TextColor3=Color3.fromRGB(105,100,135)
-			if pnl then pnl.Visible=false end
-		end
-	end
-end
-
-for _,st in ipairs(MATCH_SUBTABS) do
-	local btn=Instance.new("TextButton",mSubBar)
-	btn.Name=st.id.."Sub"; btn.LayoutOrder=st.order
-	btn.Size=UDim2.new(0.25,-2,0,MSB_H-4)
-	btn.BackgroundColor3=Color3.fromRGB(26,24,40); btn.BorderSizePixel=0
-	btn.Font=Enum.Font.GothamBold; btn.TextSize=13
-	btn.TextColor3=Color3.fromRGB(105,100,135)
-	btn.Text=st.label; btn.AutoButtonColor=false; btn.ZIndex=11
-	corner(btn,6); mSubBtns[st.id]=btn
-	local sId=st.id
-	btn.MouseButton1Click:Connect(function() switchMatchSub(sId) end)
-end
-
--- Keybindings sub-panel
-local KbPanel=Instance.new("Frame",mContent)
-KbPanel.Size=UDim2.new(1,0,1,0); KbPanel.BackgroundTransparency=1
-KbPanel.Visible=true; KbPanel.ZIndex=9; mSubPanels["KEYBINDINGS"]=KbPanel
-
-local kbScroll=Instance.new("ScrollingFrame",KbPanel)
-kbScroll.Size=UDim2.new(1,-24,1,-8); kbScroll.Position=UDim2.new(0,12,0,4)
-kbScroll.BackgroundTransparency=1; kbScroll.BorderSizePixel=0
-kbScroll.ScrollBarThickness=5; kbScroll.ScrollBarImageColor3=C.stroke
-kbScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; kbScroll.CanvasSize=UDim2.new(0,0,0,0)
-kbScroll.ZIndex=10
-local kbLL=Instance.new("UIListLayout",kbScroll)
-kbLL.SortOrder=Enum.SortOrder.LayoutOrder; kbLL.Padding=UDim.new(0,4)
-local kbPad=Instance.new("UIPadding",kbScroll)
-kbPad.PaddingTop=UDim.new(0,8);kbPad.PaddingBottom=UDim.new(0,8)
-
-local KEYBINDS={
-	{"1–9, 0",    "Select hotbar slot 1–10"},
-	{"I",         "Toggle Inventory HUD"},
-	{"G",         "Toggle Store Guide"},
-	{"E",         "Pick up / Interact"},
-	{"Q",         "Drop selected item"},
-	{"Click",     "Throw (quick, 40% power)"},
-	{"Hold+Release","Throw (charged, up to 100%)"},
-	{"Tab",       "Hold for Scoreboard"},
-	{"Escape",    "Close any open HUD"},
-}
-for i, kb in ipairs(KEYBINDS) do
-	local row=Instance.new("Frame",kbScroll)
-	row.Size=UDim2.new(1,0,0,36); row.LayoutOrder=i
-	row.BackgroundColor3=i%2==0 and Color3.fromRGB(26,24,38) or Color3.fromRGB(22,20,34)
-	row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
-	mkLabel(row,kb[1],Enum.Font.GothamBlack,14,C.white,
-		Enum.TextXAlignment.Left,UDim2.new(0,12,0,0),UDim2.new(0.3,0,1,0)).ZIndex=12
-	mkLabel(row,kb[2],Enum.Font.Gotham,14,C.dim,
-		Enum.TextXAlignment.Left,UDim2.new(0.3,0,0,0),UDim2.new(0.7,-12,1,0)).ZIndex=12
-end
-
--- Volume sub-panel
-local VolPanel=Instance.new("Frame",mContent)
-VolPanel.Size=UDim2.new(1,0,1,0); VolPanel.BackgroundTransparency=1
-VolPanel.Visible=false; VolPanel.ZIndex=9; mSubPanels["VOLUME"]=VolPanel
-mkLabel(VolPanel,"🔊 Volume controls coming soon.",
-	Enum.Font.Gotham,16,C.dim,Enum.TextXAlignment.Center,
-	UDim2.new(0.1,0,0.35,0),UDim2.new(0.8,0,0.3,0))
-
-switchMatchSub("KEYBINDINGS")
-
--- Sync MATCH tab (PrelobbyGuiBuilder used "SETTINGS" before — keep both)
-tabPanels["SETTINGS"] = MatchPanel
-
--- ============================================================
--- PHASE LISTENER — lock Preferences at Gathering
--- ============================================================
-
-local PhaseRemote = Remotes and Remotes:FindFirstChild("PhaseChanged")
-if PhaseRemote then
-	PhaseRemote.OnClientEvent:Connect(function(phase)
-		if phase == "Gathering" or phase == "Cooking"
-		or phase == "FoodFight" then
-			gatheringStarted = true
-			PrefLockOverlay.Visible = true
-			-- Switch away from Preferences if currently open
-			if isOpen and activeTab == "PREFERENCES" then
-				switchTab("RULES")
-			end
-		elseif phase == "Prelobby" then
-			gatheringStarted = false
-			PrefLockOverlay.Visible = false
-			Selections.confirmed = false
-			ConfirmBtn.Text = "✓ Ready to Shop!"
-			ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
-		end
-	end)
-end
-
--- ============================================================
--- INITIAL STATE
--- ============================================================
-
-switchTab("PREFERENCES")
-
-print("StoreGuide loaded!")
+```
+---
+End of Part 29 — Movement Rules
+---
+PART 30 — DOOR SYSTEM (LOCKED)
+> Confirmed during map finalization session, March 2026.
+> All doors placed manually by designer in workspace.Map.Doors.
+> DoorSystem script reads attributes from each door part — no hardcoded positions.
+---
+Door Categories
+Category	Material	Transparency	Color	Behavior
+Main entrances (Front, Back, Sides)	Glass	0.3	Light Royal blue	AutoSliding — closed prelobby, open on GatheringPhase, stay open
+Bathroom entrance doors	SmoothPlastic	0 (solid)	Oyster	Hinged — open on approach, close behind player
+Kitchen one-way exit doors (WC_BL/BR)	SmoothPlastic	0 (solid)	Oyster	Hinged — one-way only, exit bathroom → kitchen
+Butcher doors (Stockroom ↔ Kitchen)	SmoothPlastic	0.4 (hazy)	White	TwoWaySwing — push open from either side, auto-close
+Fire exit doors (Stockroom sides)	Metal	0 (solid)	Dark grey metallic	AutoSliding — closed prelobby, open on GatheringPhase, stay open
+---
+Door Locations
+Main Entrance Doors
+Name	Position	Size	Notes
+Door_Front_PanelL	X=−25, Z=−200	50×12×2	Left panel, slides −X
+Door_Front_PanelR	X=+25, Z=−200	50×12×2	Right panel, slides +X
+Door_Back_PanelL	X=−15, Z=300	30×12×2	Left panel
+Door_Back_PanelR	X=+15, Z=300	30×12×2	Right panel
+Door_SideLeft_Panel	X=300, Z=235	2×12×50	Slides along Z
+Door_SideRight_Panel	X=−300, Z=235	2×12×50	Mirror
+Bathroom Entrance Doors
+Name	Approx Position	Size
+Door_WC_FL_Panel	X=260, Z=−120	14×12×2
+Door_WC_FR_Panel	X=−260, Z=−120	14×12×2
+Door_WC_BL_Panel	X=262, Z=152	14×12×2
+Door_WC_BR_Panel	X=−258, Z=152	14×12×2
+Kitchen One-Way Exit Doors
+Name	Approx Position	Notes
+Door_WC_BL_KitchenExit	X=222, Z=208	WC_BL inner wall
+Door_WC_BR_KitchenExit	X=−218, Z=208	WC_BR inner wall
+Butcher Doors (Z=230, Stockroom ↔ Kitchen)
+Name	X	Size	Notes
+Door_Butcher_Centre_L	−15	28×12×2	4-stud gap at centre
+Door_Butcher_Centre_R	+15	28×12×2	
+Door_Butcher_SideLeft	+260	8×12×2	Left stockwall gap
+Door_Butcher_SideRight	−260	8×12×2	Right stockwall gap
+Fire Exit Doors (Stockroom sides, Z=230)
+Name	X	Size
+Door_StockL_PanelL	+242	14×12×2
+Door_StockR_PanelR	−242	14×12×2
+---
+Door Attribute Schema
+All doors carry these attributes. DoorSystem reads them at runtime — no hardcoded door logic.
+Attribute	Type	Values	Meaning
+IsOpen	bool	false (default)	Current open/closed state
+IsAnimated	bool	true	DoorSystem will tween this panel
+DoorType	string	AutoSliding / Hinged / ButcherSwing	Animation style
+OpenOnGathering	bool	true/false	Opens when GatheringPhase fires
+OpenOnApproach	bool	true/false	Opens on player proximity trigger
+StaysOpen	bool	true/false	Does not auto-close after opening
+OneWayExit	bool	true/false	Only opens from one side (bathroom exits)
+ExitDirection	string	"Kitchen"	Hint for directional check
+TwoWaySwing	bool	true/false	Butcher doors swing from either side
+IsFireExit	bool	true/false	Fire exit classification
+IsButcherDoor	bool	true/false	Butcher swing classification
+---
+DoorSystem Behavior Rules
+Prelobby: All doors with `OpenOnGathering=true` are closed and CanCollide. Glass doors show the store interior through 0.3 transparency — players can see in but not enter.
+GatheringPhase start: All `OpenOnGathering=true` doors tween open simultaneously. Main entrances and fire exits stay open for the rest of the match.
+Bathroom doors: Always accessible from gathering phase onward. Hinged, proximity-triggered, auto-close after player passes.
+Kitchen one-way exits: `OneWayExit=true` — DoorSystem checks which side the player is on. Only opens if player is in the bathroom zone (Z > 152 side, within bathroom XZ bounds). Cannot be pushed open from kitchen side.
+Butcher doors: `TwoWaySwing=true` — swing open from either side on approach. Auto-close after player clears. Hazy white plastic — players can see silhouettes through them.
+Fire exits: Open on GatheringPhase, stay open. Metal, solid, impassable during prelobby.
+---
+End of Part 30 — Door System
+---
+PART 31 — SCALE INTERACTION (LOCKED)
+> Confirmed during map finalization session, March 2026.
+---
+Overview
+Scales are placed at three locations in the store:
+Location	Name	Position
+Checkout desk	DeskScale	(−6, 2.5, −139)
+Bakery wall	BakeryScale_Front	(292, 2.5, −57.5)
+Produce wall	ProduceWallScale_Front	(−292, 2.5, −57.5)
+---
+Interaction Behaviour
+Trigger: Proximity-based (same system as all other interactables). No lock-in. Player walks near, prompt appears, press interact.
+Duration: Instant — no animation delay. Pop-up appears immediately.
+Cooldown: None. Players can check as often as they want.
+Scope: Private to the interacting player only. No server announcement, no other players notified.
+---
+What It Displays
+The scale adds up the total cost of all unpurchased ingredients currently in the player's cart or basket and displays the result in a small pop-up within the announcements window:
+```
+🧾 Cart total: $47
+   Tomato ×2     $4
+   Wagyu         $18
+   Truffle       $25
+   [Pay at Checkout →]
+```
+Line items shown per ingredient stack (not per individual unit).
+If the cart is empty or all ingredients are already paid: `Your cart is empty.`
+If the player has no cart or basket equipped: `You need a cart or basket to use this.`
+The `[Pay at Checkout →]` line is display-only — it is not a button and does not trigger checkout.
+---
+Design Intent
+Scales give players a quick cost preview before committing to checkout. This is especially useful when:
+A player picked up several expensive items and wants to confirm they have enough cash.
+A player is deciding whether to drop a low-priority ingredient to afford a key one.
+A player near the Bakery or Produce sections doesn't want to walk all the way to checkout just to check.
+The Bakery and Produce scales encourage players to stay deeper in the store longer rather than clustering near checkout, which improves map flow.
+---
+Napkin Cooldown in Bathrooms — NOT RESET (LOCKED)
+> Confirmed same session.
+The napkin grace window (1.5s after 40+ CL hit) does not reset when a player enters the bathroom.
+Rationale: The bathroom already provides the strongest recovery in the game — CL reset to 0, FL reset to 0, full immunity while inside, 1.5s exit grace window. Adding a napkin cooldown reset on top would make bathroom visits too dominant as a reactive tool. Players would take a hit, burn their napkin grace, then immediately run to the bathroom for a full reset including a refreshed napkin. The napkin runs on its own independent timer regardless of bathroom state.
+---
+End of Part 31 — Scale Interaction + Napkin Ruling
+---
+PART 32 — COOKING SYSTEM DETAIL (LOCKED)
+> Confirmed during cooking design session, March 2026.
+> All values simulation-verified against 3-minute Cooking phase + 6-minute Food Fight phase.
+---
+Overview
+Cooking is a two-station process: Prep Table → Stovetop (for hot recipes), or Prep Table only (for cold/assembled recipes). Both stations lock to the active player and are exposed to combat interruption.
+---
+Prep Table — Recipe Assembly Minigame
+Station Lock
+Player approaches → slot locks to them instantly
+Other players see the slot as occupied (visual indicator on prop)
+Slot releases on: player departure, cook completion, or interruption
+Maximum 1 player per slot at all times
+Assembly Flow
+A compact screen-space UI panel opens (centre-right, non-blocking)
+Recipe selector at top: scrollable list filtered to valid recipes from current inventory. Shows name, ingredient list, CL value, and whether it requires a stovetop
+Player selects a recipe → numbered ingredient slots appear below (2, 3, or 4 slots)
+Player places each ingredient in order using the interact key — wrong ingredient flashes the slot red, no penalty beyond lost time
+All slots filled → prep complete
+Speed Bonus
+A speed timer bar runs from the moment the first ingredient is placed
+Fill all slots before the bar empties = +5% CL on final throw (stacks multiplicatively with all other bonuses)
+The speed bonus window is generous — intended to reward focused play, not punish casual play
+On speed success: "Perfect Prep!" visual flourish + audio cue, visible to nearby players
+No mechanical effect beyond the 5% CL multiplier — no cook depth tier change
+Cold / Prep-Only Recipes
+Recipes that don't require a stovetop complete at the prep table
+2-second pickup delay after final slot filled (plating moment), then immediately throwable
+No stovetop step, no burn risk, no tending mechanic
+Cook depth bonus (5/10/15%) does NOT apply to cold recipes — they deal base CL only
+Speed bonus DOES apply to cold recipes
+Cold recipes are intentionally lower damage but higher volume — a legitimate fast-cycle playstyle using cheaper, lower-CL ingredients
+Interruption
+Any single hit of 25+ CL while actively at the prep table drops the cook
+All placed ingredients scatter as individual floor pickups within 10-stud radius
+Slot unlocks immediately
+No partial credit — assembly must restart from scratch
+---
+Stovetop — Ingredient Juggle Minigame
+Station Lock
+Same lock behaviour as prep table
+Player places prepped bundle on stovetop → cook timer begins
+Slot releases on: cook completion, player departure + burn expiry, or interruption
+Cook Timers (by recipe complexity)
+Complexity	Ingredients	Cook Time	Example
+Simple	2	12s	Tomato Soup, Butter Chicken
+Medium	3	20s	Saffron Rice, Callaloo
+Complex	4+	30s	TrufflePasta, MDS
+Vertical slice: flat 30s for all recipes. Tier system activates post-vertical-slice.
+Tending Mechanic (Juggle)
+While at the stovetop: 2–3 floating ingredient icons appear on screen, drifting slowly toward a red outer danger ring
+Player taps interact to nudge icons back toward the safe green centre zone
+Each nudge has a ~1s cooldown — rhythmic, not spam
+Keeping all icons in the green zone at cook completion = +10% CL bonus on the final throw
+Any icon that reaches the red outer ring = that ingredient's CL contribution is halved for this recipe (partial scorch — recoverable if tended back before timer ends)
+Burn System (Leaving the Stovetop)
+Player may leave at any time after placing the bundle
+Icons drift 2× faster while unattended
+Burn window (scaled by complexity):
+Complexity	Burn Window
+Simple (12s cook)	15s after departure
+Medium (20s cook)	22s after departure
+Complex (30s cook)	30s after departure
+Burn window expires → burn modifier applied: recipe CL reduced by ×0.70
+Burned recipe still completes and is throwable — burning is a quality hit, not a total loss
+Returning to the stovetop before burn window expires cancels the burn and resumes normal drift speed
+Interruption
+Player present at stovetop: 25+ CL single hit drops the cook
+Player away from stovetop: 40+ CL single hit drops the cook
+On interruption: bundle and all ingredients scatter as individual floor pickups within 10-stud radius
+Partial cook is lost — no carry-over progress, no partial state
+Slot unlocks immediately
+---
+Full Multiplier Stack (Maximum Theoretical)
+A 4-ingredient stovetop recipe, fast-prepped, fully tended, with no burn:
+Modifier	Value
+Cook depth (4+ ingredients)	×1.15
+Tending bonus (all green at completion)	×1.10
+Speed bonus (fast assembly)	×1.05
+Combined	×1.3283 (≈ ×1.33)
+This requires three simultaneous skill expressions and is the intended skill ceiling for cooking. Allergy, mark, favourite food, and alliance modifiers stack on top of this at throw time per existing rules.
+---
+Phase Simulation (Verified)
+Cooking phase: 180s | Food Fight cooking window: 360s
+Strategy	Cycle Time	Dishes/Phase	Relative CL Output
+Cold spam (2s pickup)	~22s	~8 cooking / ~16 food fight	High volume, base CL only
+Simple stovetop (12s)	~32s	~5 cooking	63% volume × 1.05 depth
+Medium stovetop (20s)	~40s	~4 cooking	55% volume × 1.10 depth
+Complex stovetop (30s)	~50s	~3 cooking	37% volume × 1.15+ depth
+Key finding: Cold recipe spam is NOT a balance problem. It is a legitimate low-risk, low-reward playstyle. The balance is self-correcting through ingredient power — cold recipes use cheaper, lower base-CL ingredients. Stovetop recipes use expensive, high-CL ingredients (Wagyu, Truffle, Saffron). Both strategies are viable with different risk profiles.
+Do not nerf cold recipe pickup time or add penalties to cold dishes. The current design is intentionally balanced.
+---
+Cooking UI Summary
+Element	Location	Visible To
+Recipe selector panel	Screen-space, centre-right	Active player only
+Ingredient slot UI	Screen-space, below recipe selector	Active player only
+Speed timer bar	Screen-space, corner of cooking panel	Active player only
+"Perfect Prep!" flourish	World-space + audio	All nearby players
+Cook progress ring	World-space on stovetop prop	All players
+Juggle icons	Screen-space	Active player only
+Burn countdown	Screen-space, urgent colour	Active player only
+Occupied slot indicator	World-space on prop	All players
+---
+Cooking System Constants (LOCKED)
+Constant	Value
+Prep interrupt threshold	25+ CL single hit
+Stovetop interrupt (present)	25+ CL single hit
+Stovetop interrupt (away)	40+ CL single hit
+Interrupted bundle outcome	Scatter to floor, start over
+Cold recipe pickup delay	2 seconds
+Cook depth bonus (2/3/4+ ing.)	+5% / +10% / +15% CL
+Speed bonus	+5% CL (multiplicative)
+Tending bonus (full green)	+10% CL (multiplicative)
+Burn modifier	×0.70 CL
+Burn window (simple/med/complex)	15s / 22s / 30s
+Scorch (single icon red)	That ingredient's CL contribution ×0.50
+Max theoretical multiplier	×1.33 (depth + tending + speed)
+---
+End of Part 32 — Cooking System Detail
+---
+PART 33 — ZONE SYSTEM RULES (LOCKED)
+> Confirmed during zone audit session, March 2026.
+---
+Zone Priority Rules
+When a player occupies overlapping zones, the following priority order applies:
+WC zones — always win. Bathroom immunity overrides everything.
+Buffer zones — win over their adjacent gameplay zone (Produce/Bakery/Kitchen).
+Kitchen — wins over Produce and Bakery at the deli border (Z≈100–152).
+Produce / Bakery / Aisles / Freezer — peer priority, no overlap between these.
+Checkout zones — win over TradeHub if overlapping.
+CarPark / Stockroom — lowest priority, base fallback.
+The Produce/Bakery overlap with Kitchen at the deli counter border (Z≈100–152, X=±180–300) is intentional. No prep tables or stovetops exist in this overlap area — Kitchen zone logic only fires on cooking station interaction, not on zone entry. No scripting conflict.
+---
+Dumpster Zone Handling
+Dumpsters (`Dumpster_1_Body`, `Dumpster_2_Body`) are located at Z=315, outside the store in the back area. They are intentionally zone-less — the loot and interaction scripts find them by attribute (`IsTrashBin=true`), not by zone membership.
+Dumpster trash mechanic (LOCKED):
+Dumpsters are shared-inventory containers (`SharedInventory=true`)
+Any player can deposit or retrieve items
+Picking up from a dumpster triggers a CL hit (`CLOnPickup=true`) — reward for dumpster diving is risk
+Max 8 items per dumpster (`MaxItems=8`)
+Dumpsters do NOT reset between phases — items persist until picked up or match ends
+Dumpster contents are visible to all players (shared inventory = public knowledge)
+---
+Deli Counter Ingredient Spawns (LOCKED)
+The deli counter (Z=100, store-facing side) is a mid-tier loot node that players can access from the store floor without entering the Kitchen zone.
+Design rules:
+Ingredients spawn on the deli counter surface facing Z<100 (store side)
+Players standing at Z<100 can pick up deli counter items without triggering Kitchen zone logic
+The Kitchen zone boundary is Z=100 — crossing into Z>100 enters Kitchen territory
+Deli counter spawns should be mid-tier ingredients: fresh proteins, dairy, prepared items
+This creates a natural loot gradient: Aisles/Freezer (cheap) → Deli counter (mid) → Kitchen/Stockroom (expensive/rare)
+Deli counter spawn density should be lower than main floor — it is a convenience node, not a primary loot zone
+---
+Zone Name Correction
+`Zone_Checkout_ Registers` (with space) must be renamed to `Zone_Checkout_Registers` (no space). The space causes zone lookups to fail silently in scripts.
+---
+End of Part 33 — Zone System Rules
+---
+PART 34 — BALANCE PATCH v1 (LOCKED)
+> Applied after external systems audit, March 2026.
+> Six targeted tweaks. No systems redesigned.
+---
+Changes Applied
+1. Fullness Per Hit — Differentiated by Recipe Type
+Old: +2 FL per hit (flat)
+New: +1 FL per raw/cold recipe hit | +2 FL per cooked recipe hit
+Rationale: Prevents fullness bars from escalating too fast under cold-recipe spam, while preserving the meaningful pressure of cooked recipes. Rewards cooking without punishing the cold-dish playstyle.
+---
+2. Minimum Movement Speed — Floor Clamped at 35%
+New rule: Player movement speed can never fall below 35% of base speed regardless of stacking penalties.
+Stacking scenario that triggered this: overweight (−25%) + dual 100% bars (−30% + −30%) = −85%, leaving players at ~15% speed which is effectively immobilised. 35% floor ensures players can always meaningfully reposition.
+Applies to: CharacterController speed calculation. Clamp is applied after all modifiers are summed.
+---
+3. Dropped Item Protection — 1 Second Owner Lock on 100% Drop
+New rule: When a player triggers the 100% state and drops their inventory, all dropped items are owner-locked for 1 second. Other players cannot pick them up during this window. After 1 second, items are free-for-all.
+Rationale: Prevents instant gear transfer on 100% state which creates a snowball loop where the strongest player gets richer by targeting weakened players. The 1-second window is short enough to feel fair to attackers.
+Implementation: Dropped parts get `OwnerLock=true` and `OwnerPlayer=userId` attributes on spawn. IngredientPickupServer checks these before allowing pickup.
+---
+4. Poke Deluxe CL Reduction
+Old: 49 CL
+New: 44 CL
+Rationale: At 49 CL, Poke Deluxe (prep-only, raw) outperformed Lobster Bisque (45 CL, prep+stove) and Saffron Rice (44 CL, prep+stove). A prep-only recipe should not exceed or match stovetop equivalents in damage output. 44 CL keeps it competitive as the strongest cold recipe while maintaining the stovetop advantage.
+---
+5. Throw Cooldown Increased
+Old: 0.4s
+New: 0.8s
+Rationale: At 0.4s cooldown, theoretical cold-recipe output reaches ~210 CL/minute of sustained throw DPS, which is too high. 0.8s halves the effective throw rate, makes combat more readable for all players, and preserves the cooking advantage without nerfing cold recipes directly.
+Note: The rarity-scaled throw cooldown table (Common 0.8s base + wt modifier, Uncommon 0.4s etc.) remains unchanged — the 0.8s is the new Common baseline.
+---
+6. Maximum Bathroom Stay — 10 Seconds After Full Reset
+New rule: Players may not remain in a bathroom indefinitely. After both CL and FL have been fully reset to 0, a 10-second timer begins. At expiry, the player is automatically exited from the bathroom (same as normal exit — 1.5s grace window applies).
+Implementation note: The timer does NOT start on bathroom entry. It starts when both bars reach 0. A player who enters at 95% CL gets full healing time before the 10s window begins.
+Rationale: Prevents stalling in bathroom to avoid combat. The bathroom is a recovery tool, not a permanent safe house.
+---
+Decisions NOT Changed
+Golden Cart values (+40% speed, ×2 throw range): Left unchanged. The 20-second duration already constrains the buff window sufficiently. Nerfing the values would reduce the viral moment quality. Revisit after playtesting if match-deciding.
+Alliance re-formation exploit: Not applicable to this design. Alliance bands cost $12 each with no refund, consumed regardless of outcome. The financial cost is the natural deterrent. No separate point-farming mechanism exists to exploit.
+Cold recipe balance: Cold recipes are intentionally weaker (no cook depth bonus, no tending bonus) but faster. This is a deliberate playstyle choice, not a problem. Do not nerf cold recipes directly.
+---
+End of Part 34 — Balance Patch v1
+---
+PART 35 — HUD LAYOUT & KEYBINDINGS (LOCKED)
+> Added March 2026. Supersedes any prior slot/hotbar references.
+---
+Bottom Hotbar (LOCKED)
+A 10-slot hotbar is always visible at the bottom centre of the screen. It is present at all times including prelobby.
+Slots are labelled 1–10 (key 0 = slot 10).
+Slots auto-fill left-to-right as ingredients are picked up. First pickup → slot 1, second → slot 2, etc. If a slot is freed (item thrown/dropped), the next pickup fills the lowest empty slot.
+Each slot shows: ingredient/recipe emoji, rarity colour border, weight, and unpaid price tag if not checked out.
+The active selected slot is highlighted with a red border. All other slots show their rarity stroke colour.
+Empty slots show a dim empty state with just the slot number.
+The hotbar is for quick selection and throwing only — slot reassignment is done in the Inventory HUD.
+---
+Inventory HUD (LOCKED)
+A collapsible scrollable panel attached to the container icon. Toggled by clicking the icon or pressing I. Shows only what the player currently holds in cookbook-style cards.
+Container Icon (Inventory Button)
+Displayed as 🧺 basket or 🛒 cart depending on prelobby selection.
+Positioned in the bottom-right cluster, evenly spaced from the weight bar on its left.
+Shows a live item count badge (red circle, top-right corner) that updates as items are picked up or thrown.
+No tooltip text displayed below or beside the icon — keybinding is in the HUD header.
+Inventory HUD Panel
+Opens upward from the container icon when toggled.
+Has a visible X close button in the top-right corner.
+Shows (current weight / max weight) at the top of the panel.
+Scrollable card grid — one card per held item. Empty inventory shows a placeholder.
+Closes on: X button, pressing I again, or pressing Escape.
+Does NOT auto-close on movement or throwing.
+Slot Assignment in the HUD
+Each item card shows which hotbar slot it occupies (e.g. "Slot 3").
+Players can drag and drop cards within the panel to reorder slots.
+Each card also has a "Move to Slot" button that opens a small slot-picker (1–10) to reassign it without drag-and-drop.
+Slot changes sync immediately to the hotbar.
+Item Cards — Design
+Same visual language as the Cookbook, filtered to what the player holds.
+Ingredient cards show:
+Large emoji icon + name + rarity colour border
+Zone (e.g. "Produce", "Aisles")
+Weight, Allergy type, Effect description
+Current hotbar slot number
+UNPAID $X (orange) or PAID (green) status tag
+Recipe cards show:
+Large emoji icon + name + rarity colour border
+Ingredients list, CL per serving, servings remaining, station
+Current hotbar slot number
+UNCOOKED (yellow/amber), COOKED ✓ (green), or BURNED (red) status tag
+---
+Bottom Bar Spacing (LOCKED)
+All elements on both sides use a consistent 8px gap between each element.
+Right cluster (right → left, all bottom-anchored):
+Minimap — 180×180px, 8px from right edge
+Weight bar — 52px wide, 8px gap from minimap
+Container icon — 52px wide, 8px gap from weight bar
+Money pill — 120px wide, 8px gap from container icon
+Left cluster (left → right, all bottom-anchored):
+Store Guide button — 140px wide, 16px from left edge
+Napkin pill — 130px wide, 8px gap from Store Guide
+Bathroom Breaks pill — 130px wide, 8px gap from Napkin
+---
+Full Keybindings (LOCKED)
+Action	Key
+Select hotbar slot 1–10	1, 2, 3, 4, 5, 6, 7, 8, 9, 0
+Toggle Inventory HUD	I, or click basket/cart icon
+Close Inventory HUD	I, Escape, or X button
+Toggle Store Guide	G, or click Store Guide button
+Close Store Guide	G, Escape, or Close button
+Pick up ingredient	E (hold ProximityPrompt)
+Throw selected slot	Mouse click / tap (0.3s min charge, 40% power)
+Throw charged	Hold + release (up to 1.5s, 100% power)
+Drop selected item	Q
+Use napkin	Click napkin button in bottom bar
+Open scoreboard	Hold Tab
+Interact (checkout, bathroom, alliance)	E
+Store Guide Behaviour (LOCKED)
+Store Guide is accessible at all times — prelobby, mid-match, post-match.
+The Preferences tab (allergy, favourite, container) locks once Gathering phase starts and remains locked until the match ends (Prelobby resets it).
+When Gathering starts: Preferences tab dims, shows "Locked — Match in Progress", and auto-switches to the Rules tab if currently open.
+If Inventory HUD is open when Store Guide is clicked: Inventory auto-minimizes. Vice versa.
+Inventory HUD Layout (LOCKED)
+Centred on screen — modal overlay.
+Left panel (≈40% width): scrollable list of held items. Compact rows: emoji + name + slot badge. Click a row to select it.
+Right panel (≈60% width): expanded detail card for the selected item — same format as the Cookbook (zone, allergy, weight, effect, CL, paid/unpaid or cook status).
+Header: weight display (current / max wt) + close button.
+If nothing selected: right panel shows "Select an item to see details."
+If inventory is empty: both panels show the empty basket/cart message.
+---
+End of Part 35 — HUD Layout & Keybindings
