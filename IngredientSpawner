@@ -17,7 +17,12 @@ local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
 local C             = ChompersData.Constants
 
-local PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
+local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
+if not PhaseChangedEvent then
+	PhaseChangedEvent = Instance.new("BindableEvent")
+	PhaseChangedEvent.Name   = "PhaseChangedEvent"
+	PhaseChangedEvent.Parent = ServerScriptService
+end
 
 -- ============================================================
 -- CONFIG
@@ -99,31 +104,27 @@ local ZONE_SURFACES = {
 	},
 
 	-- ── DAIRY (8 ingredients) — Row1 shelves ─────────────
-	-- Row1 (Light Royal blue, leftmost) — inside Zone_Freezer, Dairy side
-	-- Pos Y=5, Size Y=10 → surfaceTop = 10
 	Dairy = {
-		{ folder = "Props/Props_Aisles", name = "Row1_Front", surfaceTop = 10, maxItems = 6 },
-		{ folder = "Props/Props_Aisles", name = "Row1_Back",  surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles/Freezers", name = "Row1_Front", surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles/Freezers", name = "Row1_Back",  surfaceTop = 10, maxItems = 6 },
 	},
 
 	-- ── FREEZER / MEAT (9 ingredients) — Row2–3 shelves ──
-	-- Row2 and Row3 (Light Royal blue) — inside Zone_Freezer
 	Freezer = {
-		{ folder = "Props/Props_Aisles", name = "Row2_Front", surfaceTop = 10, maxItems = 6 },
-		{ folder = "Props/Props_Aisles", name = "Row2_Back",  surfaceTop = 10, maxItems = 6 },
-		{ folder = "Props/Props_Aisles", name = "Row3_Front", surfaceTop = 10, maxItems = 5 },
-		{ folder = "Props/Props_Aisles", name = "Row3_Back",  surfaceTop = 10, maxItems = 5 },
+		{ folder = "Props/Props_Aisles/Freezers", name = "Row2_Front", surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles/Freezers", name = "Row2_Back",  surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles/Freezers", name = "Row3_Front", surfaceTop = 10, maxItems = 5 },
+		{ folder = "Props/Props_Aisles/Freezers", name = "Row3_Back",  surfaceTop = 10, maxItems = 5 },
 	},
 
 	-- ── AISLES (14 ingredients) — Row4–6 shelves ─────────
-	-- Row4–6 (Curry coloured) — inside Zone_Aisles
 	Aisles = {
-		{ folder = "Props/Props_Aisles", name = "Row4_Front", surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles", name = "Row4_Back",  surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles", name = "Row5_Front", surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles", name = "Row5_Back",  surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles", name = "Row6_Front", surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles", name = "Row6_Back",  surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles/Shelves", name = "Row4_Front", surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles/Shelves", name = "Row4_Back",  surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles/Shelves", name = "Row5_Front", surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles/Shelves", name = "Row5_Back",  surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles/Shelves", name = "Row6_Front", surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles/Shelves", name = "Row6_Back",  surfaceTop = 10, maxItems = 7 },
 	},
 
 	-- ── DELI COUNTER — mid-tier loot node (Part 33) ───────
@@ -623,17 +624,12 @@ end
 -- PHASE LISTENER — auto-trigger on Gathering start
 -- ============================================================
 
-if PhaseChangedEvent then
-	PhaseChangedEvent.Event:Connect(function(newPhase)
-		if newPhase == "Gathering" then
-			IngredientSpawner.StartGatheringPhase()
-		elseif newPhase == "Prelobby" then
-			-- Clean up between matches
-			IngredientSpawner.ClearAll()
-		end
-	end)
-else
-	warn("[IngredientSpawner] PhaseChangedEvent not found — call StartGatheringPhase() manually")
-end
+PhaseChangedEvent.Event:Connect(function(newPhase)
+	if newPhase == "Gathering" then
+		IngredientSpawner.StartGatheringPhase()
+	elseif newPhase == "Prelobby" then
+		IngredientSpawner.ClearAll()
+	end
+end)
 
 return IngredientSpawner
