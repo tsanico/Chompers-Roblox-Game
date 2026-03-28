@@ -203,7 +203,7 @@ local function updateBillboard()
         local l = Instance.new("TextLabel", bb); l.LayoutOrder = 1
         l.Size = UDim2.new(1,0,0,22); l.BackgroundTransparency = 1
         l.Text = Selections.equippedTitle
-        l.Font = Enum.Font.GothamBlack; l.TextSize = 13
+        l.Font = Enum.Font.GothamBlack; l.TextSize = 16
         l.TextColor3 = C.title; l.TextXAlignment = Enum.TextXAlignment.Center
         l.TextStrokeTransparency = 0.3; l.TextStrokeColor3 = Color3.new(0,0,0)
     end
@@ -211,7 +211,7 @@ local function updateBillboard()
         local l = Instance.new("TextLabel", bb); l.LayoutOrder = 2
         l.Size = UDim2.new(1,0,0,22); l.BackgroundTransparency = 1
         l.Text = "⭐ "..Selections.favourite
-        l.Font = Enum.Font.GothamBold; l.TextSize = 14
+        l.Font = Enum.Font.GothamBold; l.TextSize = 17
         l.TextColor3 = C.gold; l.TextXAlignment = Enum.TextXAlignment.Center
         l.TextStrokeTransparency = 0.3; l.TextStrokeColor3 = Color3.new(0,0,0)
     end
@@ -225,7 +225,7 @@ local function updateBillboard()
         local l = Instance.new("TextLabel", bb); l.LayoutOrder = 3
         l.Size = UDim2.new(1,0,0,22); l.BackgroundTransparency = 1
         l.Text = "⚠ "..Selections.allergy
-        l.Font = Enum.Font.GothamBold; l.TextSize = 14
+        l.Font = Enum.Font.GothamBold; l.TextSize = 17
         l.TextColor3 = allergyColors[Selections.allergy] or C.warn
         l.TextXAlignment = Enum.TextXAlignment.Center
         l.TextStrokeTransparency = 0.3; l.TextStrokeColor3 = Color3.new(0,0,0)
@@ -240,7 +240,7 @@ if player.Character then task.delay(1, updateBillboard) end
 -- ============================================================
 
 local PANEL_TOP = 50; local PANEL_BTM = 80
-local HDR_H = 58;     local TAB_H = 44
+local HDR_H = 58;     local TAB_H = 54
 
 local Overlay = Instance.new("Frame", PrelobbyGui)
 Overlay.Name = "StoreGuideOverlay"
@@ -276,7 +276,7 @@ local CloseBtn = Instance.new("TextButton", Hdr)
 CloseBtn.Size = UDim2.new(0,90,0,38); CloseBtn.Position = UDim2.new(1,-100,0.5,-19)
 CloseBtn.BackgroundColor3 = Color3.fromRGB(175,30,30)
 CloseBtn.BorderSizePixel = 0; CloseBtn.AutoButtonColor = false
-CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 15
+CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 18
 CloseBtn.TextColor3 = C.white; CloseBtn.Text = "Close"; CloseBtn.ZIndex = 12
 corner(CloseBtn,10)
 
@@ -328,7 +328,7 @@ for _, tb in ipairs(TABS) do
     btn.Name = tb.id.."Tab"; btn.LayoutOrder = tb.order
     btn.Size = UDim2.new(0.2,-2,0,TAB_H-4)
     btn.BackgroundColor3 = Color3.fromRGB(28,26,42); btn.BorderSizePixel = 0
-    btn.Font = Enum.Font.GothamBold; btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = 15
     btn.TextColor3 = C.dim; btn.Text = tb.label
     btn.AutoButtonColor = false; btn.ZIndex = 11; corner(btn,6)
     tabButtons[tb.id] = btn
@@ -359,7 +359,7 @@ local function mkSubBar(parent, h, tabs, onSwitch)
         b.Size = UDim2.new(1/#tabs,-2,0,h-4)
         b.BackgroundColor3 = i==1 and st.color or Color3.fromRGB(24,22,38)
         b.BorderSizePixel = 0; b.AutoButtonColor = false
-        b.Font = Enum.Font.GothamBold; b.TextSize = 12
+        b.Font = Enum.Font.GothamBold; b.TextSize = 15
         b.TextColor3 = i==1 and Color3.fromRGB(253,248,240) or C.dim
         b.Text = st.label; b.ZIndex = 11; corner(b,6)
         btns[st.id] = b; local sid=st.id; local sc=st.color
@@ -386,7 +386,7 @@ local rScroll = mkScroll(RulesPanel,UDim2.new(1,-16,1,-10),
 local function addRuleSection(title, col, rules)
     local hdr = Instance.new("TextLabel", rScroll)
     hdr.Size = UDim2.new(1,0,0,34); hdr.BackgroundTransparency = 1
-    hdr.Text = title; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 20
+    hdr.Text = title; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 24
     hdr.TextColor3 = col; hdr.TextXAlignment = Enum.TextXAlignment.Left; hdr.ZIndex = 11
     for _, rule in ipairs(rules) do
         local rf = Instance.new("Frame", rScroll)
@@ -398,7 +398,7 @@ local function addRuleSection(title, col, rules)
         local rl = Instance.new("TextLabel", rf)
         rl.Size = UDim2.new(1,0,0,0); rl.AutomaticSize = Enum.AutomaticSize.Y
         rl.BackgroundTransparency = 1; rl.Text = rule
-        rl.Font = Enum.Font.Gotham; rl.TextSize = 16
+        rl.Font = Enum.Font.Gotham; rl.TextSize = 20
         rl.TextColor3 = Color3.fromRGB(210,208,228)
         rl.TextXAlignment = Enum.TextXAlignment.Left
         rl.TextYAlignment = Enum.TextYAlignment.Top
@@ -567,7 +567,7 @@ searchBar.BackgroundColor3 = Color3.fromRGB(14,12,24); searchBar.BorderSizePixel
 local searchInput = Instance.new("TextBox", searchBar)
 searchInput.Size = UDim2.new(1,-24,0,26); searchInput.Position = UDim2.new(0,12,0.5,-13)
 searchInput.BackgroundColor3 = Color3.fromRGB(28,26,42); searchInput.BorderSizePixel=0
-searchInput.Font = Enum.Font.Gotham; searchInput.TextSize = 14
+searchInput.Font = Enum.Font.Gotham; searchInput.TextSize = 17
 searchInput.TextColor3 = C.white; searchInput.PlaceholderColor3 = C.dim
 searchInput.PlaceholderText = "🔍  Search ingredients and recipes..."
 searchInput.Text = ""; corner(searchInput,8)
@@ -657,7 +657,7 @@ local function rightChip(parent, text, bg, col, order)
     local l=Instance.new("TextLabel",f)
     l.Size=UDim2.new(1,-16,1,0); l.Position=UDim2.new(0,8,0,0)
     l.BackgroundTransparency=1; l.Text=text
-    l.Font=Enum.Font.Gotham; l.TextSize=13
+    l.Font=Enum.Font.Gotham; l.TextSize = 16
     l.TextColor3=col or C.white; l.TextXAlignment=Enum.TextXAlignment.Left; l.ZIndex=13
     return f
 end
@@ -675,7 +675,7 @@ local function showIngredientDetail(item)
 
     -- Hero row
     local hero=Instance.new("Frame",ingRight); hero.LayoutOrder=1
-    hero.Size=UDim2.new(1,0,0,80); hero.BackgroundColor3=RARITY_BG[r] or C.bgCard
+    hero.Size=UDim2.new(1,0,0,96); hero.BackgroundColor3=RARITY_BG[r] or C.bgCard
     hero.BorderSizePixel=0; hero.ZIndex=12; corner(hero,12); mkStroke(hero,2,col)
     mkLabel(hero,ic,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
         UDim2.new(0,0,0,0),UDim2.new(0,80,1,0)).ZIndex=13
@@ -722,7 +722,7 @@ for i, item in ipairs(sortedIng) do
     local col = RARITY_COL[r] or C.stroke
     local row = Instance.new("TextButton", ingLeft)
     row.Name = "Ing_"..i; row.LayoutOrder = i
-    row.Size = UDim2.new(1,0,0,44)
+    row.Size = UDim2.new(1,0,0,56)
     row.BackgroundColor3 = Color3.fromRGB(22,20,36)
     row.BorderSizePixel=0; row.AutoButtonColor=false; row.ZIndex=11
     corner(row,8); mkStroke(row,1.5,Color3.fromRGB(38,36,54))
@@ -762,7 +762,7 @@ local function showRecipeDetail(item)
 
     -- Hero
     local hero=Instance.new("Frame",recRight); hero.LayoutOrder=1
-    hero.Size=UDim2.new(1,0,0,80); hero.BackgroundColor3=RARITY_BG[r] or C.bgCard
+    hero.Size=UDim2.new(1,0,0,96); hero.BackgroundColor3=RARITY_BG[r] or C.bgCard
     hero.BorderSizePixel=0; hero.ZIndex=12; corner(hero,12); mkStroke(hero,2,col)
     mkLabel(hero,ic,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
         UDim2.new(0,0,0,0),UDim2.new(0,80,1,0)).ZIndex=13
@@ -909,7 +909,7 @@ local function mkCartBtn(lbl,xPos,active)
     b.Size=UDim2.new(0.485,0,0,52); b.Position=UDim2.new(xPos,xPos==0 and PAD or 0,0,30)
     b.BackgroundColor3=active and C.red or Color3.fromRGB(28,26,44)
     b.BorderSizePixel=0; b.AutoButtonColor=false
-    b.Font=Enum.Font.GothamBold; b.TextSize=15
+    b.Font=Enum.Font.GothamBold; b.TextSize = 18
     b.TextColor3=active and Color3.fromRGB(253,248,240) or C.dim
     b.Text=lbl; b.ZIndex=10; corner(b,10); return b
 end
@@ -942,20 +942,20 @@ local secY = divY+8
 mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBold,20,C.gold,
     Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,secY),UDim2.new(0.5,-PAD-4,0,26))
 local fDesc=mkLabel(PrefPanel,
-    "Throw your fav → +min(Base×50%, 30) bonus CL.\nSelf-consume → ×1.5 buff duration.",
-    Enum.Font.Gotham,13,Color3.fromRGB(210,190,155),Enum.TextXAlignment.Left,
-    UDim2.new(0,PAD,0,secY+28),UDim2.new(0.5,-PAD-4,0,32))
-fDesc.TextWrapped=true
+    "Pick your ride-or-die. Every throw of your favourite deals +min(BaseCL × 50%, +30) bonus CL — capped at +30 so it stays hype, not broken. Self-consume it? Your buffs run ×1.5 longer. Enemy throws YOUR favourite at YOU? That's a ×2 FL spike. Embarrassing.",
+    Enum.Font.Gotham,16,Color3.fromRGB(210,190,155),Enum.TextXAlignment.Left,
+    UDim2.new(0,PAD,0,secY+28),UDim2.new(0.5,-PAD-4,0,90))
+fDesc.TextWrapped=true; fDesc.LineHeight=1.3
 
 mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,20,Color3.fromRGB(226,75,74),
     Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,secY),UDim2.new(0.5,-PAD-4,0,26))
 local aDesc=mkLabel(PrefPanel,
-    "Allergen hit → ×1.75 CL damage.\nEverything else → ×0.75. Egg = Dairy.",
-    Enum.Font.Gotham,13,Color3.fromRGB(215,175,175),Enum.TextXAlignment.Left,
-    UDim2.new(0.5,PAD/2,0,secY+28),UDim2.new(0.5,-PAD-4,0,32))
-aDesc.TextWrapped=true
+    "Your kryptonite. Getting hit by your allergen deals ×1.75 CL to you — ouch. Anything non-allergenic? Just ×0.75. That's the trade. Egg counts as Dairy, before you ask. This shows above your head. Everyone sees it. Own it.",
+    Enum.Font.Gotham,16,Color3.fromRGB(215,175,175),Enum.TextXAlignment.Left,
+    UDim2.new(0.5,PAD/2,0,secY+28),UDim2.new(0.5,-PAD-4,0,90))
+aDesc.TextWrapped=true; aDesc.LineHeight=1.3
 
-local selY = secY+62
+local selY = secY+128
 local FavLabel = mkLabel(PrefPanel,"None selected",Enum.Font.GothamMedium,13,C.gold,
     Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,18))
 FavLabel.Name = "FavSelected"  -- named for external reference
@@ -978,7 +978,7 @@ for i, item in ipairs(rSort(Data.Recipes)) do
     local ic  = emj(item.name)
 
     local row = Instance.new("TextButton", FavScroll)
-    row.Size = UDim2.new(1,0,0,72); row.LayoutOrder = i
+    row.Size = UDim2.new(1,0,0,88); row.LayoutOrder = i
     row.BackgroundColor3 = RARITY_BG[r] or Color3.fromRGB(22,20,36)
     row.BorderSizePixel = 0; row.AutoButtonColor = false; row.ZIndex = 10
     corner(row,10); mkStroke(row,2,col)
@@ -1031,7 +1031,7 @@ AllergyScroll.Name = "AllergyScroll"
 local selAllergyBtn = nil
 for _, atype in ipairs(ALLERGY_TYPES) do
     local btn = Instance.new("TextButton", AllergyScroll)
-    btn.Size = UDim2.new(1,0,0,72); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
+    btn.Size = UDim2.new(1,0,0,88); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
     btn.BorderSizePixel = 0; btn.AutoButtonColor = false; btn.ZIndex = 10; corner(btn,10)
     local accent = Instance.new("Frame",btn)
     accent.Size=UDim2.new(0,5,1,-12); accent.Position=UDim2.new(0,5,0,6)
@@ -1064,7 +1064,7 @@ ConfirmBtn.Name = "ConfirmButton"
 ConfirmBtn.Size = UDim2.new(1,-PAD*2,0,46); ConfirmBtn.Position = UDim2.new(0,PAD,1,-54)
 ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66); ConfirmBtn.BorderSizePixel = 0
 ConfirmBtn.AutoButtonColor = false; ConfirmBtn.Font = Enum.Font.GothamBold
-ConfirmBtn.TextSize = 18; ConfirmBtn.TextColor3 = Color3.fromRGB(215,255,220)
+ConfirmBtn.TextSize = 22; ConfirmBtn.TextColor3 = Color3.fromRGB(215,255,220)
 ConfirmBtn.Text = "✓  Ready to Shop!"; ConfirmBtn.ZIndex = 10; corner(ConfirmBtn,10)
 
 ConfirmBtn.MouseButton1Click:Connect(function()
@@ -1085,7 +1085,7 @@ end)
 local AccPanel = makePanel("AccPanel","ACCOLADES")
 local accSubPanels = {}
 
-mkSubBar(AccPanel, 40, {
+mkSubBar(AccPanel, 48, {
     {id="AWARDS",     label="🏅 Awards",     color=Color3.fromRGB(180,140,50)},
     {id="COSMETICS",  label="🎨 Cosmetics",  color=Color3.fromRGB(200,60,130)},
     {id="TITLES",     label="🏆 Titles",     color=C.purple},
@@ -1160,7 +1160,7 @@ for j, award in ipairs(AWARDS) do
     local pct    = math.clamp(prog / award.goal, 0, 1)
 
     local card=Instance.new("Frame",awardScroll)
-    card.Size=UDim2.new(1,0,0,66); card.LayoutOrder=j
+    card.Size=UDim2.new(1,0,0,82); card.LayoutOrder=j
     card.BackgroundColor3=done and Color3.fromRGB(18,36,18) or C.bgLight
     card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
     mkStroke(card,1.5,done and Color3.fromRGB(50,160,60) or C.stroke)
@@ -1294,7 +1294,7 @@ for _, h in ipairs(HONORIFICS) do
         or tostring(h.cost)
 
     local card = Instance.new("Frame", titlesScroll)
-    card.Size = UDim2.new(1,0,0,78); card.LayoutOrder = h.n
+    card.Size = UDim2.new(1,0,0,96); card.LayoutOrder = h.n
     card.BackgroundColor3 = tier.bg; card.BorderSizePixel=0; card.ZIndex=11
     corner(card,12); mkStroke(card,2,h.tc)
 
@@ -1332,7 +1332,7 @@ for _, h in ipairs(HONORIFICS) do
     eBtn.Size=UDim2.new(0,84,0,30); eBtn.AnchorPoint=Vector2.new(1,1)
     eBtn.Position=UDim2.new(1,-8,1,-8)
     eBtn.BackgroundColor3=Color3.fromRGB(50,14,80); eBtn.BorderSizePixel=0
-    eBtn.AutoButtonColor=false; eBtn.Font=Enum.Font.GothamBold; eBtn.TextSize=13
+    eBtn.AutoButtonColor=false; eBtn.Font=Enum.Font.GothamBold; eBtn.TextSize = 16
     eBtn.TextColor3=Color3.fromRGB(210,170,255); eBtn.Text="Equip"; corner(eBtn,8)
     mkStroke(eBtn,1.5,C.purple)
 
@@ -1358,11 +1358,11 @@ local cosScroll = mkScroll(cosmeticsContent,UDim2.new(1,0,1,0),UDim2.new(0,0,0,0
 local function cosSection(sectionTitle, items)
     local hdr=Instance.new("TextLabel",cosScroll)
     hdr.Size=UDim2.new(1,0,0,28); hdr.BackgroundTransparency=1
-    hdr.Text=sectionTitle; hdr.Font=Enum.Font.GothamBold; hdr.TextSize=17
+    hdr.Text=sectionTitle; hdr.Font=Enum.Font.GothamBold; hdr.TextSize = 21
     hdr.TextColor3=Color3.fromRGB(200,100,160); hdr.TextXAlignment=Enum.TextXAlignment.Left
     for _, item in ipairs(items) do
         local card=Instance.new("Frame",cosScroll)
-        card.Size=UDim2.new(1,0,0,60); card.BackgroundColor3=C.bgLight
+        card.Size=UDim2.new(1,0,0,76); card.BackgroundColor3=C.bgLight
         card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
         mkStroke(card,1.5,item.locked and C.stroke or Color3.fromRGB(200,60,130))
         mkLabel(card,item.icon,Enum.Font.GothamBold,32,C.white,Enum.TextXAlignment.Center,
@@ -1402,7 +1402,7 @@ local MatchPanel = makePanel("MatchPanel","MATCH")
 tabPanels["SETTINGS"] = MatchPanel  -- legacy alias
 local matchSubPanels  = {}
 
-mkSubBar(MatchPanel, 38, {
+mkSubBar(MatchPanel, 46, {
     {id="KEYBINDINGS", label="⌨️ Keys",         color=Color3.fromRGB(50,70,100)},
     {id="SCOREBOARD",  label="📊 Scoreboard",  color=Color3.fromRGB(50,70,100)},
     {id="SETTINGS",    label="⚙️ Settings",     color=Color3.fromRGB(50,70,100)},
