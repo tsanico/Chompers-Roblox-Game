@@ -1,0 +1,343 @@
+-- ============================================================
+-- DoorSystem — Script
+-- Location: ServerScriptService > DoorSystem
+--
+-- Reads every Part in the Doors folder by attribute.
+-- Opens/closes doors based on:
+--   • Phase transitions (OpenOnGathering=true → open at Gathering)
+--   • Proximity (OpenOnApproach=true → open when player is near)
+--   • One-way exits (OneWayExit=true → only opens from inside)
+--
+-- Door attribute schema (set on each door Part in Studio):
+--   DoorType       string  "AutoSliding" | "Hinged" | "ButcherSwing"
+--   IsAnimated     bool    true
+--   IsOpen         bool    current open state (runtime, not design-time)
+--   OpenOnApproach bool    opens when a player is within range
+--   OpenOnGathering bool   opens at Gathering phase start and stays open
+--   StaysOpen      bool    once opened, never closes again this match
+--   OneWayExit     bool    only opens from the interior side (WC kitchen exits)
+--   IsFireExit     bool    fire exit doors — treated same as OpenOnGathering
+--   IsButcherDoor  bool    ButcherSwing type
+--   TwoWaySwing    bool    swings toward approaching player's side
+--   ExitDirection  string  "Kitchen" — which side counts as interior
+--
+-- REQUIRES: PhaseChangedEvent (BindableEvent in ServerScriptService)
+-- ============================================================
+
+local Players             = game:GetService("Players")
+local TweenService        = game:GetService("TweenService")
+local ServerScriptService = game:GetService("ServerScriptService")
+local RunService          = game:GetService("RunService")
+
+-- ── Phase event ─────────────────────────────────────────────
+local PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
+
+-- ── Config ──────────────────────────────────────────────────
+local APPROACH_RANGE    = 14   -- studs — proximity trigger distance
+local POLL_INTERVAL     = 0.3  -- seconds between proximity checks
+local SLIDE_DURATION    = 0.35 -- seconds for AutoSliding animation
+local SWING_DURATION    = 0.30 -- seconds for Hinged/ButcherSwing animation
+local SWING_ANGLE       = 100  -- degrees a hinged door opens
+
+-- ── State ───────────────────────────────────────────────────
+local currentPhase   = "Prelobby"
+local doorStates     = {}   -- part → { isOpen, lockedOpen, origCFrame, origSize }
+
+-- ============================================================
+-- FIND DOORS FOLDER
+-- ============================================================
+
+-- Doors are unanchored parts; we search the workspace tree
+-- Try common locations from the map structure
+local function findDoorsFolder()
+	-- Check workspace > Map > Doors
+	local map = workspace:FindFirstChild("Map")
+	if map then
+		local d = map:FindFirstChild("Doors")
+		if d then return d end
+	end
+	-- Check workspace directly
+	local d = workspace:FindFirstChild("Doors")
+	if d then return d end
+	-- Fallback: search entire workspace one level deep
+	for _, child in ipairs(workspace:GetChildren()) do
+		if child.Name == "Doors" then return child end
+	end
+	return nil
+end
+
+local DoorsFolder = nil
+local function waitForDoors()
+	local attempts = 0
+	while not DoorsFolder and attempts < 20 do
+		DoorsFolder = findDoorsFolder()
+		if not DoorsFolder then
+			task.wait(0.5)
+			attempts = attempts + 1
+		end
+	end
+	if not DoorsFolder then
+		warn("[DoorSystem] Could not find Doors folder — no doors will animate")
+	end
+	return DoorsFolder
+end
+
+-- ============================================================
+-- TWEEN HELPERS
+-- ============================================================
+
+local tweenInfo_slide = TweenInfo.new(
+	SLIDE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local tweenInfo_swing = TweenInfo.new(
+	SWING_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+-- AutoSliding: slide perpendicular to the door's thin face
+-- The thin axis is whichever of X/Z is size=2
+local function getSlideVector(door)
+	local size = door.Size
+	-- Determine which axis is thin (the face normal direction)
+	-- Door slides along its length, away from its face
+	-- If X is thin (size.X ~= 2), slide along Z
+	-- If Z is thin (size.Z ~= 2), slide along X
+	local cf = door.CFrame
+	if size.X <= 3 then
+		-- Thin in X → slide along local Z
+		return cf.RightVector * size.Z * 0.9
+	else
+		-- Thin in Z → slide along local X (most store doors)
+		return cf.RightVector * size.X * 0.9
+	end
+end
+
+local function tweenDoorOpen(door, state)
+	if state.isOpen then return end
+
+	local doorType = door:GetAttribute("DoorType") or "AutoSliding"
+
+	if doorType == "AutoSliding" then
+		local slideVec = getSlideVector(door)
+		local targetCF = state.origCFrame + slideVec
+		local tween = TweenService:Create(door, tweenInfo_slide, { CFrame = targetCF })
+		tween:Play()
+
+	elseif doorType == "Hinged" or doorType == "ButcherSwing" then
+		-- Swing open around Y axis
+		local targetCF = state.origCFrame * CFrame.Angles(0, math.rad(SWING_ANGLE), 0)
+		local tween = TweenService:Create(door, tweenInfo_swing, { CFrame = targetCF })
+		tween:Play()
+	end
+
+	state.isOpen = true
+	door:SetAttribute("IsOpen", true)
+end
+
+local function tweenDoorClose(door, state)
+	if not state.isOpen then return end
+	if state.lockedOpen then return end   -- StaysOpen doors never close
+
+	local tween = TweenService:Create(door, tweenInfo_slide, { CFrame = state.origCFrame })
+	tween:Play()
+	state.isOpen = false
+	door:SetAttribute("IsOpen", false)
+end
+
+-- ============================================================
+-- REGISTER DOORS
+-- ============================================================
+
+local function registerDoor(door)
+	if not door:IsA("BasePart") then return end
+	if not door:GetAttribute("DoorType") then return end   -- not a door part
+
+	doorStates[door] = {
+		isOpen     = false,
+		lockedOpen = door:GetAttribute("StaysOpen") == true,
+		origCFrame = door.CFrame,
+		origSize   = door.Size,
+	}
+
+	-- Make sure it starts closed / unanchored correctly
+	door.Anchored = true   -- doors are anchored and tweened by CFrame
+end
+
+-- ============================================================
+-- PHASE-BASED DOOR CONTROL
+-- ============================================================
+
+-- Open all doors flagged OpenOnGathering or IsFireExit
+local function openGatheringDoors()
+	if not DoorsFolder then return end
+	for door, state in pairs(doorStates) do
+		if door:GetAttribute("OpenOnGathering") == true
+			or door:GetAttribute("IsFireExit") == true then
+			tweenDoorOpen(door, state)
+		end
+	end
+end
+
+-- Close all proximity doors (called at match end / prelobby reset)
+local function closeAllDoors()
+	for door, state in pairs(doorStates) do
+		state.lockedOpen = false   -- allow close
+		tweenDoorClose(door, state)
+		state.lockedOpen = door:GetAttribute("StaysOpen") == true
+	end
+end
+
+-- ============================================================
+-- PROXIMITY DOOR CONTROL
+-- Runs on a poll loop — checks all players against all
+-- proximity doors every POLL_INTERVAL seconds
+-- ============================================================
+
+-- Returns the nearest player to a position, and their distance
+local function getNearestPlayer(position)
+	local nearest, nearestDist = nil, math.huge
+	for _, player in ipairs(Players:GetPlayers()) do
+		local char = player.Character
+		local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			local dist = (hrp.Position - position).Magnitude
+			if dist < nearestDist then
+				nearest     = player
+				nearestDist = dist
+			end
+		end
+	end
+	return nearest, nearestDist
+end
+
+-- One-way exit check: returns true if the player is on the interior side
+-- WC kitchen exits only open from inside the bathroom
+local function isOnInteriorSide(door, playerPos)
+	local exitDir = door:GetAttribute("ExitDirection")
+	if not exitDir then return true end   -- no restriction
+
+	-- "Kitchen" exit direction means door is on the kitchen-facing wall
+	-- Interior = the WC side (positive Z relative to door normal)
+	-- We check if the player is on the "inward" side by dot product
+	local doorFwd = door.CFrame.LookVector
+	local toPlayer = (playerPos - door.Position).Unit
+	local dot = doorFwd:Dot(toPlayer)
+	-- Interior side = negative dot (player facing same direction as door looks out)
+	return dot < 0
+end
+
+-- ButcherSwing: swing toward the player's approaching side
+local function swingTowardPlayer(door, state, playerPos)
+	if state.isOpen then return end
+
+	local doorFwd   = door.CFrame.LookVector
+	local toPlayer  = (playerPos - door.Position).Unit
+	local dot       = doorFwd:Dot(toPlayer)
+	-- Positive dot = player is in front → swing +angle
+	-- Negative dot = player is behind → swing −angle
+	local angle     = dot >= 0 and SWING_ANGLE or -SWING_ANGLE
+	local targetCF  = state.origCFrame * CFrame.Angles(0, math.rad(angle), 0)
+
+	TweenService:Create(door, tweenInfo_swing, { CFrame = targetCF }):Play()
+	state.isOpen = true
+	door:SetAttribute("IsOpen", true)
+end
+
+local function runProximityLoop()
+	while true do
+		task.wait(POLL_INTERVAL)
+
+		if not DoorsFolder then continue end
+
+		for door, state in pairs(doorStates) do
+			-- Skip doors that don't use proximity
+			if not door:GetAttribute("OpenOnApproach") then continue end
+			-- Skip doors already locked open
+			if state.lockedOpen then continue end
+
+			local nearestPlayer, dist = getNearestPlayer(door.Position)
+
+			if dist <= APPROACH_RANGE then
+				-- One-way exit check
+				if door:GetAttribute("OneWayExit") == true then
+					local hrp = nearestPlayer.Character
+						and nearestPlayer.Character:FindFirstChild("HumanoidRootPart")
+					if not hrp then continue end
+					if not isOnInteriorSide(door, hrp.Position) then
+						-- Player is on wrong side — keep door closed
+						if state.isOpen then tweenDoorClose(door, state) end
+						continue
+					end
+				end
+
+				-- ButcherSwing: swing toward player
+				local doorType = door:GetAttribute("DoorType") or "Hinged"
+				if doorType == "ButcherSwing"
+					and door:GetAttribute("TwoWaySwing") == true then
+					local hrp = nearestPlayer.Character
+						and nearestPlayer.Character:FindFirstChild("HumanoidRootPart")
+					if hrp then
+						swingTowardPlayer(door, state, hrp.Position)
+					end
+				else
+					tweenDoorOpen(door, state)
+				end
+
+			else
+				-- No player nearby — close if open
+				if state.isOpen then
+					tweenDoorClose(door, state)
+				end
+			end
+		end
+	end
+end
+
+-- ============================================================
+-- PHASE LISTENER
+-- ============================================================
+
+if PhaseChangedEvent then
+	PhaseChangedEvent.Event:Connect(function(newPhase)
+		currentPhase = newPhase
+
+		if newPhase == "Gathering"
+			or newPhase == "Cooking"
+			or newPhase == "FoodFight"
+			or newPhase == "CookingGrace" then
+			openGatheringDoors()
+
+		elseif newPhase == "Prelobby" then
+			-- New match starting — reset all doors
+			task.wait(1)   -- brief pause before resetting
+			closeAllDoors()
+		end
+	end)
+else
+	warn("[DoorSystem] PhaseChangedEvent not found — doors won't respond to phases")
+end
+
+-- ============================================================
+-- BOOT
+-- ============================================================
+
+task.spawn(function()
+	waitForDoors()
+
+	if not DoorsFolder then return end
+
+	-- Register all existing door parts
+	for _, part in ipairs(DoorsFolder:GetChildren()) do
+		registerDoor(part)
+	end
+
+	-- Register any doors added later (shouldn't happen but safe)
+	DoorsFolder.ChildAdded:Connect(registerDoor)
+
+	local doorCount = 0
+	for _ in pairs(doorStates) do doorCount = doorCount + 1 end
+	print(string.format("[DoorSystem] Registered %d door parts", doorCount))
+
+	-- Start proximity polling
+	task.spawn(runProximityLoop)
+
+	print("[DoorSystem] Boot complete")
+end)
