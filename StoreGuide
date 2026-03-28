@@ -302,11 +302,11 @@ local tabPanels  = {}
 local tabButtons = {}
 
 local TABS = {
-    {id="RULES",       label="📜 Rules",      color=C.red,                       order=1},
+    {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=1},
     {id="COOKBOOK",    label="📖 Cookbook",    color=Color3.fromRGB(65,48,128),   order=2},
-    {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=3},
-    {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=4},
-    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=5},
+    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=3},
+    {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=4},
+    {id="RULES",       label="📜 Rules",       color=C.red,                       order=5},
 }
 
 local function switchTab(id)
@@ -1087,8 +1087,8 @@ local accSubPanels = {}
 
 mkSubBar(AccPanel, 40, {
     {id="AWARDS",     label="🏅 Awards",     color=Color3.fromRGB(180,140,50)},
-    {id="TITLES",     label="🏆 Titles",     color=C.purple},
     {id="COSMETICS",  label="🎨 Cosmetics",  color=Color3.fromRGB(200,60,130)},
+    {id="TITLES",     label="🏆 Titles",     color=C.purple},
 }, function(id)
     for sid, pnl in pairs(accSubPanels) do pnl.Visible=(sid==id) end
 end)
@@ -1099,45 +1099,110 @@ awardsContent.Size=UDim2.new(1,0,1,-40); awardsContent.Position=UDim2.new(0,0,0,
 awardsContent.BackgroundTransparency=1; awardsContent.Visible=true
 accSubPanels["AWARDS"] = awardsContent
 
-local accScroll = mkScroll(awardsContent,UDim2.new(1,0,1,0),
-    UDim2.new(0,0,0,0),Color3.fromRGB(180,140,50))
+-- Medal total header
+local awardHdr=Instance.new("Frame",awardsContent)
+awardHdr.Size=UDim2.new(1,0,0,42); awardHdr.BackgroundColor3=Color3.fromRGB(40,30,6)
+awardHdr.BorderSizePixel=0
+mkStroke(awardHdr,1.5,Color3.fromRGB(120,90,20))
+mkLabel(awardHdr,"🏅 Total medals earned from Awards:",
+    Enum.Font.GothamBold,14,C.dim,Enum.TextXAlignment.Left,
+    UDim2.new(0,14,0,0),UDim2.new(0.6,0,1,0))
+local awardTotalLabel=mkLabel(awardHdr,"0 medals",
+    Enum.Font.GothamBlack,18,C.gold,Enum.TextXAlignment.Right,
+    UDim2.new(0.6,0,0,0),UDim2.new(0.4,-14,1,0))
+awardTotalLabel.Name="AwardTotalLabel"
 
-local function accSection(title, col, rows)
-    local hdr=Instance.new("TextLabel",accScroll)
-    hdr.Size=UDim2.new(1,0,0,28); hdr.BackgroundTransparency=1
-    hdr.Text=title; hdr.Font=Enum.Font.GothamBold; hdr.TextSize=17
-    hdr.TextColor3=col; hdr.TextXAlignment=Enum.TextXAlignment.Left; hdr.ZIndex=11
-    for _, row in ipairs(rows) do
-        local rf=Instance.new("Frame",accScroll)
-        rf.Size=UDim2.new(1,0,0,48); rf.BackgroundColor3=C.bgLight
-        rf.BorderSizePixel=0; rf.ZIndex=11; corner(rf,8)
-        mkLabel(rf,row.icon.."  "..row.name,Enum.Font.GothamBlack,14,C.white,
-            Enum.TextXAlignment.Left,UDim2.new(0,12,0,4),UDim2.new(0.72,0,0,20)).ZIndex=12
-        mkLabel(rf,row.desc,Enum.Font.Gotham,11,C.dim,
-            Enum.TextXAlignment.Left,UDim2.new(0,12,0,26),UDim2.new(0.72,0,0,16)).ZIndex=12
-        mkLabel(rf,"🏅 "..row.medals,Enum.Font.GothamBlack,16,C.gold,
-            Enum.TextXAlignment.Right,UDim2.new(0.72,0,0,0),UDim2.new(0.28,-12,1,0)).ZIndex=12
-    end
+local awardScroll=mkScroll(awardsContent,
+    UDim2.new(1,0,1,-42),UDim2.new(0,0,0,42),C.gold)
+
+-- Awards data: {icon, name, desc, goal, reward, progress (local)}
+local AWARDS = {
+    -- Combat
+    {i="💥",name="First Blood",           desc="Max CL (100%) an opponent",                     goal=1,   reward=10},
+    {i="🧼",name="Messy Business",         desc="Max CL 5 opponents",                            goal=5,   reward=25},
+    {i="☠️",name="The Exterminator",       desc="Max CL 20 opponents lifetime",                  goal=20,  reward=60},
+    {i="🎯",name="Allergen Assassin",      desc="Hit 5 players with their own allergen",         goal=5,   reward=20},
+    {i="⭐",name="Signature Strike",       desc="Hit 10 players with your favourite food",       goal=10,  reward=15},
+    {i="🔥",name="Inferno Combo",          desc="Land an Oil+Fire ×1.6 combo",                   goal=1,   reward=15},
+    {i="🎯",name="Triple Threat",          desc="Eliminate 3 players in a single match",         goal=3,   reward=30},
+    -- Economy
+    {i="🛒",name="First Checkout",         desc="Complete your first checkout",                  goal=1,   reward=5},
+    {i="⚡",name="Speed Shopper",          desc="Complete checkout within 60s of Gathering start",goal=1,  reward=15},
+    {i="💰",name="Big Spender",            desc="Spend $200+ in ingredients in a single match",  goal=200, reward=20},
+    {i="👑",name="Golden Basket",          desc="Purchase $500+ of ingredients in a single match",goal=500,reward=35},
+    -- Survival
+    {i="💪",name="Iron Stomach",           desc="Win a match without entering the bathroom",     goal=1,   reward=20},
+    {i="🧻",name="Napkin Reflex",          desc="Use a napkin within 1s of being hit",           goal=1,   reward=10},
+    {i="🛡️",name="Untouched",             desc="Finish Gathering phase with 0% CL",             goal=1,   reward=15},
+    -- Cooking
+    {i="🍳",name="Recipe Debut",           desc="Cook your first recipe",                        goal=1,   reward=5},
+    {i="👨‍🍳",name="Kitchen Pro",            desc="Cook 10 unique recipes lifetime",               goal=10,  reward=20},
+    {i="🍽️",name="The Gourmand",          desc="Cook all 69 recipes at least once",             goal=69,  reward=100},
+    {i="🔥",name="Sous-Chef Debut",        desc="Contribute as sous-chef in your first recipe",  goal=1,   reward=5},
+    -- Legendaries
+    {i="🛒",name="Golden Opportunity",     desc="Find and use the Golden Cart",                  goal=1,   reward=15},
+    {i="🥩",name="Million Dollar Moment",  desc="Cook and throw the Million Dollar Steak",       goal=1,   reward=25},
+    -- Social
+    {i="🤝",name="First Alliance",         desc="Form your first alliance",                      goal=1,   reward=5},
+    {i="🕊️",name="Together Is Better",    desc="Win 5 Together victories",                     goal=5,   reward=30},
+    {i="🚫",name="Hard No",               desc="Decline your first alliance offer",             goal=1,   reward=5},
+    -- Milestones
+    {i="✅",name="Market Debut",           desc="Complete your first match",                     goal=1,   reward=5},
+    {i="📋",name="Seasoned Shopper",       desc="Complete 25 matches",                           goal=25,  reward=30},
+    {i="📋",name="The Regular",            desc="Complete 100 matches",                          goal=100, reward=75},
+}
+
+local awardMedalsTotal = 0  -- local running total (DataStore not wired yet)
+
+for j, award in ipairs(AWARDS) do
+    local prog   = 0   -- placeholder: 0 until DataStore wired
+    local done   = prog >= award.goal
+    local pct    = math.clamp(prog / award.goal, 0, 1)
+
+    local card=Instance.new("Frame",awardScroll)
+    card.Size=UDim2.new(1,0,0,66); card.LayoutOrder=j
+    card.BackgroundColor3=done and Color3.fromRGB(18,36,18) or C.bgLight
+    card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
+    mkStroke(card,1.5,done and Color3.fromRGB(50,160,60) or C.stroke)
+
+    -- Icon
+    mkLabel(card,award.i,Enum.Font.GothamBold,30,C.white,Enum.TextXAlignment.Center,
+        UDim2.new(0,0,0,0),UDim2.new(0,54,1,0)).ZIndex=12
+
+    -- Name
+    mkLabel(card,award.name,Enum.Font.GothamBlack,14,
+        done and C.green or C.white,Enum.TextXAlignment.Left,
+        UDim2.new(0,58,0,6),UDim2.new(0.55,0,0,20)).ZIndex=12
+
+    -- Description
+    mkLabel(card,award.desc,Enum.Font.Gotham,11,C.dim,Enum.TextXAlignment.Left,
+        UDim2.new(0,58,0,26),UDim2.new(0.55,0,0,16)).ZIndex=12
+
+    -- Progress bar + count
+    local barBg=Instance.new("Frame",card); barBg.ZIndex=12
+    barBg.Size=UDim2.new(0.53,0,0,8); barBg.Position=UDim2.new(0,58,1,-16)
+    barBg.BackgroundColor3=Color3.fromRGB(28,26,44); barBg.BorderSizePixel=0; corner(barBg,4)
+    local barFill=Instance.new("Frame",barBg); barFill.ZIndex=13
+    barFill.Size=UDim2.new(pct,0,1,0)
+    barFill.BackgroundColor3=done and C.green or C.gold
+    barFill.BorderSizePixel=0; corner(barFill,4)
+
+    local progStr=done and "✓ Complete" or (tostring(prog).."/"..tostring(award.goal))
+    mkLabel(card,progStr,Enum.Font.GothamBold,11,
+        done and C.green or C.dim,Enum.TextXAlignment.Left,
+        UDim2.new(0,58,0,44),UDim2.new(0.3,0,0,14)).ZIndex=12
+
+    -- Medal reward (right side)
+    local rewBg=Instance.new("Frame",card); rewBg.ZIndex=12
+    rewBg.Size=UDim2.new(0,80,0,32); rewBg.AnchorPoint=Vector2.new(1,0.5)
+    rewBg.Position=UDim2.new(1,-8,0.5,0)
+    rewBg.BackgroundColor3=done and Color3.fromRGB(30,50,18) or Color3.fromRGB(36,28,4)
+    rewBg.BorderSizePixel=0; corner(rewBg,8)
+    mkStroke(rewBg,1.5,done and C.green or C.gold)
+    mkLabel(rewBg,done and "✓ Claimed" or ("🏅 "..award.reward),
+        Enum.Font.GothamBlack,12,
+        done and C.green or C.gold).ZIndex=13
 end
-
-accSection("🏆 Top 5 Per-Match Awards", C.gold, {
-    {icon="🏅",name="Last One Standing",  medals="60", desc="Final survivor or Together winners"},
-    {icon="🏆",name="Chomper Champion",   medals="50", desc="Most total Points scored"},
-    {icon="💥",name="Chaos Agent",        medals="40", desc="Most total CL + FL damage dealt"},
-    {icon="👨‍🍳",name="Master Chef",        medals="35", desc="Most unique recipes cooked this match"},
-    {icon="🛒",name="Super Shopper",      medals="25", desc="Most ingredients purchased at checkout"},
-})
-accSection("⭐ Bonus Awards", Color3.fromRGB(200,165,70), {
-    {icon="🧼",name="Squeaky Clean",      medals="25", desc="Reached Food Fight with 0 breaks used"},
-    {icon="🗡️",name="Executioner",        medals="25", desc="Most 100% CL triggers caused"},
-    {icon="🧑‍🍳",name="Sous-Chef Supreme",  medals="25", desc="Most sous-chef contributions this match"},
-    {icon="🛒",name="Resource Raider",    medals="15", desc="Most total items gathered"},
-})
-accSection("📦 Base Medals", C.dim, {
-    {icon="✅",name="Participation",      medals="5",   desc="Complete any match"},
-    {icon="💪",name="Still Standing",     medals="+15", desc="Alive when the match ends"},
-    {icon="🤝",name="Together Victory",   medals="42",  desc="70% of Last One Standing (per player)"},
-})
 
 -- ── Titles sub-panel — premium vanity purchases only ─────────
 -- Titles are pure medal cosmetics. No achievement gating.
@@ -1250,7 +1315,7 @@ for _, h in ipairs(HONORIFICS) do
     tierL.ZIndex=13
 
     -- Flavor text
-    mkLabel(card,'"'..h.flavor..'"',Enum.Font.GothamItalic,12,
+    mkLabel(card,'"'..h.flavor..'"',Enum.Font.GothamMediumItalic,12,
         Color3.fromRGB(155,148,185),Enum.TextXAlignment.Left,
         UDim2.new(0,90,0,33),UDim2.new(1,-180,0,18)).ZIndex=12
 
@@ -1338,10 +1403,10 @@ tabPanels["SETTINGS"] = MatchPanel  -- legacy alias
 local matchSubPanels  = {}
 
 mkSubBar(MatchPanel, 38, {
-    {id="SCOREBOARD",  label="📊 Scoreboard",  color=Color3.fromRGB(50,70,100)},
     {id="KEYBINDINGS", label="⌨️ Keys",         color=Color3.fromRGB(50,70,100)},
-    {id="TEAMS",       label="👥 Teams",        color=Color3.fromRGB(50,70,100)},
+    {id="SCOREBOARD",  label="📊 Scoreboard",  color=Color3.fromRGB(50,70,100)},
     {id="SETTINGS",    label="⚙️ Settings",     color=Color3.fromRGB(50,70,100)},
+    {id="TEAMS",       label="👥 Teams",        color=Color3.fromRGB(50,70,100)},
 }, function(id)
     for sid, pnl in pairs(matchSubPanels) do pnl.Visible=(sid==id) end
 end)
@@ -1354,7 +1419,7 @@ local function matchSub(name, id, visible)
 end
 
 -- Scoreboard
-local sbPanel = matchSub("ScoreboardPanel","SCOREBOARD",true)
+local sbPanel = matchSub("ScoreboardPanel","SCOREBOARD",false)
 mkLabel(sbPanel,"📊  Ranked by total CL damage dealt",
     Enum.Font.GothamBold,13,C.dim,Enum.TextXAlignment.Center,
     UDim2.new(0,0,0,4),UDim2.new(1,0,0,20)).ZIndex=10
@@ -1395,8 +1460,8 @@ _G.Chompers.UpdateScoreboard=function(data)
     if isOpen and activeTab=="MATCH" then refreshScoreboard() end
 end
 
--- Keybindings
-local kbPanel=matchSub("KeybindingsPanel","KEYBINDINGS",false)
+-- Keybindings (first alphabetically — visible by default)
+local kbPanel=matchSub("KeybindingsPanel","KEYBINDINGS",true)
 local kbScroll=mkScroll(kbPanel,UDim2.new(1,-20,1,-6),UDim2.new(0,10,0,4),C.stroke)
 local KEYS={
     {"1 – 9, 0","Select hotbar slots 1–10"},
