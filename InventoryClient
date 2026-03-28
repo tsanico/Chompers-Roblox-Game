@@ -185,7 +185,7 @@ hFill.BackgroundColor3 = Color3.fromRGB(30, 28, 46)
 hFill.BorderSizePixel = 0; hFill.ZIndex = 12
 
 -- Header: icon + title
-local HeaderTitle = mkLabel(Header, "🧺  Basket  —  Inventory",
+local HeaderTitle = mkLabel(Header, "🧺  Basket Inventory",
 	Enum.Font.GothamBlack, 17, C.white, Enum.TextXAlignment.Left,
 	UDim2.new(0, 16, 0, 0), UDim2.new(0.5, 0, 1, 0))
 HeaderTitle.Name = "HeaderTitle"; HeaderTitle.ZIndex = 13
@@ -198,12 +198,12 @@ WeightHeader.ZIndex = 13
 
 -- Header: close button
 local CloseBtn = Instance.new("TextButton", Header)
-CloseBtn.Text = "✕"
-CloseBtn.Font = Enum.Font.GothamBlack; CloseBtn.TextSize = 16
+CloseBtn.Text = "Close"
+CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 13
 CloseBtn.TextColor3 = C.white
 CloseBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
 CloseBtn.BorderSizePixel = 0; CloseBtn.AutoButtonColor = false
-CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Size = UDim2.new(0, 56, 0, 28)
 CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
 CloseBtn.Position = UDim2.new(1, -12, 0.5, 0)
 CloseBtn.ZIndex = 14
@@ -243,6 +243,7 @@ LeftScroll.ZIndex = 12
 local LeftLL = Instance.new("UIListLayout", LeftScroll)
 LeftLL.SortOrder = Enum.SortOrder.LayoutOrder
 LeftLL.Padding = UDim.new(0, 2)
+LeftLL.VerticalAlignment = Enum.VerticalAlignment.Top  -- anchor items to top
 local LeftPad = Instance.new("UIPadding", LeftScroll)
 LeftPad.PaddingLeft = UDim.new(0, 6)
 LeftPad.PaddingRight = UDim.new(0, 6)
@@ -324,7 +325,7 @@ local function showDetail(item)
 
 	-- Big emoji + name card
 	local topCard = Instance.new("Frame", RightScroll)
-	topCard.Size = UDim2.new(1, 0, 0, 100)
+	topCard.Size = UDim2.new(1, 0, 0, 120)
 	topCard.BackgroundColor3 = bgCol
 	topCard.BorderSizePixel = 0; topCard.LayoutOrder = 1; topCard.ZIndex = 12
 	mkCorner(topCard, 12)
@@ -332,20 +333,20 @@ local function showDetail(item)
 
 	-- Giant emoji
 	mkLabel(topCard, item.emoji or "🍽",
-		Enum.Font.GothamBold, 52, C.white,
+		Enum.Font.GothamBold, 72, C.white,
 		Enum.TextXAlignment.Center,
-		UDim2.new(0, 0, 0, 0), UDim2.new(0, 90, 1, 0)).ZIndex = 13
+		UDim2.new(0, 0, 0, 0), UDim2.new(0, 110, 1, 0)).ZIndex = 13
 
 	-- Name + rarity
 	mkLabel(topCard, item.name or "Unknown",
-		Enum.Font.GothamBlack, 20, C.white,
+		Enum.Font.GothamBlack, 26, C.white,
 		Enum.TextXAlignment.Left,
-		UDim2.new(0, 96, 0, 12), UDim2.new(1, -104, 0, 26)).ZIndex = 13
+		UDim2.new(0, 116, 0, 10), UDim2.new(1, -124, 0, 32)).ZIndex = 13
 
 	local rarityL = mkLabel(topCard, rarity,
-		Enum.Font.GothamBold, 13, strokeCol,
+		Enum.Font.GothamBold, 16, strokeCol,
 		Enum.TextXAlignment.Left,
-		UDim2.new(0, 96, 0, 40), UDim2.new(1, -104, 0, 18))
+		UDim2.new(0, 116, 0, 44), UDim2.new(1, -124, 0, 20))
 	rarityL.ZIndex = 13
 
 	-- Weight + zone
@@ -355,9 +356,9 @@ local function showDetail(item)
 		table.insert(meta, "⚖ " .. tostring(item.wt or item.weight) .. " wt")
 	end
 	mkLabel(topCard, table.concat(meta, "   "),
-		Enum.Font.Gotham, 12, C.dim,
+		Enum.Font.Gotham, 14, C.dim,
 		Enum.TextXAlignment.Left,
-		UDim2.new(0, 96, 0, 60), UDim2.new(1, -104, 0, 16)).ZIndex = 13
+		UDim2.new(0, 116, 0, 66), UDim2.new(1, -124, 0, 18)).ZIndex = 13
 
 	-- Status tag
 	local stText, stColor
@@ -371,9 +372,9 @@ local function showDetail(item)
 		stText = "UNPAID  $" .. tostring(item.cost or 0); stColor = C.orange
 	end
 	mkLabel(topCard, stText,
-		Enum.Font.GothamBlack, 12, stColor,
+		Enum.Font.GothamBlack, 15, stColor,
 		Enum.TextXAlignment.Left,
-		UDim2.new(0, 96, 0, 78), UDim2.new(1, -104, 0, 16)).ZIndex = 13
+		UDim2.new(0, 116, 0, 86), UDim2.new(1, -124, 0, 20)).ZIndex = 13
 
 	-- Detail section helper
 	local function addSection(title, value, color)
@@ -397,10 +398,10 @@ local function showDetail(item)
 		ll.Padding = UDim.new(0, 2)
 
 		local titleL = Instance.new("TextLabel", row)
-		titleL.Size = UDim2.new(1, 0, 0, 14)
+		titleL.Size = UDim2.new(1, 0, 0, 16)
 		titleL.BackgroundTransparency = 1
 		titleL.Text = title
-		titleL.Font = Enum.Font.GothamBlack; titleL.TextSize = 10
+		titleL.Font = Enum.Font.GothamBlack; titleL.TextSize = 11
 		titleL.TextColor3 = color or C.dim
 		titleL.TextXAlignment = Enum.TextXAlignment.Left
 		titleL.ZIndex = 13; titleL.LayoutOrder = 1
@@ -410,7 +411,7 @@ local function showDetail(item)
 		valL.AutomaticSize = Enum.AutomaticSize.Y
 		valL.BackgroundTransparency = 1
 		valL.Text = tostring(value)
-		valL.Font = Enum.Font.Gotham; valL.TextSize = 14
+		valL.Font = Enum.Font.Gotham; valL.TextSize = 17
 		valL.TextColor3 = C.white
 		valL.TextXAlignment = Enum.TextXAlignment.Left
 		valL.TextWrapped = true; valL.LineHeight = 1.3
@@ -579,7 +580,7 @@ end
 
 local function rebuildPanel()
 	local icon = containerType == "Cart" and "🛒" or "🧺"
-	HeaderTitle.Text = icon .. "  " .. containerType .. "  —  Inventory"
+	HeaderTitle.Text = icon .. "  " .. containerType .. " Inventory"
 	WeightHeader.Text = tostring(currentWeight) .. " / " .. tostring(maxWeight) .. " wt"
 	buildLeftList()
 end
@@ -662,6 +663,7 @@ end)
 if UpdateInventoryRemote then
 	UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
 		localInventory = inventory or {}
+		print("[InventoryClient] UpdateInventory fired — " .. #localInventory .. " items")
 		syncHotbar()
 		if panelOpen then rebuildPanel() end
 	end)
