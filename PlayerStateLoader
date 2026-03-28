@@ -1,0 +1,865 @@
+-- ============================================================
+-- PlayerState — ModuleScript
+-- Location: ServerScriptService > PlayerState
+--
+-- The single server-side source of truth for every player's
+-- in-match state. All other server scripts require this module
+-- and call its functions — they never track their own state.
+--
+-- REQUIRES: ReplicatedStorage > ChompersData
+-- FIRES:    ChompersRemotes (UpdateCleanliness, UpdateFullness,
+--           UpdateInventory, UpdateWeight, UpdateMoney,
+--           UpdateSpeed, UpdateLobbyState, ApplyFreeze,
+--           ApplyMark, HitPlayer)
+-- LISTENS:  PlayerSelectAllergy, PlayerSelectCart,
+--           PlayerSelectFavourite, RequestLobbyData
+-- ============================================================
+
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
+local C             = ChompersData.Constants
+local Remotes       = ReplicatedStorage:WaitForChild("ChompersRemotes")
+
+-- ── Remote references ───────────────────────────────────────
+local function R(name) return Remotes:WaitForChild(name) end
+
+local UpdateCleanliness = R("UpdateCleanliness")
+local UpdateFullness    = R("UpdateFullness")
+local UpdateInventory   = R("UpdateInventory")
+local UpdateWeight      = R("UpdateWeight")
+local UpdateMoney       = R("UpdateMoney")
+local UpdateSpeed       = R("UpdateSpeed")
+local UpdateLobbyState  = R("UpdateLobbyState")
+local ApplyFreeze       = R("ApplyFreeze")
+local ApplyMark         = R("ApplyMark")
+local HitPlayer         = R("HitPlayer")
+
+-- ── Module table ────────────────────────────────────────────
+local PlayerState = {}
+
+-- Internal storage: keyed by player
+local _state = {}
+
+-- ============================================================
+-- DEFAULT STATE
+-- ============================================================
+
+local function defaultState()
+	return {
+		-- ── Bars ──────────────────────────────────────────────
+		cl = 0,                  -- Cleanliness (HP). 0–100. Never decays.
+		fl = 0,                  -- Fullness (control). 0–100. Decays over time.
+		clDebuffActive = false,  -- true while in 100% CL state
+		flDebuffActive = false,  -- true while in 100% FL state
+		at100CLTime = 0,         -- timestamp when CL hit 100
+		at100FLTime = 0,
+
+		-- ── Economy ───────────────────────────────────────────
+		money = C.Economy.StartingCash,   -- $15 start
+
+		-- ── Inventory ─────────────────────────────────────────
+		-- Each item: { name, rarity, wt, cost, allergy, paid, effect, zone }
+		inventory = {},
+		container = "Basket",            -- "Basket" or "Cart"
+		napkins = C.Napkin.StartingCount, -- 1 per match
+
+		-- ── Bathroom ──────────────────────────────────────────
+		pottyBreaks = C.Bathroom.PottyBreaksPerMatch,  -- 3
+		inBathroom = false,
+		bathroomResetTime = nil,   -- timestamp when both bars hit 0 in bathroom
+
+		-- ── Prelobby selections ───────────────────────────────
+		allergy = nil,            -- e.g. "Dairy", "Gluten" — nil until chosen
+		favourite = nil,          -- recipe name string — nil until chosen
+		isReady = false,
+
+		-- ── Combat / CC ───────────────────────────────────────
+		activeMark = nil,         -- { bonus=0.15/0.20, expiresAt=tick() }
+		ccHitCount = 0,           -- consecutive CC hits (diminishing returns)
+		lastCCTime = 0,           -- last CC hit timestamp
+
+		-- ── Craving State ─────────────────────────────────────
+		cravingActive = false,
+		cravingExpiresAt = 0,
+		cravingCooldownUntil = 0,
+
+		-- ── Oil primer (elemental chain) ───────────────────────
+		oilPrimedAt = 0,          -- timestamp of last Oil hit applied
+
+		-- ── Freeze ────────────────────────────────────────────
+		freezeTotal = 0,          -- cumulative freeze applied this chain (cap 2.5s)
+
+		-- ── Speed modifiers ───────────────────────────────────
+		-- Computed fresh each time, not stored — see PlayerState.GetSpeedMult()
+
+		-- ── Alliance ──────────────────────────────────────────
+		allyUserId = nil,         -- single ally userId (or nil)
+		allyUserId2 = nil,        -- second ally (3-person alliances, large servers)
+		allianceConfirmed = false,
+
+		-- ── Points ────────────────────────────────────────────
+		points = 0,
+		totalCLDealt = 0,
+		totalFLDealt = 0,
+		recipesCooked = {},       -- set of unique recipe names cooked
+		ingredientsPurchased = 0,
+		itemsGathered = 0,
+		downsTriggered = 0,
+
+		-- ── Status ────────────────────────────────────────────
+		isEliminated = false,
+		isSpectating = false,
+	}
+end
+
+-- ============================================================
+-- INIT / CLEANUP
+-- ============================================================
+
+function PlayerState.Init(player)
+	_state[player] = defaultState()
+	PlayerState.SyncAll(player)
+end
+
+function PlayerState.Cleanup(player)
+	_state[player] = nil
+end
+
+function PlayerState.Get(player)
+	return _state[player]
+end
+
+-- ============================================================
+-- SYNC HELPERS — push state to client
+-- ============================================================
+
+function PlayerState.SyncAll(player)
+	local s = _state[player]
+	if not s then return end
+	UpdateCleanliness:FireClient(player, s.cl)
+	UpdateFullness:FireClient(player, s.fl)
+	UpdateMoney:FireClient(player, s.money)
+	PlayerState.SyncInventory(player)
+	PlayerState.SyncSpeed(player)
+end
+
+function PlayerState.SyncInventory(player)
+	local s = _state[player]
+	if not s then return end
+	local totalWt = PlayerState.GetTotalWeight(player)
+	local limit = PlayerState.GetWeightLimit(player)
+	UpdateInventory:FireClient(player, s.inventory)
+	UpdateWeight:FireClient(player, totalWt, limit)
+end
+
+function PlayerState.SyncSpeed(player)
+	local s = _state[player]
+	if not s then return end
+	local mult = PlayerState.GetSpeedMult(player)
+	UpdateSpeed:FireClient(player, mult)
+end
+
+-- ============================================================
+-- WEIGHT & CONTAINER
+-- ============================================================
+
+function PlayerState.GetWeightLimit(player)
+	local s = _state[player]
+	if not s then return 35 end
+	local cfg = C.Containers[s.container] or C.Containers.Basket
+	return cfg.weightLimit
+end
+
+function PlayerState.GetSlotLimit(player)
+	local s = _state[player]
+	if not s then return 6 end
+	local cfg = C.Containers[s.container] or C.Containers.Basket
+	return cfg.slots
+end
+
+function PlayerState.GetTotalWeight(player)
+	local s = _state[player]
+	if not s then return 0 end
+	local total = 0
+	for _, item in ipairs(s.inventory) do
+		total = total + (item.wt or 0)
+	end
+	return total
+end
+
+function PlayerState.SetContainer(player, containerName)
+	local s = _state[player]
+	if not s then return end
+	if containerName ~= "Basket" and containerName ~= "Cart" then return end
+	s.container = containerName
+	PlayerState.SyncInventory(player)
+end
+
+-- ============================================================
+-- SPEED MULTIPLIER
+-- All modifiers are computed fresh — clamped to 35% floor
+-- ============================================================
+
+function PlayerState.GetSpeedMult(player)
+	local s = _state[player]
+	if not s then return 1.0 end
+
+	local mult = 1.0
+
+	-- Container base speed modifier
+	local cfg = C.Containers[s.container] or C.Containers.Basket
+	mult = mult * cfg.speedMod
+
+	-- Overweight penalty: every +10wt over limit = −10%
+	local wt = PlayerState.GetTotalWeight(player)
+	local limit = PlayerState.GetWeightLimit(player)
+	if wt > limit then
+		local over = wt - limit
+		local penalty = math.floor(over / 10) * 0.10
+		mult = mult * (1 - penalty)
+	end
+
+	-- FL size/speed tiers
+	if s.fl >= C.FL.Tier2Min and s.fl < C.FL.Tier2Max then
+		mult = mult * C.FL.Tier2SpeedMult   -- −25%
+	elseif s.fl >= C.FL.Tier1Min and s.fl < C.FL.Tier1Max then
+		mult = mult * C.FL.Tier1SpeedMult   -- −10%
+	end
+
+	-- 100% CL debuff
+	if s.clDebuffActive then
+		mult = mult * (1 - C.State100.SpeedPenalty)
+	end
+
+	-- 100% FL debuff (stacks if both are active)
+	if s.flDebuffActive then
+		mult = mult * (1 - C.State100.SpeedPenalty)
+	end
+
+	-- Hard floor: never below 35%
+	mult = math.max(mult, C.SpeedFloor)
+
+	return mult
+end
+
+-- ============================================================
+-- ECONOMY
+-- ============================================================
+
+function PlayerState.AddMoney(player, amount)
+	local s = _state[player]
+	if not s then return end
+	s.money = s.money + amount
+	UpdateMoney:FireClient(player, s.money)
+end
+
+function PlayerState.DeductMoney(player, amount)
+	local s = _state[player]
+	if not s then return false end
+	if s.money < amount then return false end
+	s.money = s.money - amount
+	UpdateMoney:FireClient(player, s.money)
+	return true
+end
+
+function PlayerState.GetMoney(player)
+	local s = _state[player]
+	return s and s.money or 0
+end
+
+-- ============================================================
+-- INVENTORY
+-- ============================================================
+
+-- AddItem: returns true on success, false + reason on failure
+function PlayerState.AddItem(player, itemData)
+	local s = _state[player]
+	if not s then return false, "no_state" end
+
+	-- Slot check
+	if #s.inventory >= PlayerState.GetSlotLimit(player) then
+		return false, "slots_full"
+	end
+
+	-- Weight check (overloading IS allowed per Bible — just penalised)
+	-- We allow it but the caller can warn the player
+
+	table.insert(s.inventory, itemData)
+	s.itemsGathered = s.itemsGathered + 1
+
+	-- Points: +2 per pickup
+	PlayerState.AddPoints(player, C.Points.PickupIngredient)
+
+	PlayerState.SyncInventory(player)
+	PlayerState.SyncSpeed(player)
+	return true
+end
+
+-- RemoveItem: removes by slot index (1-based)
+function PlayerState.RemoveItem(player, slotIndex)
+	local s = _state[player]
+	if not s then return nil end
+	if not s.inventory[slotIndex] then return nil end
+	local item = table.remove(s.inventory, slotIndex)
+	PlayerState.SyncInventory(player)
+	PlayerState.SyncSpeed(player)
+	return item
+end
+
+-- MarkItemPaid: marks a specific item as paid (by slot index)
+function PlayerState.MarkItemPaid(player, slotIndex)
+	local s = _state[player]
+	if not s or not s.inventory[slotIndex] then return end
+	s.inventory[slotIndex].paid = true
+	s.ingredientsPurchased = s.ingredientsPurchased + 1
+	PlayerState.AddPoints(player, C.Points.IngredientPaidCheckout)
+end
+
+-- MarkAllUnpaidAsPaid: marks every unpaid item as paid in one pass
+function PlayerState.MarkAllUnpaidAsPaid(player)
+	local s = _state[player]
+	if not s then return 0 end
+	local count = 0
+	for _, item in ipairs(s.inventory) do
+		if not item.paid then
+			item.paid = true
+			s.ingredientsPurchased = s.ingredientsPurchased + 1
+			PlayerState.AddPoints(player, C.Points.IngredientPaidCheckout)
+			count = count + 1
+		end
+	end
+	PlayerState.SyncInventory(player)
+	return count
+end
+
+-- GetUnpaidCost: sum of costs for all unpaid items
+function PlayerState.GetUnpaidCost(player)
+	local s = _state[player]
+	if not s then return 0 end
+	local total = 0
+	for _, item in ipairs(s.inventory) do
+		if not item.paid then
+			total = total + (item.cost or 0)
+		end
+	end
+	return total
+end
+
+-- DropAllItems: empties inventory, returns the dropped items list
+-- Called by 100% state and bathroom systems
+function PlayerState.DropAllItems(player)
+	local s = _state[player]
+	if not s then return {} end
+	local dropped = s.inventory
+	s.inventory = {}
+	PlayerState.SyncInventory(player)
+	PlayerState.SyncSpeed(player)
+	return dropped
+end
+
+-- AddNapkin / UseNapkin
+function PlayerState.AddNapkin(player, count)
+	local s = _state[player]
+	if not s then return end
+	s.napkins = s.napkins + (count or 1)
+end
+
+function PlayerState.UseNapkin(player)
+	local s = _state[player]
+	if not s then return false end
+	if s.napkins <= 0 then return false end
+	s.napkins = s.napkins - 1
+	-- Napkin heals −25 CL (2s, interruptible — handled by calling script)
+	PlayerState.ModifyCL(player, -C.Napkin.CLHeal)
+	return true
+end
+
+-- ============================================================
+-- CLEANLINESS (CL) BAR
+-- ============================================================
+
+-- ModifyCL: delta can be negative (healing) or positive (damage)
+-- Returns true if 100% state was triggered by this change
+function PlayerState.ModifyCL(player, delta)
+	local s = _state[player]
+	if not s then return false end
+
+	local prev = s.cl
+	s.cl = math.clamp(s.cl + delta, 0, 100)
+	UpdateCleanliness:FireClient(player, s.cl)
+
+	-- Warning threshold
+	if s.cl >= C.CL.WarnThreshold and prev < C.CL.WarnThreshold then
+		HitPlayer:FireClient(player, "cl_warn")
+	end
+
+	-- 100% state trigger
+	if s.cl >= 100 and not s.clDebuffActive then
+		s.clDebuffActive = true
+		s.at100CLTime = tick()
+		PlayerState._Trigger100State(player, "cl")
+		return true
+	end
+
+	-- If CL dropped below 100, clear debuff
+	if s.cl < 100 and s.clDebuffActive then
+		s.clDebuffActive = false
+		PlayerState.SyncSpeed(player)
+	end
+
+	return false
+end
+
+function PlayerState.SetCL(player, value)
+	local s = _state[player]
+	if not s then return end
+	s.cl = math.clamp(value, 0, 100)
+	if s.cl < 100 then s.clDebuffActive = false end
+	UpdateCleanliness:FireClient(player, s.cl)
+	PlayerState.SyncSpeed(player)
+end
+
+-- ============================================================
+-- FULLNESS (FL) BAR
+-- ============================================================
+
+function PlayerState.ModifyFL(player, delta)
+	local s = _state[player]
+	if not s then return false end
+
+	local prev = s.fl
+	s.fl = math.clamp(s.fl + delta, 0, 100)
+	UpdateFullness:FireClient(player, s.fl)
+
+	if s.fl >= C.FL.WarnThreshold and prev < C.FL.WarnThreshold then
+		HitPlayer:FireClient(player, "fl_warn")
+	end
+
+	if s.fl >= 100 and not s.flDebuffActive then
+		s.flDebuffActive = true
+		s.at100FLTime = tick()
+		PlayerState._Trigger100State(player, "fl")
+		return true
+	end
+
+	if s.fl < 100 and s.flDebuffActive then
+		s.flDebuffActive = false
+		PlayerState.SyncSpeed(player)
+	end
+
+	return false
+end
+
+function PlayerState.SetFL(player, value)
+	local s = _state[player]
+	if not s then return end
+	s.fl = math.clamp(value, 0, 100)
+	if s.fl < 100 then s.flDebuffActive = false end
+	UpdateFullness:FireClient(player, s.fl)
+	PlayerState.SyncSpeed(player)
+end
+
+-- ============================================================
+-- 100% STATE — triggers on either bar hitting 100
+-- ============================================================
+
+function PlayerState._Trigger100State(player, bar)
+	local s = _state[player]
+	if not s then return end
+
+	-- Drop ALL inventory — returns items for world-spawning
+	local dropped = PlayerState.DropAllItems(player)
+
+	-- Tell client: 0.5s dramatic cue + dropped items positions
+	HitPlayer:FireClient(player, "state100", bar, dropped)
+
+	-- Apply speed debuff (already reflected in GetSpeedMult via clDebuffActive/flDebuffActive)
+	PlayerState.SyncSpeed(player)
+
+	-- Points: whoever triggered this gets 25 (handled by CombatSystem calling AddPoints)
+	-- The caller (CombatSystem) is responsible for awarding Down points to the attacker
+
+	print(string.format("[PlayerState] %s hit 100%% %s — inventory dropped (%d items)",
+		player.Name, string.upper(bar), #dropped))
+end
+
+-- ============================================================
+-- FL DECAY — runs on a heartbeat loop (called from loader)
+-- FL decays slowly over time on its own (CL never decays)
+-- ============================================================
+
+local FL_DECAY_RATE = 0.5   -- FL units per second lost naturally
+local FL_DECAY_INTERVAL = 1 -- seconds between decay ticks
+
+function PlayerState.StartFLDecay()
+	task.spawn(function()
+		while true do
+			task.wait(FL_DECAY_INTERVAL)
+			for player, s in pairs(_state) do
+				if s and not s.isEliminated and s.fl > 0 then
+					-- Only decay if player exists
+					if Players:FindFirstChild(player.Name) then
+						PlayerState.ModifyFL(player, -FL_DECAY_RATE)
+					end
+				end
+			end
+		end
+	end)
+end
+
+-- ============================================================
+-- CRAVING STATE (Favourite mechanic — Part 5)
+-- Triggered when player self-consumes their favourite recipe
+-- ============================================================
+
+function PlayerState.ActivateCraving(player)
+	local s = _state[player]
+	if not s then return false end
+	local now = tick()
+	if now < s.cravingCooldownUntil then return false end  -- on cooldown
+
+	s.cravingActive = true
+	s.cravingExpiresAt = now + C.Craving.WindowSeconds
+	-- Cooldown starts when window expires or is consumed
+	task.delay(C.Craving.WindowSeconds, function()
+		if s.cravingActive then
+			PlayerState.ConsumeCraving(player)
+		end
+	end)
+	return true
+end
+
+-- Called when craving is consumed on a hit
+function PlayerState.ConsumeCraving(player)
+	local s = _state[player]
+	if not s then return end
+	s.cravingActive = false
+	s.cravingCooldownUntil = tick() + C.Craving.CooldownSeconds
+end
+
+function PlayerState.IsCravingActive(player)
+	local s = _state[player]
+	return s and s.cravingActive and tick() < s.cravingExpiresAt
+end
+
+-- ============================================================
+-- MARKS (Part 9 — one active, highest value wins)
+-- ============================================================
+
+function PlayerState.ApplyMarkToTarget(targetPlayer, markIngredient)
+	local s = _state[targetPlayer]
+	if not s then return end
+
+	local markDef = C.Marks[markIngredient]
+	if not markDef then return end
+
+	-- Only apply if higher than current mark (or no mark)
+	if s.activeMark and s.activeMark.bonus >= markDef.bonus then return end
+
+	s.activeMark = {
+		ingredient = markIngredient,
+		bonus      = markDef.bonus,
+		expiresAt  = tick() + markDef.window,
+	}
+
+	-- Tell client to show mark icon above target
+	ApplyMark:FireAllClients(targetPlayer, markIngredient, markDef.window)
+end
+
+function PlayerState.GetActiveMark(player)
+	local s = _state[player]
+	if not s or not s.activeMark then return nil end
+	if tick() > s.activeMark.expiresAt then
+		s.activeMark = nil
+		return nil
+	end
+	return s.activeMark
+end
+
+-- ============================================================
+-- OIL PRIMER (elemental chain — Part 9)
+-- ============================================================
+
+function PlayerState.ApplyOilPrimer(player)
+	local s = _state[player]
+	if not s then return end
+	s.oilPrimedAt = tick()
+end
+
+function PlayerState.IsOilPrimed(player)
+	local s = _state[player]
+	if not s then return false end
+	return (tick() - s.oilPrimedAt) <= C.Elemental.OilWindowSeconds
+end
+
+-- ============================================================
+-- FREEZE (Part 9 — cap 2.5s total)
+-- ============================================================
+
+function PlayerState.ApplyFreeze(player, seconds)
+	local s = _state[player]
+	if not s then return 0 end
+	local remaining = C.FreezeCapSeconds - s.freezeTotal
+	local actual = math.min(seconds, remaining)
+	if actual <= 0 then return 0 end
+	s.freezeTotal = s.freezeTotal + actual
+	ApplyFreeze:FireClient(player, actual)
+	-- Reset freeze total after cap window expires
+	task.delay(C.FreezeCapSeconds + 0.1, function()
+		if s then s.freezeTotal = 0 end
+	end)
+	return actual
+end
+
+-- ============================================================
+-- CC DIMINISHING RETURNS (Part 9)
+-- ============================================================
+
+function PlayerState.GetCCEffectiveness(player)
+	local s = _state[player]
+	if not s then return 1.0 end
+	-- Reset counter if 8s have passed since last CC
+	if tick() - s.lastCCTime > C.CCDiminish.ResetSeconds then
+		s.ccHitCount = 0
+	end
+	local diminish = {
+		C.CCDiminish.Hit1,
+		C.CCDiminish.Hit2,
+		C.CCDiminish.Hit3,
+		C.CCDiminish.Hit4,
+	}
+	local idx = math.min(s.ccHitCount + 1, 4)
+	s.ccHitCount = s.ccHitCount + 1
+	s.lastCCTime = tick()
+	return diminish[idx]
+end
+
+-- ============================================================
+-- BATHROOM SYSTEM (Part 4)
+-- ============================================================
+
+function PlayerState.EnterBathroom(player)
+	local s = _state[player]
+	if not s then return false end
+	if s.pottyBreaks <= 0 then return false end
+	if s.cl < C.CL.BathroomThreshold and s.fl < C.FL.BathroomThreshold then
+		return false  -- neither bar at 80%+
+	end
+	s.inBathroom = true
+	s.bathroomResetTime = nil
+	return true
+end
+
+-- UseSink: costs 1 Potty Break, resets CL to 0 over ~3s
+function PlayerState.UseSink(player)
+	local s = _state[player]
+	if not s or not s.inBathroom then return false end
+	if s.pottyBreaks <= 0 then
+		-- Eliminate player — no breaks left
+		PlayerState.Eliminate(player)
+		return false
+	end
+	s.pottyBreaks = s.pottyBreaks - 1
+	PlayerState.SetCL(player, 0)
+	PlayerState._CheckBathroomReset(player)
+	return true
+end
+
+-- UseToilet: costs 1 Potty Break, resets FL to 0 over ~2s
+function PlayerState.UseToilet(player)
+	local s = _state[player]
+	if not s or not s.inBathroom then return false end
+	if s.pottyBreaks <= 0 then
+		PlayerState.Eliminate(player)
+		return false
+	end
+	s.pottyBreaks = s.pottyBreaks - 1
+	PlayerState.SetFL(player, 0)
+	PlayerState._CheckBathroomReset(player)
+	return true
+end
+
+-- Check if both bars are now 0 — start the 10s exit timer
+function PlayerState._CheckBathroomReset(player)
+	local s = _state[player]
+	if not s then return end
+	if s.cl == 0 and s.fl == 0 and not s.bathroomResetTime then
+		s.bathroomResetTime = tick()
+		-- Force exit after 10s (Balance Patch v1)
+		task.delay(C.Bathroom.MaxStayAfterResetSeconds, function()
+			if s.inBathroom and s.bathroomResetTime then
+				PlayerState.ExitBathroom(player)
+			end
+		end)
+	end
+end
+
+function PlayerState.ExitBathroom(player)
+	local s = _state[player]
+	if not s then return end
+	s.inBathroom = false
+	s.bathroomResetTime = nil
+	-- 1.5s grace window of invincibility handled by CombatSystem
+	-- listening for ExitBathroom remote
+end
+
+-- ============================================================
+-- ELIMINATION
+-- ============================================================
+
+function PlayerState.Eliminate(player)
+	local s = _state[player]
+	if not s then return end
+	s.isEliminated = true
+	s.inBathroom = false
+	-- Signal game systems — GameManager listens for this
+	print(string.format("[PlayerState] %s ELIMINATED", player.Name))
+end
+
+-- ============================================================
+-- ALLIANCE (Part 12)
+-- ============================================================
+
+function PlayerState.SetAlly(player, allyPlayer)
+	local s = _state[player]
+	if not s then return end
+	s.allyUserId = allyPlayer and allyPlayer.UserId or nil
+end
+
+function PlayerState.SetAlly2(player, allyPlayer)
+	local s = _state[player]
+	if not s then return end
+	s.allyUserId2 = allyPlayer and allyPlayer.UserId or nil
+end
+
+function PlayerState.IsAllied(playerA, playerB)
+	local sA = _state[playerA]
+	if not sA then return false end
+	local id = playerB.UserId
+	return sA.allyUserId == id or sA.allyUserId2 == id
+end
+
+-- ============================================================
+-- PRELOBBY SELECTIONS
+-- ============================================================
+
+function PlayerState.SetAllergy(player, allergyType)
+	local s = _state[player]
+	if not s then return end
+	-- Validate against known allergy types
+	local valid = {
+		Dairy=true, Gluten=true, Produce=true, Meat=true,
+		Seafood=true, Nuts=true, Spicy=true, Soy=true
+	}
+	if not valid[allergyType] then return end
+	s.allergy = allergyType
+end
+
+function PlayerState.SetFavourite(player, recipeName)
+	local s = _state[player]
+	if not s then return end
+	-- Validate recipe exists in ChompersData
+	if not ChompersData.GetRecipe(recipeName) then return end
+	s.favourite = recipeName
+end
+
+function PlayerState.SetReady(player, isReady)
+	local s = _state[player]
+	if not s then return end
+	s.isReady = isReady == true
+end
+
+-- ============================================================
+-- POINTS
+-- ============================================================
+
+function PlayerState.AddPoints(player, amount)
+	local s = _state[player]
+	if not s then return end
+	s.points = s.points + amount
+end
+
+function PlayerState.RecordCLDealt(player, amount)
+	local s = _state[player]
+	if not s then return end
+	s.totalCLDealt = s.totalCLDealt + amount
+	PlayerState.AddPoints(player, amount * C.Points.DirectHitPerCL)
+end
+
+function PlayerState.RecordFLDealt(player, amount)
+	local s = _state[player]
+	if not s then return end
+	s.totalFLDealt = s.totalFLDealt + amount
+	PlayerState.AddPoints(player, amount * C.Points.DirectHitPerFL)
+end
+
+function PlayerState.RecordRecipeCooked(player, recipeName)
+	local s = _state[player]
+	if not s then return end
+	s.recipesCooked[recipeName] = true
+end
+
+function PlayerState.RecordDown(player)
+	local s = _state[player]
+	if not s then return end
+	s.downsTriggered = s.downsTriggered + 1
+	PlayerState.AddPoints(player, C.Points.DownEnemy)
+end
+
+-- ============================================================
+-- REMOTE LISTENERS (Prelobby selections from client)
+-- ============================================================
+
+R("PlayerSelectAllergy").OnServerEvent:Connect(function(player, allergyType)
+	PlayerState.SetAllergy(player, allergyType)
+	UpdateLobbyState:FireClient(player, { allergy = allergyType })
+end)
+
+R("PlayerSelectCart").OnServerEvent:Connect(function(player, choice)
+	PlayerState.SetContainer(player, choice)
+	UpdateLobbyState:FireClient(player, { container = choice })
+end)
+
+R("PlayerSelectFavourite").OnServerEvent:Connect(function(player, recipeName)
+	PlayerState.SetFavourite(player, recipeName)
+	UpdateLobbyState:FireClient(player, { favourite = recipeName })
+end)
+
+R("RequestLobbyData").OnServerEvent:Connect(function(player)
+	local s = _state[player]
+	if not s then return end
+	UpdateLobbyState:FireClient(player, {
+		allergy   = s.allergy,
+		container = s.container,
+		favourite = s.favourite,
+		money     = s.money,
+		napkins   = s.napkins,
+	})
+end)
+
+-- ============================================================
+-- PLAYER LIFECYCLE
+-- ============================================================
+
+Players.PlayerAdded:Connect(function(player)
+	PlayerState.Init(player)
+	player.CharacterAdded:Connect(function()
+		task.wait(1)
+		PlayerState.SyncAll(player)
+	end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	PlayerState.Cleanup(player)
+end)
+
+-- ============================================================
+-- START FL DECAY LOOP
+-- ============================================================
+
+PlayerState.StartFLDecay()
+
+return PlayerState
