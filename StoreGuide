@@ -1315,7 +1315,7 @@ for _, h in ipairs(HONORIFICS) do
     tierL.ZIndex=13
 
     -- Flavor text
-    mkLabel(card,'"'..h.flavor..'"',Enum.Font.GothamMediumItalic,12,
+    mkLabel(card,'"'..h.flavor..'"',Enum.Font.Gotham,12,
         Color3.fromRGB(155,148,185),Enum.TextXAlignment.Left,
         UDim2.new(0,90,0,33),UDim2.new(1,-180,0,18)).ZIndex=12
 
