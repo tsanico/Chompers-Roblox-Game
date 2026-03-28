@@ -1,2221 +1,654 @@
--- CookbookBuilder (LocalScript in StarterGui > PrelobbyGui)
--- Chompers' Fresh Market — v4.0
--- Builds: Cookbook tab (Recipes/Ingredients/Combos) + Accolades tab (Accolades/Cosmetics/Achievements)
--- Runs AFTER PrelobbyGuiBuilder — shares Panel/ContentArea/tabPanels via WaitForChild
+-- ============================================================
+-- CookbookBuilder — LocalScript
+-- Location: StarterGui > PrelobbyGui
+--
+-- Populates:
+--   CookPanel       → Cookbook tab  (Ingredients | Recipes sub-tabs)
+--   AccoladesPanel  → Accolades tab (Accolades | Titles sub-tabs)
+--   FavouriteScroll → Preferences favourite food picker
+-- ============================================================
 
-local PrelobbyGui   = script.Parent
-local TweenService  = game:GetService("TweenService")
-local Players       = game:GetService("Players")
-local player        = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local Players           = game:GetService("Players")
 
--- Wait for Panel and ContentArea built by PrelobbyGuiBuilder
-local Panel = PrelobbyGui:WaitForChild("StoreGuideOverlay",10)
-	:WaitForChild("Panel",10)
-local ContentArea = Panel:WaitForChild("ContentArea",10)
+local player  = Players.LocalPlayer
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local Data    = require(ReplicatedStorage:WaitForChild("ChompersData", 10))
 
--- Wait for _G.Chompers to be ready
+-- ── DOM path ─────────────────────────────────────────────────
+local PrelobbyGui  = script.Parent
+local Overlay      = PrelobbyGui:WaitForChild("StoreGuideOverlay", 30)
+local Panel        = Overlay:WaitForChild("Panel", 30)
+local ContentArea  = Panel:WaitForChild("ContentArea", 30)
+local CookPanel    = ContentArea:WaitForChild("CookPanel", 30)
+local AccPanel     = ContentArea:WaitForChild("AccoladesPanel", 30)
+local PrefPanel    = ContentArea:WaitForChild("PrefPanel", 30)
+local FavScroll    = PrefPanel:WaitForChild("FavouriteScroll", 30)
+local FavSelected  = PrefPanel:WaitForChild("FavSelected", 30)
+
+-- Wait for _G.Chompers
 local waited = 0
-while (not _G.Chompers or not _G.Chompers.SetSlots) and waited < 8 do
-	task.wait(0.1)
-	waited = waited + 0.1
+while not (_G.Chompers and _G.Chompers.EquipTitle) and waited < 8 do
+	task.wait(0.1); waited = waited + 0.1
 end
 
--- ============================================================
--- COLOUR PALETTE (mirrors PrelobbyGuiBuilder)
--- ============================================================
+-- ── Colours ──────────────────────────────────────────────────
 local C = {
-	bg      = Color3.fromRGB(20,18,32),
-	bgLight = Color3.fromRGB(28,26,42),
-	stroke  = Color3.fromRGB(50,46,72),
-	red     = Color3.fromRGB(218,65,65),
-	gold    = Color3.fromRGB(239,159,39),
-	green   = Color3.fromRGB(70,195,85),
-	white   = Color3.fromRGB(245,242,255),
-	dim     = Color3.fromRGB(105,100,138),
-	money   = Color3.fromRGB(75,205,60),
-	ally    = Color3.fromRGB(100,210,255),
+	bg      = Color3.fromRGB(20, 18, 32),
+	bgLight = Color3.fromRGB(28, 26, 42),
+	bgCard  = Color3.fromRGB(32, 30, 48),
+	stroke  = Color3.fromRGB(50, 46, 72),
+	red     = Color3.fromRGB(218, 65, 65),
+	gold    = Color3.fromRGB(239, 159, 39),
+	green   = Color3.fromRGB(70, 195, 85),
+	white   = Color3.fromRGB(245, 242, 255),
+	dim     = Color3.fromRGB(105, 100, 138),
+	purple  = Color3.fromRGB(130, 60, 200),
+	title   = Color3.fromRGB(200, 170, 255),
 }
-
 local RARITY_COL = {
-	Common        = Color3.fromRGB(172,170,192),
-	Uncommon      = Color3.fromRGB(85,185,95),
-	Rare          = Color3.fromRGB(75,135,220),
-	["Ultra-Rare"]= Color3.fromRGB(175,95,220),
-	Legendary     = Color3.fromRGB(239,159,39),
+	Common         = Color3.fromRGB(80,  78,  100),
+	Uncommon       = Color3.fromRGB(50,  140, 60),
+	Rare           = Color3.fromRGB(50,  100, 200),
+	["Ultra-Rare"] = Color3.fromRGB(130, 60,  200),
+	UltraRare      = Color3.fromRGB(130, 60,  200),
+	Legendary      = Color3.fromRGB(200, 140, 30),
 }
 local RARITY_BG = {
-	Common        = Color3.fromRGB(28,26,42),
-	Uncommon      = Color3.fromRGB(22,38,25),
-	Rare          = Color3.fromRGB(18,28,48),
-	["Ultra-Rare"]= Color3.fromRGB(32,20,45),
-	Legendary     = Color3.fromRGB(45,35,10),
+	Common         = Color3.fromRGB(34, 32, 48),
+	Uncommon       = Color3.fromRGB(20, 38, 22),
+	Rare           = Color3.fromRGB(16, 24, 48),
+	["Ultra-Rare"] = Color3.fromRGB(30, 16, 46),
+	UltraRare      = Color3.fromRGB(30, 16, 46),
+	Legendary      = Color3.fromRGB(46, 34,  8),
 }
+local RARITY_ORDER = {Legendary=1, UltraRare=2, ["Ultra-Rare"]=2, Rare=3, Uncommon=4, Common=5}
 
--- Stack limits per rarity
-local STACK_LIMIT = {
-	Common        = 3,
-	Uncommon      = 2,
-	Rare          = 1,
-	["Ultra-Rare"]= 1,
-	Legendary     = 1,
-}
-local STACK_COL = {
-	Common        = Color3.fromRGB(172,170,192),
-	Uncommon      = Color3.fromRGB(85,185,95),
-	Rare          = Color3.fromRGB(75,135,220),
-	["Ultra-Rare"]= Color3.fromRGB(175,95,220),
-	Legendary     = Color3.fromRGB(239,159,39),
-}
-
-local BADGE_Y = 136
-local BADGE_H = 48
-
--- ============================================================
--- DATA — ALLERGY TYPES
--- ============================================================
-local ALLERGY_TYPES = {
-	{name="Dairy",   color=Color3.fromRGB(180,220,255), icon="🥛"},
-	{name="Gluten",  color=Color3.fromRGB(230,190,120), icon="🌾"},
-	{name="Produce", color=Color3.fromRGB(100,210,80),  icon="🥦"},
-	{name="Meat",    color=Color3.fromRGB(220,100,80),  icon="🥩"},
-	{name="Seafood", color=Color3.fromRGB(80,160,230),  icon="🦐"},
-	{name="Nuts",    color=Color3.fromRGB(180,130,70),  icon="🥜"},
-	{name="Spicy",   color=Color3.fromRGB(240,90,50),   icon="🌶️"},
-	{name="Soy",     color=Color3.fromRGB(210,185,120), icon="🧃"},
-}
-
-local ALLERGY_INGS = {
-	Dairy   = {"Cheese Block","Butter","Milk","Yogurt","Cream","Mayonnaise",
-		"Blue Cheese","Ice Cream","Egg"},
-	Gluten  = {"Flour","Dough","Pasta","Naan","Bread Loaf","Bun","Tortilla",
-		"Noodles","Croissant","Fondant"},
-	Produce = {"Lettuce","Tomato","Onion","Bell Pepper","Spinach","Carrot",
-		"Potato","Banana","Apple","Plantain","Peas","Garlic","Basil",
-		"Avocado","Corn","Kimchi","Mango","Beet","Pineapple","Truffle"},
-	Meat    = {"Chicken","Beef","Pork","Sausage","Wagyu Beef"},
-	Seafood = {"Shrimp","Lobster","Tuna","Crab","Caviar"},
-	Nuts    = {"Peanut","Coconut","Almond"},
-	Spicy   = {"Chili Powder","Curry Powder","Kimchi"},
-	Soy     = {"Soy Sauce","Tofu","Miso Paste"},
-}
-
-local SELF_CONSUME = {
-	["Caprese Skewer"]=true,   ["Pound Cake"]=true,
-	["Naan Wrap"]=true,        ["Spaghetti Pomodoro"]=true,
-	["Mango Lassi"]=true,      ["Banana Pancakes"]=true,
-	["Vegetable Curry"]=true,  ["Crepe"]=true,
-	["Chocolate Banana"]=true, ["Stir Fry"]=true,
-	["Poke Bowl"]=true,        ["Sushi Roll"]=true,
-	["Ice Cream Sundae"]=true, ["Truffle Pasta"]=true,
-}
-
--- ============================================================
--- DATA — INGREDIENTS (65 total)
--- ============================================================
-local INGREDIENT_DATA = {
-	-- PRODUCE (23)
-	{n="Apple",        cat="Produce",  allergy="Produce", r="Common",    emoji="🍎", cl=6,  wt=1, cost=2,  effect="Small knockback on hit. +2 fullness to target."},
-	{n="Banana",       cat="Produce",  allergy="Produce", r="Common",    emoji="🍌", cl=5,  wt=1, cost=2,  effect="Peel stays on floor — 1s slip hazard. +2 fullness to target."},
-	{n="Tomato",       cat="Produce",  allergy="Produce", r="Common",    emoji="🍅", cl=6,  wt=1, cost=2,  effect="MARK: next hit on this target deals +15% cleanliness. One Mark active at a time."},
-	{n="Lettuce",      cat="Produce",  allergy="Produce", r="Common",    emoji="🥬", cl=5,  wt=1, cost=1,  effect="Minor vision blur on hit."},
-	{n="Onion",        cat="Produce",  allergy="Produce", r="Common",    emoji="🧅", cl=6,  wt=1, cost=2,  effect="AoE accuracy debuff cloud on impact."},
-	{n="Carrot",       cat="Produce",  allergy="Produce", r="Common",    emoji="🥕", cl=6,  wt=1, cost=2,  effect="Fast straight trajectory."},
-	{n="Spinach",      cat="Produce",  allergy="Produce", r="Common",    emoji="🥬", cl=5,  wt=1, cost=1,  effect="Sticks to target briefly."},
-	{n="Peas",         cat="Produce",  allergy="Produce", r="Common",    emoji="🫛", cl=5,  wt=1, cost=1,  effect="Scatter — hits up to 2 nearby targets."},
-	{n="Egg",          cat="Produce",  allergy="Dairy",   r="Common",    emoji="🥚", cl=6,  wt=2, cost=2,  effect="Raw throwable — skip the kitchen! Mini AoE splat. ⚠️ Counts as DAIRY allergy."},
-	{n="Potato",       cat="Produce",  allergy="Produce", r="Common",    emoji="🥔", cl=5,  wt=2, cost=2,  effect="Rolls on the floor after impact."},
-	{n="Basil",        cat="Produce",  allergy="Produce", r="Common",    emoji="🌿", cl=4,  wt=1, cost=1,  effect="Very mild vision blur. Mainly a cooking ingredient."},
-	{n="Bell Pepper",  cat="Produce",  allergy="Produce", r="Uncommon",  emoji="🫑", cl=6,  wt=1, cost=2,  effect="Scatter on impact."},
-	{n="Corn",         cat="Produce",  allergy="Produce", r="Uncommon",  emoji="🌽", cl=6,  wt=2, cost=2,  effect="Ricochets off walls. Kernels scatter on impact."},
-	{n="Mango",        cat="Produce",  allergy="Produce", r="Uncommon",  emoji="🥭", cl=6,  wt=2, cost=3,  effect="Sticky splash on impact."},
-	{n="Avocado",      cat="Produce",  allergy="Produce", r="Uncommon",  emoji="🥑", cl=7,  wt=2, cost=3,  effect="Soft slow on hit."},
-	{n="Garlic",       cat="Produce",  allergy="Produce", r="Uncommon",  emoji="🧄", cl=6,  wt=1, cost=3,  effect="Strips 15% from ALL active buff durations on target instantly."},
-	{n="Tofu",         cat="Produce",  allergy="Soy",     r="Uncommon",  emoji="⬜", cl=6,  wt=2, cost=3,  effect="Wobble hit — unpredictable bounce angle."},
-	{n="Pineapple",    cat="Produce",  allergy="Produce", r="Uncommon",  emoji="🍍", cl=7,  wt=2, cost=3,  effect="AoE splash burst on impact."},
-	{n="Plantain",     cat="Produce",  allergy="Produce", r="Rare",      emoji="🍌", cl=7,  wt=2, cost=3,  effect="Heavier knockback than Banana."},
-	{n="Beet",         cat="Produce",  allergy="Produce", r="Rare",      emoji="🟣", cl=6,  wt=1, cost=2,  effect="Deep red floor stain for 10 seconds."},
-	{n="Kimchi",       cat="Produce",  allergy="Spicy",   r="Rare",      emoji="🌶", cl=7,  wt=2, cost=4,  effect="Spicy AoE cloud on impact."},
-	{n="Coconut",      cat="Produce",  allergy="Nuts",    r="Rare",      emoji="🥥", cl=8,  wt=3, cost=5,  effect="Heavy knockback. AoE amplifier when cooked."},
-	{n="Truffle",      cat="Produce",  allergy="Produce", r="Rare",      emoji="🍄", cl=8,  wt=1, cost=15, effect="BOOST: Next recipe +30% CL +1 serving! Found in Produce — it's a mushroom."},
-	-- BAKERY (10)
-	{n="Bun",          cat="Bakery",   allergy="Gluten",  r="Common",    emoji="🥖", cl=5,  wt=2, cost=2,  effect="Soft blunt hit."},
-	{n="Bread Loaf",   cat="Bakery",   allergy="Gluten",  r="Common",    emoji="🍞", cl=7,  wt=2, cost=3,  effect="Blunt knockback."},
-	{n="Flour",        cat="Bakery",   allergy="Gluten",  r="Common",    emoji="🌾", cl=5,  wt=2, cost=2,  effect="Dust cloud on impact — minor accuracy debuff."},
-	{n="Sugar",        cat="Bakery",   allergy=nil,       r="Common",    emoji="🍬", cl=4,  wt=1, cost=2,  effect="Combo ingredient — no direct combat effect."},
-	{n="Naan",         cat="Bakery",   allergy="Gluten",  r="Uncommon",  emoji="🍞", cl=5,  wt=1, cost=3,  effect="Frisbee flight — fast and flat."},
-	{n="Dough",        cat="Bakery",   allergy="Gluten",  r="Uncommon",  emoji="🍞", cl=6,  wt=3, cost=3,  effect="Sticky — clings to target briefly."},
-	{n="Chocolate",    cat="Bakery",   allergy=nil,       r="Uncommon",  emoji="🍫", cl=7,  wt=2, cost=3,  effect="Melts on target — mild slow on hit."},
-	{n="Honey",        cat="Bakery",   allergy=nil,       r="Rare",      emoji="🍯", cl=8,  wt=1, cost=8,  effect="Root 1s on hit + sticky floor zone 5s."},
-	{n="Croissant",    cat="Bakery",   allergy="Gluten",  r="Rare",      emoji="🥐", cl=9,  wt=2, cost=7,  effect="Splits into 3 independent mid-air projectiles!"},
-	{n="Fondant",      cat="Bakery",   allergy="Gluten",  r="Ultra-Rare",emoji="🧁", cl=14, wt=2, cost=14, effect="ULTRA-RARE: -30% speed + vision blur 5s on hit."},
-	-- DAIRY (8)
-	{n="Milk",         cat="Dairy",    allergy="Dairy",   r="Common",    emoji="🥛", cl=4,  wt=2, cost=3,  effect="Drink: self-cleanse -10 CL. Throw: weak wide hit."},
-	{n="Yogurt",       cat="Dairy",    allergy="Dairy",   r="Common",    emoji="🍶", cl=5,  wt=2, cost=3,  effect="Wide sticky splash radius."},
-	{n="Cream",        cat="Dairy",    allergy="Dairy",   r="Uncommon",  emoji="🍶", cl=6,  wt=2, cost=4,  effect="Vision blur cloud on impact."},
-	{n="Cheese Block", cat="Dairy",    allergy="Dairy",   r="Uncommon",  emoji="🧀", cl=7,  wt=2, cost=4,  effect="Slow on hit. Two Cheese hits = ROOT (1.5s)."},
-	{n="Butter",       cat="Dairy",    allergy="Dairy",   r="Uncommon",  emoji="🧈", cl=6,  wt=2, cost=4,  effect="Creates floor slip zone after impact."},
-	{n="Mayonnaise",   cat="Dairy",    allergy="Dairy",   r="Uncommon",  emoji="🍶", cl=7,  wt=2, cost=4,  effect="Wide splash slow on hit."},
-	{n="Blue Cheese",  cat="Dairy",    allergy="Dairy",   r="Rare",      emoji="🧀", cl=9,  wt=2, cost=7,  effect="RARE: Your next slow or root lasts +50% longer."},
-	{n="Ice Cream",    cat="Dairy",    allergy="Dairy",   r="Ultra-Rare",emoji="🍦", cl=10, wt=2, cost=12, effect="ULTRA-RARE: Freeze slow 2s on direct hit (cap 2.5s)."},
-	-- FREEZER (9)
-	{n="Tuna",         cat="Freezer",  allergy="Seafood", r="Common",    emoji="🐟", cl=6,  wt=2, cost=4,  effect="Fastest straight-line throw in the game."},
-	{n="Chicken",      cat="Freezer",  allergy="Meat",    r="Common",    emoji="🍗", cl=8,  wt=3, cost=5,  effect="Knockback on hit."},
-	{n="Sausage",      cat="Freezer",  allergy="Meat",    r="Common",    emoji="🌭", cl=8,  wt=3, cost=5,  effect="Rolls on floor as trip hazard after impact."},
-	{n="Crab",         cat="Freezer",  allergy="Seafood", r="Uncommon",  emoji="🦀", cl=7,  wt=3, cost=5,  effect="Mini root on direct hit (0.8s)."},
-	{n="Pork",         cat="Freezer",  allergy="Meat",    r="Uncommon",  emoji="🐷", cl=9,  wt=4, cost=5,  effect="DoT bleed: +1 CL/s for 3 seconds."},
-	{n="Beef",         cat="Freezer",  allergy="Meat",    r="Uncommon",  emoji="🥩", cl=9,  wt=4, cost=6,  effect="High cleanliness spike on hit."},
-	{n="Shrimp",       cat="Freezer",  allergy="Seafood", r="Rare",      emoji="🦐", cl=8,  wt=2, cost=6,  effect="Double hit — two separate CL impacts per throw."},
-	{n="Lobster",      cat="Freezer",  allergy="Seafood", r="Rare",      emoji="🦞", cl=9,  wt=5, cost=9,  effect="Heavy stagger on direct hit."},
-	{n="Wagyu Beef",   cat="Freezer",  allergy="Meat",    r="Ultra-Rare",emoji="🥩", cl=14, wt=5, cost=18, effect="ULTRA-RARE: Knockdown on direct hit. Required: Million Dollar Steak!"},
-	-- AISLES (14)
-	{n="Rice",         cat="Aisles",   allergy=nil,       r="Common",    emoji="🍚", cl=5,  wt=2, cost=3,  effect="Scatter AoE on impact."},
-	{n="Pasta",        cat="Aisles",   allergy="Gluten",  r="Common",    emoji="🍝", cl=6,  wt=2, cost=3,  effect="Slow on hit."},
-	{n="Noodles",      cat="Aisles",   allergy="Gluten",  r="Common",    emoji="🍜", cl=6,  wt=2, cost=3,  effect="Entangle. Two hits = trap + pull."},
-	{n="Tortilla",     cat="Aisles",   allergy="Gluten",  r="Common",    emoji="🥙", cl=6,  wt=1, cost=3,  effect="Fast flat projectile."},
-	{n="Salt",         cat="Aisles",   allergy=nil,       r="Common",    emoji="🧂", cl=4,  wt=1, cost=2,  effect="Anti-heal: reduces CL recovery 20%."},
-	{n="Almond",       cat="Aisles",   allergy="Nuts",    r="Common",    emoji="🌰", cl=6,  wt=1, cost=3,  effect="Second fastest projectile. Great Mark executor."},
-	{n="Chili Powder", cat="Aisles",   allergy="Spicy",   r="Uncommon",  emoji="🌶", cl=6,  wt=1, cost=3,  effect="Burn DoT +1 CL/s 4s. SPICE PRIMER for AoE combos."},
-	{n="Soy Sauce",    cat="Aisles",   allergy="Soy",     r="Uncommon",  emoji="🍶", cl=5,  wt=1, cost=4,  effect="MARK: next hit deals +20% CL. One Mark active at a time."},
-	{n="Peanut",       cat="Aisles",   allergy="Nuts",    r="Uncommon",  emoji="🥜", cl=6,  wt=1, cost=4,  effect="Bounce on impact — can hit multiple targets."},
-	{n="Oil",          cat="Aisles",   allergy=nil,       r="Uncommon",  emoji="🍵", cl=5,  wt=2, cost=4,  effect="COMBO PRIMER: Oil hit → fire recipe = ×1.6 CL!"},
-	{n="Miso Paste",   cat="Aisles",   allergy="Soy",     r="Uncommon",  emoji="🍶", cl=7,  wt=1, cost=5,  effect="Sticky DoT +1 CL/s for 4 seconds."},
-	{n="Curry Powder", cat="Aisles",   allergy="Spicy",   r="Rare",      emoji="🌿", cl=6,  wt=1, cost=4,  effect="SPICE PRIMER: Next AoE recipe has expanded radius."},
-	{n="Black Garlic", cat="Aisles",   allergy=nil,       r="Rare",      emoji="🧄", cl=6,  wt=1, cost=6,  effect="MARK: next hit deals +20% CL. Strongest Mark in Aisles."},
-	{n="Saffron",      cat="Aisles",   allergy=nil,       r="Ultra-Rare",emoji="🌺", cl=8,  wt=1, cost=10, effect="ULTRA-RARE: Amplifies AoE radius of any recipe cooked with it."},
-	-- STOCKROOM EXCLUSIVE (1)
-	{n="Caviar",       cat="Stockroom",allergy="Seafood", r="Legendary", emoji="🐟", cl=9,  wt=1, cost=12, effect="LEGENDARY: Precision no-splash. Required: Million Dollar Steak! Stockroom ONLY."},
-}
-
--- ============================================================
--- DATA — INGREDIENT COMBOS
--- ============================================================
-local INGR_COMBOS = {
-	["Oil"]          = "COMBO PRIMER: Hit target with Oil (3s window), then hit with a fire recipe (Stir Fry, Mapo Tofu, Kimchi Fried Rice, Inferno Skewer, Chicken Curry) = ×1.6 cleanliness damage!",
-	["Soy Sauce"]    = "MARK: Tags target — next hit deals +20% CL. 4s window. ONE MARK ACTIVE AT A TIME. Overwrites any existing Mark.",
-	["Tomato"]       = "MARK: Tags target — next hit deals +15% CL. 4s window. ONE MARK ACTIVE AT A TIME. Cheapest Mark in the game.",
-	["Black Garlic"] = "MARK: Tags target — next hit deals +20% CL. 4s window. Rare Aisles find. ONE MARK ACTIVE AT A TIME.",
-	["Banana"]       = "CHAIN: Hit target with Banana → any follow-up within 3s = guaranteed knockdown (2s). Peel stays as floor slip hazard!",
-	["Garlic"]       = "STRIP: Instantly removes 15% from ALL active buff durations on target simultaneously. Perfect for punishing buffed enemies.",
-	["Truffle"]      = "BOOST: Use near Prep Table before cooking. Next cooked recipe gets +30% CL and +1 serving. Does not stack.",
-	["Cheese Block"] = "STACK: First Cheese = slow. Second Cheese = ROOT (1.5s). Stack expires 8s after first hit. Uncommon ×2 stacking makes this combo natural.",
-	["Blue Cheese"]  = "AMPLIFIER: After hitting with Blue Cheese, your next slow or root on any target lasts +50% longer. Blue Cheese + Ice Cream = 2.5s freeze (cap).",
-	["Honey"]        = "ROOT + ZONE: Direct hit roots for 1s AND creates sticky floor zone (5s). No allergy — affects everyone equally.",
-	["Ice Cream"]    = "FREEZE: 2s freeze slow on direct hit. Total freeze capped at 2.5s. Combine with Blue Cheese for maximum freeze duration.",
-	["Noodles"]      = "TRAP: Two Noodle hits = trap + pull toward you. Common ×3 stacking means you can carry enough for multiple attempts.",
-	["Chili Powder"] = "SPICE PRIMER: Hit target, then fire AoE recipe = significantly expanded AoE radius.",
-	["Curry Powder"] = "SPICE PRIMER: Works independently or stacked with Chili Powder for maximum AoE spread.",
-	["Shrimp"]       = "DOUBLE HIT: Two separate CL impacts per throw. Great for triggering Cheese stacks and Mark windows faster.",
-	["Coconut"]      = "AoE AMPLIFIER: When cooked into Coconut Curry, massively boosts AoE radius. Heavy knockback when thrown raw.",
-	["Croissant"]    = "SPLIT SHOT: Splits into 3 independent projectiles mid-air. Each can trigger Marks, stacks, or hit different targets.",
-	["Fondant"]      = "ULTRA SLOW: -30% speed + vision blur 5s. With Blue Cheese amplifier = 7.5s vision blur.",
-	["Saffron"]      = "AoE AMPLIFIER: Any recipe containing Saffron has expanded AoE when thrown. Also functions as Spice Primer on raw throw.",
-	["Wagyu Beef"]   = "KNOCKDOWN: Raw knockdown on direct hit. Required for Million Dollar Steak. Found in Freezer and Stockroom.",
-	["Caviar"]       = "PRECISION: Pure single-target CL, no splash. Required for Poke Deluxe and Million Dollar Steak. STOCKROOM ONLY.",
-	["Peanut"]       = "BOUNCE: Ricochets — can hit multiple targets. WARNING: Nut-allergic players take ×1.6 from every Peanut!",
-	["Crab"]         = "MINI ROOT: 0.8s root on direct hit. Just long enough for a follow-up. Combine with Honey for extended chain.",
-	["Miso Paste"]   = "STICKY DOT: Sticks to target, +1 CL/s for 4s. Stack with Soy Sauce Mark for ticking crit window.",
-	["Pineapple"]    = "AoE BURST: Wide splash radius. Great for hitting multiple targets in tight zones.",
-	["Tuna"]         = "FAST PROJECTILE: Fastest throw in the game. Execute Marks before the 4s window closes.",
-	["Almond"]       = "FAST PROJECTILE: Second fastest. Light and cheap — ideal Mark executor.",
-	["Potato"]       = "ROLLER: Rolls on floor after impact — trip hazard. Cheap Common ingredient.",
-	["Basil"]        = "GARNISH: Very mild vision blur. Mainly a cooking ingredient. Lightest Produce item.",
-	["Egg"]          = "RAW SPLAT: Skip the kitchen! Wide AoE on impact. ⚠️ Counts as DAIRY allergy — Dairy-allergic players take ×1.6!",
-	["Pork"]         = "BLEED: DoT +1 CL/s for 3s after hit. Stacks with Miso Paste and Chili Powder for layered damage.",
-	["Lobster"]      = "HEAVY STAGGER: Staggers target on direct hit. Now Rare — more accessible than before.",
-	["Kimchi"]       = "SPICY AoE: Cloud on impact. Acts as Spice Primer when thrown before an AoE recipe.",
-	["Beef"]         = "HIGH SPIKE: Pure cleanliness damage spike. Heavy and expensive but hits hard.",
-	["Butter"]       = "SLIP ZONE: Creates a floor slip zone after impact. Pairs well with Noodle traps in corridors.",
-	["Milk"]         = "SELF-CLEANSE: Drink for -10 cleanliness on yourself. Throw for a weak wide hit.",
-	["Mayonnaise"]   = "WIDE SLOW: Wide splash slow on hit. Broader hit area than most Dairy items.",
-	["Cream"]        = "BLUR CLOUD: Vision blur cloud on impact. Disrupts aiming for nearby enemies.",
-	["Yogurt"]       = "STICKY SPLASH: Wide sticky splash radius — good coverage in open areas.",
-}
-
--- ============================================================
--- DATA — RECIPE DATA (66 recipes)
--- ============================================================
-local RECIPE_DATA = {
-	-- COMMON (15)
-	{n="Burger",              r="Common",     emoji="🍔", i="Bun · Beef · Lettuce · Tomato · Cheese Block",       zone="Bakery+Produce+Freezer+Dairy",     cook="Prep Table",        cl=20, fu=0,  cost=14, wt=5,  srv=1},
-	{n="Taco",                r="Common",     emoji="🌮", i="Tortilla · Beef · Lettuce · Cheese Block",            zone="Aisles+Freezer+Produce+Dairy",     cook="Prep Table",        cl=15, fu=0,  cost=11, wt=4,  srv=1},
-	{n="Fries",               r="Common",     emoji="🍟", i="Potato · Oil · Salt",                                 zone="Produce+Aisles",                   cook="Stovetop",          cl=12, fu=0,  cost=6,  wt=3,  srv=1},
-	{n="Egg Splat",           r="Common",     emoji="🥚", i="Egg (raw — skip kitchen!)",                           zone="Produce",                          cook="No kitchen needed", cl=12, fu=0,  cost=3,  wt=2,  srv=1},
-	{n="Caprese Skewer",      r="Common",     emoji="🥗", i="Tomato · Cheese Block · Basil",                       zone="Produce+Dairy",                    cook="Prep Table",        cl=10, fu=5,  cost=8,  wt=2,  srv=1},
-	{n="Tofu Scramble",       r="Common",     emoji="🍳", i="Tofu · Egg · Spinach",                                zone="Produce",                          cook="Prep Table",        cl=14, fu=0,  cost=9,  wt=3,  srv=1},
-	{n="Pound Cake",          r="Common",     emoji="🎂", i="Flour · Sugar · Butter · Egg",                        zone="Bakery+Dairy+Produce",             cook="Prep+Stovetop",     cl=0,  fu=8,  cost=10, wt=4,  srv=1},
-	{n="Mac and Cheese",      r="Common",     emoji="🧀", i="Pasta · Cheese Block · Milk",                         zone="Aisles+Dairy",                     cook="Prep+Stovetop",     cl=20, fu=0,  cost=11, wt=4,  srv=1},
-	{n="Sausage Sandwich",    r="Common",     emoji="🌭", i="Bun · Sausage · Lettuce · Tomato",                    zone="Bakery+Freezer+Produce",           cook="Prep Table",        cl=20, fu=0,  cost=13, wt=4,  srv=1},
-	{n="Hummus Plate",        r="Common",     emoji="🫘", i="Peanut · Garlic · Flour",                             zone="Aisles+Produce+Bakery",            cook="Prep Table (raw)",  cl=12, fu=0,  cost=10, wt=3,  srv=1},
-	{n="Roti",                r="Common",     emoji="🍞", i="Flour · Butter · Potato",                             zone="Bakery+Dairy+Produce",             cook="Prep Table",        cl=10, fu=0,  cost=8,  wt=3,  srv=1},
-	{n="Samosa",              r="Common",     emoji="🥟", i="Flour · Potato · Peas · Chili Powder",                zone="Bakery+Produce+Aisles",            cook="Prep+Stovetop",     cl=15, fu=0,  cost=10, wt=3,  srv=1},
-	{n="Crepe",               r="Common",     emoji="🥞", i="Flour · Egg · Butter",                                zone="Bakery+Produce+Dairy",             cook="Stovetop",          cl=0,  fu=5,  cost=7,  wt=2,  srv=1},
-	{n="Grilled Cheese",      r="Common",     emoji="🧇", i="Bread Loaf · Cheese Block · Butter",                  zone="Bakery+Dairy",                     cook="Stovetop",          cl=16, fu=0,  cost=9,  wt=3,  srv=1},
-	{n="Chocolate Banana",    r="Common",     emoji="🍫", i="Chocolate · Banana",                                  zone="Bakery+Produce",                   cook="Stovetop",          cl=0,  fu=5,  cost=6,  wt=2,  srv=1},
-	-- UNCOMMON (28)
-	{n="Pizza Slice",         r="Uncommon",   emoji="🍕", i="Dough · Cheese Block · Tomato · Basil",               zone="Bakery+Dairy+Produce",             cook="Prep+Stovetop",     cl=25, fu=0,  cost=14, wt=5,  srv=2},
-	{n="Quesadilla",          r="Uncommon",   emoji="🌮", i="Tortilla · Cheese Block · Chili Powder",              zone="Aisles+Dairy",                     cook="Prep+Stovetop",     cl=20, fu=0,  cost=11, wt=4,  srv=2},
-	{n="Burrito",             r="Uncommon",   emoji="🥙", i="Tortilla · Rice · Beef · Chili Powder",               zone="Aisles+Freezer",                   cook="Prep Table",        cl=25, fu=0,  cost=14, wt=5,  srv=2},
-	{n="Stir Fry",            r="Uncommon",   emoji="🥢", i="Noodles · Carrot · Bell Pepper · Chicken",            zone="Aisles+Produce+Freezer",           cook="Prep+Stovetop",     cl=20, fu=10, cost=16, wt=5,  srv=2},
-	{n="Chow Mein",           r="Uncommon",   emoji="🍜", i="Noodles · Onion · Soy Sauce",                         zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=18, fu=0,  cost=11, wt=4,  srv=2},
-	{n="Dumplings",           r="Uncommon",   emoji="🥟", i="Flour · Chicken · Garlic",                            zone="Bakery+Freezer+Produce",           cook="Prep+Stovetop",     cl=15, fu=0,  cost=12, wt=4,  srv=2},
-	{n="Fried Rice",          r="Uncommon",   emoji="🍚", i="Rice · Egg · Carrot · Peas",                          zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=22, fu=0,  cost=12, wt=4,  srv=2},
-	{n="Naan Wrap",           r="Uncommon",   emoji="🥙", i="Naan · Cheese Block · Spinach",                       zone="Bakery+Dairy+Produce",             cook="Prep Table",        cl=0,  fu=10, cost=12, wt=3,  srv=2},
-	{n="Spaghetti Pomodoro",  r="Uncommon",   emoji="🍝", i="Pasta · Tomato · Basil",                              zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=0,  fu=15, cost=11, wt=4,  srv=2},
-	{n="Tofu Stir Fry",       r="Uncommon",   emoji="🥡", i="Tofu · Noodles · Bell Pepper · Soy Sauce",            zone="Produce+Aisles",                   cook="Prep+Stovetop",     cl=20, fu=0,  cost=14, wt=4,  srv=2},
-	{n="Plantain Chips",      r="Uncommon",   emoji="🍌", i="Plantain · Oil · Salt",                               zone="Produce+Aisles",                   cook="Stovetop",          cl=12, fu=0,  cost=8,  wt=3,  srv=2},
-	{n="Garlic Bread",        r="Uncommon",   emoji="🍞", i="Bread Loaf · Butter · Garlic",                        zone="Bakery+Dairy+Produce",             cook="Stovetop",          cl=22, fu=0,  cost=11, wt=3,  srv=2},
-	{n="Poke Bowl",           r="Uncommon",   emoji="🍱", i="Shrimp · Rice · Soy Sauce · Carrot",                  zone="Freezer+Aisles+Produce",           cook="Prep Table (raw)",  cl=18, fu=5,  cost=14, wt=4,  srv=2},
-	{n="Sushi Roll",          r="Uncommon",   emoji="🍣", i="Rice · Shrimp · Noodles · Soy Sauce",                 zone="Aisles+Freezer",                   cook="Prep Table (raw)",  cl=22, fu=5,  cost=15, wt=4,  srv=2},
-	{n="Shawarma",            r="Uncommon",   emoji="🥙", i="Naan · Chicken · Garlic · Yogurt",                    zone="Bakery+Freezer+Produce+Dairy",     cook="Prep Table",        cl=22, fu=0,  cost=16, wt=5,  srv=2},
-	{n="Jollof Rice",         r="Uncommon",   emoji="🍛", i="Rice · Tomato · Onion · Chili Powder",                zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=22, fu=0,  cost=13, wt=4,  srv=2},
-	{n="Kimchi Fried Rice",   r="Uncommon",   emoji="🍚", i="Rice · Egg · Chili Powder · Garlic",                  zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=24, fu=0,  cost=13, wt=4,  srv=2},
-	{n="Pad Thai",            r="Uncommon",   emoji="🍜", i="Noodles · Shrimp · Egg · Peanut",                     zone="Aisles+Freezer+Produce",           cook="Prep+Stovetop",     cl=20, fu=0,  cost=17, wt=5,  srv=2},
-	{n="Elote",               r="Uncommon",   emoji="🌽", i="Corn · Butter · Chili Powder",                        zone="Produce+Dairy+Aisles",             cook="Stovetop",          cl=16, fu=0,  cost=10, wt=3,  srv=2},
-	{n="Mango Lassi",         r="Uncommon",   emoji="🥭", i="Yogurt · Mango · Sugar",                              zone="Dairy+Produce+Aisles",             cook="Stovetop",          cl=0,  fu=8,  cost=11, wt=3,  srv=2},
-	{n="Milkshake",           r="Uncommon",   emoji="🥤", i="Milk · Chocolate · Sugar",                            zone="Dairy+Aisles",                     cook="Stovetop",          cl=18, fu=0,  cost=11, wt=3,  srv=2},
-	{n="Banana Pancakes",     r="Uncommon",   emoji="🥞", i="Flour · Banana · Egg · Sugar",                        zone="Bakery+Produce",                   cook="Prep+Stovetop",     cl=0,  fu=10, cost=11, wt=3,  srv=2},
-	{n="Shrimp Cocktail",     r="Uncommon",   emoji="🦐", i="Shrimp · Lettuce · Tomato",                           zone="Freezer+Produce",                  cook="Prep Table (raw)",  cl=20, fu=0,  cost=12, wt=4,  srv=2},
-	{n="Borscht",             r="Uncommon",   emoji="🍲", i="Potato · Onion · Yogurt · Beet",                      zone="Produce+Dairy",                    cook="Prep+Stovetop",     cl=20, fu=0,  cost=12, wt=4,  srv=2},
-	{n="Miso Soup",           r="Uncommon",   emoji="🍵", i="Miso Paste · Tofu",                                   zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=18, fu=0,  cost=10, wt=3,  srv=2},
-	{n="Crab Rangoon",        r="Uncommon",   emoji="🦀", i="Crab · Cream · Noodles",                              zone="Freezer+Dairy+Aisles",             cook="Prep+Stovetop",     cl=22, fu=0,  cost=14, wt=4,  srv=2},
-	{n="Callaloo",            r="Uncommon",   emoji="🥬", i="Spinach · Onion · Coconut · Crab",                    zone="Produce+Freezer",                  cook="Prep+Stovetop",     cl=24, fu=0,  cost=15, wt=5,  srv=2},
-	{n="Tuna Melt",           r="Uncommon",   emoji="🐟", i="Tuna · Bread Loaf · Cheese Block",                    zone="Freezer+Bakery+Dairy",             cook="Prep+Stovetop",     cl=20, fu=0,  cost=13, wt=4,  srv=2},
-	-- RARE (15)
-	{n="Chicken Curry",       r="Rare",       emoji="🍛", i="Chicken · Curry Powder · Onion",                      zone="Freezer+Aisles+Produce",           cook="Prep+Stovetop",     cl=28, fu=0,  cost=18, wt=5,  srv=2},
-	{n="Vegetable Curry",     r="Rare",       emoji="🍛", i="Carrot · Bell Pepper · Curry Powder",                 zone="Produce+Aisles",                   cook="Prep+Stovetop",     cl=0,  fu=10, cost=15, wt=4,  srv=2},
-	{n="Baked Potato",        r="Rare",       emoji="🥔", i="Potato · Cheese Block · Butter",                      zone="Produce+Dairy",                    cook="Stovetop",          cl=28, fu=0,  cost=14, wt=4,  srv=2},
-	{n="BBQ Ribs",            r="Rare",       emoji="🍖", i="Pork · Garlic · Sugar",                               zone="Freezer+Produce+Aisles",           cook="Prep+Stovetop",     cl=25, fu=0,  cost=19, wt=6,  srv=2},
-	{n="Crispy Tofu Bowl",    r="Rare",       emoji="🥡", i="Tofu · Rice · Soy Sauce · Garlic",                    zone="Produce+Aisles",                   cook="Prep+Stovetop",     cl=25, fu=0,  cost=16, wt=4,  srv=2},
-	{n="Mapo Tofu",           r="Rare",       emoji="🫕", i="Tofu · Chili Powder · Garlic · Pork",                 zone="Produce+Aisles+Freezer",           cook="Prep+Stovetop",     cl=32, fu=0,  cost=20, wt=5,  srv=2},
-	{n="Tamale",              r="Rare",       emoji="🌽", i="Dough · Pork · Chili Powder",                         zone="Bakery+Freezer+Aisles",            cook="Prep+Stovetop",     cl=28, fu=0,  cost=18, wt=5,  srv=2},
-	{n="Groundnut Soup",      r="Rare",       emoji="🥜", i="Peanut · Chicken · Onion · Tomato",                   zone="Aisles+Freezer+Produce",           cook="Prep+Stovetop",     cl=30, fu=0,  cost=22, wt=6,  srv=2},
-	{n="Paella",              r="Rare",       emoji="🥘", i="Rice · Shrimp · Pork · Saffron",                      zone="Aisles+Freezer",                   cook="Prep+Stovetop",     cl=35, fu=0,  cost=24, wt=6,  srv=2},
-	{n="Pepper Shrimp",       r="Rare",       emoji="🦐", i="Shrimp · Chili Powder · Garlic · Salt",               zone="Freezer+Aisles+Produce",           cook="Prep+Stovetop",     cl=26, fu=0,  cost=17, wt=5,  srv=2},
-	{n="Inferno Skewer",      r="Rare",       emoji="🔥", i="Chili Powder · Beef · Oil",                           zone="Aisles+Freezer",                   cook="Prep+Stovetop",     cl=32, fu=0,  cost=20, wt=5,  srv=2},
-	{n="Almond Croissant",    r="Rare",       emoji="🥐", i="Almond · Croissant · Butter",                         zone="Aisles+Bakery+Dairy",              cook="Prep+Stovetop",     cl=26, fu=0,  cost=18, wt=4,  srv=2},
-	{n="Ice Cream Sundae",    r="Rare",       emoji="🍦", i="Ice Cream · Sugar",                                   zone="Dairy+Aisles",                     cook="Stovetop",          cl=0,  fu=18, cost=14, wt=3,  srv=2},
-	{n="Honey Glazed Ribs",   r="Rare",       emoji="🍯", i="Honey · Pork · Garlic",                               zone="Bakery+Freezer+Produce",           cook="Prep+Stovetop",     cl=28, fu=0,  cost=20, wt=5,  srv=2},
-	{n="Blue Cheese Pasta",   r="Rare",       emoji="🍝", i="Blue Cheese · Pasta · Garlic",                        zone="Dairy+Aisles+Produce",             cook="Prep+Stovetop",     cl=28, fu=0,  cost=20, wt=5,  srv=2},
-	-- ULTRA-RARE (10)
-	{n="Lobster Bisque",      r="Ultra-Rare", emoji="🦞", i="Lobster · Butter · Milk",                             zone="Freezer+Dairy",                    cook="Prep+Stovetop",     cl=45, fu=0,  cost=30, wt=7,  srv=3},
-	{n="Chicken-Peanut Stew", r="Ultra-Rare", emoji="🍲", i="Chicken · Peanut · Coconut · Curry Powder",           zone="Freezer+Aisles+Produce",           cook="Prep+Stovetop",     cl=38, fu=0,  cost=32, wt=7,  srv=3},
-	{n="Truffle Pasta",       r="Ultra-Rare", emoji="🍝", i="Truffle · Pasta · Basil",                             zone="Produce+Aisles",                   cook="Prep+Stovetop",     cl=33, fu=0,  cost=28, wt=5,  srv=3},
-	{n="Coconut Curry",       r="Ultra-Rare", emoji="🥥", i="Coconut · Curry Powder · Carrot",                     zone="Produce+Aisles",                   cook="Prep+Stovetop",     cl=35, fu=0,  cost=30, wt=6,  srv=3},
-	{n="Saffron Rice",        r="Ultra-Rare", emoji="🍚", i="Saffron · Rice · Onion",                              zone="Aisles+Produce",                   cook="Prep+Stovetop",     cl=47, fu=0,  cost=28, wt=5,  srv=3},
-	{n="Wagyu Burger",        r="Ultra-Rare", emoji="🥩", i="Wagyu Beef · Bun · Cheese Block · Lettuce",           zone="Freezer+Bakery+Dairy+Produce",     cook="Prep Table",        cl=40, fu=0,  cost=35, wt=8,  srv=3},
-	{n="Poke Deluxe",         r="Ultra-Rare", emoji="🍱", i="Lobster · Rice · Caviar · Soy Sauce",                 zone="Freezer+Aisles+Stockroom",         cook="Prep Table (raw)",  cl=44, fu=0,  cost=36, wt=7,  srv=3},
-	{n="Guacamole Bomb",      r="Ultra-Rare", emoji="🥑", i="Avocado · Onion · Tomato · Coconut",                  zone="Produce",                          cook="Prep Table",        cl=35, fu=0,  cost=28, wt=6,  srv=3},
-	{n="Golden Glaze",        r="Ultra-Rare", emoji="🍯", i="Honey · Chicken · Soy Sauce",                         zone="Bakery+Freezer+Aisles",            cook="Prep+Stovetop",     cl=38, fu=0,  cost=32, wt=6,  srv=3},
-	{n="Fondant Collapse",    r="Ultra-Rare", emoji="🧁", i="Chocolate · Fondant · Cream",                         zone="Bakery+Dairy",                     cook="Prep+Stovetop",     cl=34, fu=0,  cost=30, wt=6,  srv=3},
-	-- LEGENDARY (1)
-	{n="Million Dollar Steak",r="Legendary",  emoji="⭐", i="Wagyu Beef · Truffle · Caviar",                       zone="Stockroom (ingredients only)",     cook="Prep+Stovetop 20s!",cl=70, fu=0,  cost=0,  wt=8,  srv=1},
-}
-
--- ============================================================
--- DATA — RECIPE EFFECTS
--- ============================================================
-local EFFECTS = {
-	["Burger"]="Slight knockback on direct hit.",
-	["Taco"]="Ingredients scatter on impact — bits fly everywhere.",
-	["Fries"]="Fast throw. Scatter hits nearby targets.",
-	["Egg Splat"]="Skip the kitchen! Wide AoE splat. DAIRY allergy hit!",
-	["Caprese Skewer"]="Eat: +10% speed you+nearby allies 12s. Throw: sticky.",
-	["Tofu Scramble"]="Random wobble splatter pattern. Unpredictable!",
-	["Pound Cake"]="Eat: +20% speed 20s. Throw: dense knockback.",
-	["Mac and Cheese"]="Gooey hit — slows target 5s.",
-	["Sausage Sandwich"]="Sausage rolls as trip hazard after impact.",
-	["Hummus Plate"]="Thick paste. Slight speed reduction on hit. Raw!",
-	["Roti"]="Frisbee flight — fast and flat.",
-	["Samosa"]="Triangular hitbox! Bounces at unpredictable angles.",
-	["Crepe"]="Eat: +10% throw accuracy 15s. Throw: wraps around target.",
-	["Grilled Cheese"]="Sticky hit — minor slow on target.",
-	["Chocolate Banana"]="Eat: -10 cleanliness. Peel stays as floor slip!",
-	["Pizza Slice"]="AoE on impact. Speed reduction to all hit.",
-	["Quesadilla"]="Chili dust cloud. -10% speed in cloud 6s.",
-	["Burrito"]="Heavy projectile. Slow on target. Moderate AoE.",
-	["Stir Fry"]="Eat: +15% throw power 20s. AoE fire splash. Oil combo!",
-	["Chow Mein"]="Noodle trail 10s. -15% speed in trail. Zone control!",
-	["Dumplings"]="Garlic cloud on impact. -15% speed 8s.",
-	["Fried Rice"]="Multi-bounce! Hits up to 3 targets per throw.",
-	["Naan Wrap"]="Eat only: +20% throw speed 20s.",
-	["Spaghetti Pomodoro"]="Eat: +25% throw range 25s. High fullness cost!",
-	["Tofu Stir Fry"]="Wobble hit! Target controls briefly inverted 2s!",
-	["Plantain Chips"]="Scatter on impact. Oil slip patch 3s.",
-	["Garlic Bread"]="AoE garlic cloud. -20% speed ALL nearby. ⚠️ Hits allies!",
-	["Poke Bowl"]="Eat: -10 clean +10% speed. Throw: scatter. Raw!",
-	["Sushi Roll"]="Eat: -15 clean +15% accuracy 20s. Precision arc. Raw!",
-	["Shawarma"]="Dense wrap. Yogurt splash radius on impact.",
-	["Jollof Rice"]="Wide AoE orange splatter. Lingering floor stain.",
-	["Kimchi Fried Rice"]="Spicy AoE. -15% speed red tint. Oil combo eligible!",
-	["Pad Thai"]="Noodle wrap on hit. Peanut allergy = extra damage!",
-	["Elote"]="Whole cob ricochets off walls! Kernels scatter.",
-	["Mango Lassi"]="Eat: -20 clean +10% speed 20s. Best self-cleanse drink.",
-	["Milkshake"]="Wide splash. Vision briefly obscured on hit.",
-	["Banana Pancakes"]="Eat: +15% speed -5 cleanliness.",
-	["Shrimp Cocktail"]="Fast precision throw. Slight knockback. Raw!",
-	["Borscht"]="Deep red floor stain lasts 15s. Mark your territory.",
-	["Miso Soup"]="Sticky DoT splash. +1 CL/s for 4s on target.",
-	["Crab Rangoon"]="Wide AoE cream splash + mini root on direct hit.",
-	["Callaloo"]="Coconut AoE burst + Crab mini root. Caribbean classic!",
-	["Tuna Melt"]="Precision throw + cheese slow on impact.",
-	["Chicken Curry"]="AoE burn cloud. -10% speed AND accuracy 10s. Oil combo!",
-	["Vegetable Curry"]="Eat: +10% speed you and nearby allies 20s.",
-	["Baked Potato"]="Throw: -20% speed 10s. Eat: -15 cleanliness.",
-	["BBQ Ribs"]="Sticky -15% speed 12s. Secondary AoE sauce splatter.",
-	["Crispy Tofu Bowl"]="Eat: +20% throw accuracy 20s. Throw: sticky landing.",
-	["Mapo Tofu"]="Spicy AoE cloud. Wider from tofu wobble. Oil combo!",
-	["Tamale"]="Slow heavy arc. Husk stays as floor debris 8s.",
-	["Groundnut Soup"]="Thick puddle -20% speed 10s. ⚠️ Ally hazard AoE!",
-	["Paella"]="Large pan AoE. Saffron amplifies the radius massively.",
-	["Pepper Shrimp"]="Spicy double-hit. Burn DoT + knockback on direct.",
-	["Inferno Skewer"]="Fire AoE. If target MARKED: +50% CL bonus! Oil combo!",
-	["Almond Croissant"]="Splits 3 ways mid-air. Each piece applies slow.",
-	["Ice Cream Sundae"]="Eat ONLY: +18 fullness, -15 CL, slow resistance 15s.",
-	["Honey Glazed Ribs"]="Sticky hit. Honey ROOT 1s + pork DoT. Floor zone 5s.",
-	["Blue Cheese Pasta"]="Wide splash. Your next root/slow lasts +50% longer.",
-	["Lobster Bisque"]="Highest single-hit CL. Pushes targets back strongly.",
-	["Chicken-Peanut Stew"]="Large AoE. +20% throw range to YOU 20s.",
-	["Truffle Pasta"]="You: fullness immunity 30s! Allies nearby: +10% throw range 20s.",
-	["Coconut Curry"]="Largest AoE cloud. Floor persists 15s. ⚠️ Ally hazard!",
-	["Saffron Rice"]="Massive golden AoE. You + allies gain +5 fullness.",
-	["Wagyu Burger"]="Knockdown on direct hit (2s stumble). Moderate AoE.",
-	["Poke Deluxe"]="Eat: -25 clean +20% accuracy 30s. Raw luxury.",
-	["Guacamole Bomb"]="Thick massive AoE splat. Clings to all targets.",
-	["Golden Glaze"]="If target SLOWED and MARKED: +60% CL + 1s root!",
-	["Fondant Collapse"]="Slow zone + vision blur 5s + delayed 20 CL explosion.",
-	["Million Dollar Steak"]="SERVER ANNOUNCES. Near-instant max CL. Golden explosion. ONE OF A KIND.",
-}
-
--- ============================================================
--- DATA — COSMETIC SKINS
--- ============================================================
-local SKINS = {
-	{name="Default",   icon="⊘",  owned=true,  cost=0},
-	{name="Gold Rush", icon="✨", owned=false, cost=50},
-	{name="Rainbow",   icon="🌈", owned=false, cost=80},
-	{name="Spooky",    icon="👻", owned=false, cost=60},
-	{name="Floral",    icon="🌸", owned=false, cost=70},
-	{name="Chompers",  icon="😁", owned=false, cost=100},
-	{name="Stealth",   icon="🌑", owned=false, cost=90},
-	{name="Neon",      icon="💡", owned=false, cost=120},
-	{name="VIP",       icon="👑", owned=false, cost=200},
-}
-
--- ============================================================
--- DATA — ACCOLADES
--- ============================================================
-local ACCOLADES = {
-	{
-		id="champion",
-		emoji="🏆",
-		name="Chomper Champion",
-		desc="Most total cleanliness damage dealt",
-		medals=50,
-		color=Color3.fromRGB(239,159,39),
-		bg=Color3.fromRGB(45,35,10),
-		position=1,
-	},
-	{
-		id="chef",
-		emoji="👨‍🍳",
-		name="Master Chef",
-		desc="Most unique recipes cooked in one match",
-		medals=30,
-		color=Color3.fromRGB(85,210,130),
-		bg=Color3.fromRGB(16,36,22),
-		position=2,
-	},
-	{
-		id="laststanding",
-		emoji="🏅",
-		name="Last One Standing",
-		desc="Final survivor — or final alliance that chose Together",
-		medals=40,
-		color=Color3.fromRGB(100,180,255),
-		bg=Color3.fromRGB(14,22,40),
-		position=3, -- centre
-		isCentre=true,
-	},
-	{
-		id="executioner",
-		emoji="🗡️",
-		name="Executioner",
-		desc="Caused the most bathroom eliminations",
-		medals=20,
-		color=Color3.fromRGB(220,80,80),
-		bg=Color3.fromRGB(40,14,14),
-		position=4,
-	},
-	{
-		id="squeakyclean",
-		emoji="🧼",
-		name="Squeaky Clean",
-		desc="Reached Food Fight phase without using a single break",
-		medals=20,
-		color=Color3.fromRGB(160,220,255),
-		bg=Color3.fromRGB(14,28,36),
-		position=5,
-	},
-}
-
--- ============================================================
--- DATA — ACHIEVEMENTS (permanent progression)
--- ============================================================
-local ACHIEVEMENTS = {
-	{emoji="🏆", name="Chomper Champion",  desc="Win a match (most CL dealt)",              medals=50},
-	{emoji="🏅", name="Last One Standing", desc="Be the final survivor or Together winner",  medals=40},
-	{emoji="👨‍🍳", name="Master Chef",       desc="Cook the most unique recipes in a match",  medals=30},
-	{emoji="🗡️", name="Executioner",       desc="Cause the most bathroom eliminations",      medals=20},
-	{emoji="🧼", name="Squeaky Clean",     desc="Reach Food Fight with 0 breaks used",       medals=20},
-	{emoji="🤝", name="Ride or Die",       desc="Survive to end-game with ally intact",       medals=20},
-	{emoji="⭐", name="Legendary Cook",    desc="Cook and use a Legendary recipe",            medals=30},
-	{emoji="🛒", name="Golden Moment",     desc="Find and activate the Golden Cart",          medals=25},
-	{emoji="🍄", name="Truffle Hunter",    desc="Find and use a Truffle in one match",        medals=15},
-	{emoji="💀", name="Betrayer",          desc="Break an alliance during Food Fight phase",  medals=10},
-	{emoji="🤑", name="Street Hustler",    desc="Collect $40+ in outdoor loot in one match",  medals=15},
-	{emoji="💥", name="Chaos Agent",       desc="Hit 3+ players with a single throw",         medals=25},
-	{emoji="🔗", name="Mark Master",       desc="Land 5+ successful Mark-crit chains",        medals=15},
-}
-
--- ============================================================
--- HELPERS (mirrors PrelobbyGuiBuilder style)
--- ============================================================
-local function mkLabel(parent,text,font,size,color,xAlign,pos,sz)
+-- ── Helpers ──────────────────────────────────────────────────
+local function corner(p, r)
+	Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 8)
+end
+local function mkStroke(p, t, c)
+	local s = Instance.new("UIStroke", p)
+	s.Thickness = t or 1.5; s.Color = c or C.stroke; return s
+end
+local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
 	local l = Instance.new("TextLabel")
-	l.Text = text
-	l.Font = font or Enum.Font.Gotham
-	l.TextSize = size or 16
-	l.TextColor3 = color or Color3.fromRGB(220,218,232)
-	l.TextXAlignment = xAlign or Enum.TextXAlignment.Left
+	l.Text = text or ""; l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14; l.TextColor3 = color or C.white
+	l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
 	l.TextYAlignment = Enum.TextYAlignment.Center
 	l.BackgroundTransparency = 1
 	l.Position = pos or UDim2.new(0,0,0,0)
 	l.Size = sz or UDim2.new(1,0,1,0)
-	l.Parent = parent
-	return l
+	l.Parent = p; return l
 end
-
-local function mkFrame(parent,name,size,pos,anchor,bg,corner,nostroke)
-	local f = Instance.new("Frame")
-	f.Name = name or "Frame"
-	f.Size = size
-	f.Position = pos
-	if anchor then f.AnchorPoint = anchor end
-	f.BackgroundColor3 = bg or Color3.fromRGB(20,18,32)
-	f.BorderSizePixel = 0
-	f.Parent = parent
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0,corner or 12)
-	c.Parent = f
-	if not nostroke then
-		local s = Instance.new("UIStroke")
-		s.Thickness = 1.5
-		s.Color = Color3.fromRGB(50,46,72)
-		s.Parent = f
-	end
-	return f
-end
-
--- ============================================================
--- ALLERGY + FULLNESS HELPERS
--- ============================================================
-local function hasAllergen(ingredients)
-	local allergy = _G.Chompers and _G.Chompers.GetAllergy and
-		_G.Chompers.GetAllergy() or nil
-	if not allergy then return false end
-	for _,ing in ipairs(ALLERGY_INGS[allergy] or {}) do
-		if ingredients:find(ing) then return true end
-	end
-	return false
-end
-
-local function recipeHasAllergen(rdIngredients, allergyName)
-	local ingList = ALLERGY_INGS[allergyName] or {}
-	for _,ing in ipairs(ingList) do
-		if rdIngredients:find(ing) then return true end
-	end
-	return false
-end
-
-local function getDisplayFullness(rd)
-	if not SELF_CONSUME[rd.n] then return nil end
-	local base = rd.fu or 0
-	base = math.floor(base * 0.5)
-	return base > 0 and base or nil
-end
-
-local function getRarestIngredientRarity(recipeIngredients)
-	-- Returns the rarity of the rarest ingredient in a recipe
-	-- Used for the stack badge in recipe detail
-	local rarityRank = {
-		Common=1, Uncommon=2, Rare=3, ["Ultra-Rare"]=4, Legendary=5
-	}
-	local highest = "Common"
-	for _,ing in ipairs(INGREDIENT_DATA) do
-		if recipeIngredients:find(ing.n) then
-			if rarityRank[ing.r] > rarityRank[highest] then
-				highest = ing.r
-			end
-		end
-	end
-	return highest
-end
-
--- ============================================================
--- COOKBOOK TAB SETUP
--- ============================================================
-local COOK_DET_W = 0.52
-local ENTRY_H    = 68
-
--- Find the AccoladesPanel placeholder built by PrelobbyGuiBuilder
--- and find/create the CookPanel in ContentArea
-local CookPanel = Instance.new("Frame")
-CookPanel.Name = "CookPanel"
-CookPanel.Size = UDim2.new(1,0,1,0)
-CookPanel.BackgroundTransparency = 1
-CookPanel.Visible = false
-CookPanel.ZIndex = 9
-CookPanel.Parent = ContentArea
-
--- Register with PrelobbyGuiBuilder's tab system via _G
-if _G.Chompers then
-	_G.Chompers.RegisterTab = _G.Chompers.RegisterTab or {}
-	_G.Chompers.RegisterTab["COOKBOOK"]  = CookPanel
-	_G.Chompers.GetAllergy   = _G.Chompers.GetAllergy   or function() return nil end
-	_G.Chompers.GetFavourite = _G.Chompers.GetFavourite or function() return nil end
-end
-
--- Wire tab button — PrelobbyGuiBuilder owns the tab buttons
--- We inject our panel into the existing tabPanels mechanism
--- by setting Visible directly when the tab is clicked.
--- PrelobbyGuiBuilder's switchTab handles this via tabPanels["COOKBOOK"]
--- We need to register CookPanel there. We do it through a shared table.
-local tabPanelsShared = PrelobbyGui:WaitForChild(
-	"StoreGuideOverlay",10):WaitForChild("Panel",10)
-	:FindFirstChild("TabBar")
-
--- Direct approach: find the COOKBOOK tab button and wire it
-local TabBar = Panel:WaitForChild("TabBar",5)
-local allTabPanels = {} -- local registry
-
-local function registerPanel(tabId, panel)
-	allTabPanels[tabId] = panel
-	-- Find existing tab button and connect
-	local btn = TabBar:FindFirstChild(tabId.."Tab")
-	if btn then
-		btn.MouseButton1Click:Connect(function()
-			-- Hide all panels we know about
-			for _,p in pairs(allTabPanels) do
-				p.Visible = false
-			end
-			-- Also hide panels from PrelobbyGuiBuilder
-			-- by firing through _G.Chompers
-			if _G.Chompers and _G.Chompers.HideAllPanels then
-				_G.Chompers.HideAllPanels()
-			end
-			panel.Visible = true
-			-- Update tab button colours
-			for _,t in ipairs(TabBar:GetChildren()) do
-				if t:IsA("TextButton") then
-					if t.Name == tabId.."Tab" then
-						-- Active colour set by PrelobbyGuiBuilder's
-						-- switchTab — we call it if available
-					end
-				end
-			end
-			if _G.Chompers and _G.Chompers.SwitchTab then
-				_G.Chompers.SwitchTab(tabId)
-			end
-		end)
-	end
-end
-
--- ============================================================
--- COOKBOOK SHARED UI BUILDERS
--- ============================================================
-local function buildCookList(parent, barColor)
-	local scroll = Instance.new("ScrollingFrame")
-	scroll.Size = UDim2.new(1,0,1,0)
-	scroll.BackgroundColor3 = Color3.fromRGB(22,20,34)
-	scroll.BorderSizePixel = 0
-	scroll.ScrollBarThickness = 6
-	scroll.ScrollBarImageColor3 = barColor or Color3.fromRGB(65,48,128)
-	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	scroll.CanvasSize = UDim2.new(0,0,0,0)
-	scroll.ZIndex = 10
-	scroll.Parent = parent
-	Instance.new("UICorner",scroll).CornerRadius = UDim.new(0,10)
-	local p = Instance.new("UIPadding")
-	p.PaddingTop    = UDim.new(0,5)
-	p.PaddingBottom = UDim.new(0,5)
-	p.PaddingLeft   = UDim.new(0,5)
-	p.PaddingRight  = UDim.new(0.54,14)
-	p.Parent = scroll
-	local ll = Instance.new("UIListLayout")
+local function mkScroll(parent, size, pos, barCol)
+	local sf = Instance.new("ScrollingFrame", parent)
+	sf.Size = size; sf.Position = pos
+	sf.BackgroundTransparency = 1; sf.BorderSizePixel = 0
+	sf.ScrollBarThickness = 6
+	sf.ScrollBarImageColor3 = barCol or C.stroke
+	sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	sf.CanvasSize = UDim2.new(0,0,0,0)
+	local ll = Instance.new("UIListLayout", sf)
 	ll.SortOrder = Enum.SortOrder.LayoutOrder
-	ll.Padding = UDim.new(0,4)
-	ll.Parent = scroll
-	return scroll
+	ll.Padding = UDim.new(0,6)
+	local pad = Instance.new("UIPadding", sf)
+	pad.PaddingTop = UDim.new(0,6); pad.PaddingBottom = UDim.new(0,8)
+	pad.PaddingLeft = UDim.new(0,8); pad.PaddingRight = UDim.new(0,8)
+	return sf
 end
-
-local function buildCookRow(parent,emoji,name,cl,fu,cost,wt,accentColor,order)
-	local entry = mkFrame(parent,name,
-		UDim2.new(1,0,0,ENTRY_H),
-		UDim2.new(0,0,0,0),nil,
-		Color3.fromRGB(26,24,40),8,true)
-	entry.LayoutOrder = order or 0
-	entry.ZIndex = 11
-
-	mkFrame(entry,"Bar",UDim2.new(0,4,1,-8),
-		UDim2.new(0,4,0,4),nil,accentColor,2,true).ZIndex = 12
-
-	mkLabel(entry,emoji or "🍽",
-		Enum.Font.GothamBold,28,Color3.fromRGB(245,242,255),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,12,0,0),UDim2.new(0,32,0,36)).ZIndex = 12
-
-	mkLabel(entry,name,
-		Enum.Font.GothamBold,17,Color3.fromRGB(230,228,245),
-		Enum.TextXAlignment.Left,
-		UDim2.new(0,48,0,5),UDim2.new(1,-52,0,24)).ZIndex = 12
-
-	local pills = {
-		{icon="🧼", val=tostring(cl),   color=Color3.fromRGB(65,165,235)},
-		{icon="🍔", val=tostring(fu),   color=Color3.fromRGB(235,155,35)},
-		{icon="💵", val=tostring(cost), color=Color3.fromRGB(75,205,60)},
-		{icon="⚖️", val=tostring(wt),   color=Color3.fromRGB(200,160,80)},
-	}
-	local pillW = (1-0.05)/4
-	for i,pill in ipairs(pills) do
-		local xPct = 0.03+(i-1)*pillW
-		local bg = mkFrame(entry,"Pill"..i,
-			UDim2.new(pillW,-4,0,26),
-			UDim2.new(xPct,2,0,38),
-			nil,Color3.fromRGB(18,17,28),6,true)
-		bg.ZIndex = 12
-		mkLabel(bg,pill.icon.." "..pill.val,
-			Enum.Font.GothamBold,13,pill.color,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0,0,0,0),UDim2.new(1,0,1,0)).ZIndex = 13
-	end
-	return entry
-end
-
-local function buildDetailPanel(parent)
-	local panel = mkFrame(parent,"DetailPanel",
-		UDim2.new(COOK_DET_W,-8,1,-8),
-		UDim2.new(1-COOK_DET_W,4,0,4),
-		nil,Color3.fromRGB(22,20,34),14)
-	panel.ZIndex = 10
-	panel.ClipsDescendants = true
-
-	local hdr = mkFrame(panel,"Header",
-		UDim2.new(1,-16,0,120),
-		UDim2.new(0,8,0,8),
-		nil,Color3.fromRGB(28,26,42),12,true)
-	hdr.ZIndex = 11
-
-	local emojiL = mkLabel(hdr,"",Enum.Font.GothamBold,80,
-		Color3.fromRGB(245,242,255),Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,0),UDim2.new(0.22,0,1,0))
-	emojiL.ZIndex = 12
-
-	local nameL = mkLabel(hdr,"Select an item",
-		Enum.Font.GothamBlack,28,Color3.fromRGB(245,242,255),
-		Enum.TextXAlignment.Left,
-		UDim2.new(0.22,12,0,6),UDim2.new(0.78,-20,0,52))
-	nameL.TextWrapped = true
-	nameL.ZIndex = 12
-
-	local subNameL = mkLabel(hdr,"",Enum.Font.GothamBold,17,
-		Color3.fromRGB(175,172,198),Enum.TextXAlignment.Left,
-		UDim2.new(0.22,12,0,62),UDim2.new(0.78,-20,0,22))
-	subNameL.ZIndex = 12
-
-	-- 4 badges: Cook | Allergen | Stack | Rarity
-	local badgeW = 0.25
-	local function makeBadge(nm,xPct,bg2,tc)
-		local badge = mkFrame(panel,nm,
-			UDim2.new(badgeW,-5,0,BADGE_H),
-			UDim2.new(xPct,3,0,BADGE_Y),
-			nil,bg2,12,true)
-		badge.ZIndex = 11
-		local icon = mkLabel(badge,"",Enum.Font.GothamBold,20,tc,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0,0,0,0),UDim2.new(0.28,0,1,0))
-		icon.ZIndex = 12
-		local val = mkLabel(badge,"",Enum.Font.GothamBold,15,tc,
-			Enum.TextXAlignment.Left,
-			UDim2.new(0.28,0,0,0),UDim2.new(0.72,-6,1,0))
-		val.TextWrapped = true
-		val.ZIndex = 12
-		return icon,val,badge
-	end
-
-	local cookIcon, cookVal, cookBadge  = makeBadge("CookBadge", 0,
-		Color3.fromRGB(28,20,42), Color3.fromRGB(200,170,255))
-	local algIcon,  algVal,  algBadge   = makeBadge("AlgBadge",  0.25,
-		Color3.fromRGB(48,20,20), Color3.fromRGB(255,140,140))
-	local stkIcon,  stkVal,  stkBadge   = makeBadge("StkBadge",  0.5,
-		Color3.fromRGB(20,28,42), Color3.fromRGB(140,190,255))
-	local rarIcon,  rarVal,  rarBadge   = makeBadge("RarBadge",  0.75,
-		Color3.fromRGB(30,20,45), Color3.fromRGB(175,140,255))
-
-	cookIcon.Text = "🍳"
-	algIcon.Text  = "⚠️"
-	stkIcon.Text  = "📦"
-	rarIcon.Text  = "⭐"
-
-	-- 4 big stat pills
-	local pillY2 = BADGE_Y+BADGE_H+8
-	local pillH2 = 80
-
-	local function makeBigPill(icon,label,color,xPct)
-		local pill = mkFrame(panel,"Pill_"..label,
-			UDim2.new(0.245,-5,0,pillH2),
-			UDim2.new(xPct,2,0,pillY2),
-			nil,Color3.fromRGB(24,22,38),12,true)
-		pill.ZIndex = 11
-		mkLabel(pill,icon,Enum.Font.GothamBold,28,color,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0,0,0,3),UDim2.new(1,0,0,36)).ZIndex = 12
-		mkLabel(pill,label,Enum.Font.GothamBold,13,C.dim,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0,0,0,39),UDim2.new(1,0,0,18)).ZIndex = 12
-		local val = mkLabel(pill,"—",Enum.Font.GothamBlack,24,color,
-			Enum.TextXAlignment.Center,
-			UDim2.new(0,0,0,57),UDim2.new(1,0,0,22))
-		val.ZIndex = 12
-		return val
-	end
-
-	local clVal  = makeBigPill("🧼","Cleanliness",Color3.fromRGB(80,185,255),  0)
-	local fuVal  = makeBigPill("🍔","Fullness",   Color3.fromRGB(255,175,55),  0.245)
-	local coVal  = makeBigPill("💵","Cost",       Color3.fromRGB(100,225,100), 0.5)
-	local wtVal2 = makeBigPill("⚖️","Weight",     Color3.fromRGB(220,180,90),  0.745)
-
-	local sec1Y = pillY2+pillH2+10
-
-	local sec1Hdr = mkLabel(panel,"",Enum.Font.GothamBold,18,
-		Color3.fromRGB(245,242,255),Enum.TextXAlignment.Left,
-		UDim2.new(0,10,0,sec1Y),UDim2.new(1,-20,0,24))
-	sec1Hdr.ZIndex = 11
-
-	local sec1Body = mkLabel(panel,"",Enum.Font.Gotham,17,
-		Color3.fromRGB(215,212,235),Enum.TextXAlignment.Left,
-		UDim2.new(0,10,0,sec1Y+26),UDim2.new(1,-20,0,56))
-	sec1Body.TextWrapped = true
-	sec1Body.TextYAlignment = Enum.TextYAlignment.Top
-	sec1Body.LineHeight = 1.35
-	sec1Body.ZIndex = 11
-
-	local sec2Y = sec1Y+26+60
-
-	local sec2Hdr = mkLabel(panel,"",Enum.Font.GothamBold,18,
-		Color3.fromRGB(245,242,255),Enum.TextXAlignment.Left,
-		UDim2.new(0,10,0,sec2Y),UDim2.new(1,-20,0,24))
-	sec2Hdr.ZIndex = 11
-
-	local sec2Body = mkLabel(panel,"",Enum.Font.Gotham,17,
-		Color3.fromRGB(195,225,195),Enum.TextXAlignment.Left,
-		UDim2.new(0,10,0,sec2Y+26),UDim2.new(1,-20,1,-46))
-	sec2Body.TextWrapped = true
-	sec2Body.TextYAlignment = Enum.TextYAlignment.Top
-	sec2Body.LineHeight = 1.35
-	sec2Body.ZIndex = 11
-
-	local banner = mkFrame(panel,"Banner",
-		UDim2.new(1,-16,0,38),
-		UDim2.new(0,8,1,-46),
-		nil,Color3.fromRGB(80,20,20),10,true)
-	banner.Visible = false
-	banner.ZIndex = 12
-	local bannerL = mkLabel(banner,"",Enum.Font.GothamBold,16,
-		Color3.fromRGB(255,140,140))
-	bannerL.ZIndex = 13
-
-	return {
-		panel=panel, hdr=hdr,
-		emojiL=emojiL, nameL=nameL, subNameL=subNameL,
-		cookIcon=cookIcon, cookVal=cookVal, cookBadge=cookBadge,
-		algIcon=algIcon,   algVal=algVal,   algBadge=algBadge,
-		stkIcon=stkIcon,   stkVal=stkVal,   stkBadge=stkBadge,
-		rarIcon=rarIcon,   rarVal=rarVal,   rarBadge=rarBadge,
-		clVal=clVal, fuVal=fuVal, coVal=coVal, wtStatVal=wtVal2,
-		sec1Hdr=sec1Hdr, sec1Body=sec1Body,
-		sec2Hdr=sec2Hdr, sec2Body=sec2Body,
-		banner=banner, bannerL=bannerL,
-	}
-end
-
--- ============================================================
--- COOKBOOK TAB — SUB-TABS
--- ============================================================
-local SUBTAB_H = 38
-local subTabBar = Instance.new("Frame")
-subTabBar.Size = UDim2.new(1,0,0,SUBTAB_H)
-subTabBar.Position = UDim2.new(0,0,0,0)
-subTabBar.BackgroundColor3 = Color3.fromRGB(20,18,32)
-subTabBar.BorderSizePixel = 0
-subTabBar.ZIndex = 10
-subTabBar.Parent = CookPanel
-
-local subTabLL = Instance.new("UIListLayout")
-subTabLL.FillDirection = Enum.FillDirection.Horizontal
-subTabLL.HorizontalAlignment = Enum.HorizontalAlignment.Left
-subTabLL.VerticalAlignment = Enum.VerticalAlignment.Center
-subTabLL.Padding = UDim.new(0,2)
-subTabLL.Parent = subTabBar
-
-local COOK_SUBTABS = {
-	{id="RECIPES",     label="🍽  Recipes",     order=1},
-	{id="INGREDIENTS", label="🥕  Ingredients", order=2},
-	{id="COMBOS",      label="🔗  Combos",      order=3},
-}
-
-local cookSubBtns   = {}
-local cookSubPanels = {}
-
-local cookContent = Instance.new("Frame")
-cookContent.Size = UDim2.new(1,0,1,-SUBTAB_H)
-cookContent.Position = UDim2.new(0,0,0,SUBTAB_H)
-cookContent.BackgroundTransparency = 1
-cookContent.ZIndex = 9
-cookContent.Parent = CookPanel
-
-local function switchCookSub(subId)
-	for _,st in ipairs(COOK_SUBTABS) do
-		local btn = cookSubBtns[st.id]
-		local pnl = cookSubPanels[st.id]
-		if st.id==subId then
-			btn.BackgroundColor3 = Color3.fromRGB(65,48,128)
-			btn.TextColor3 = Color3.fromRGB(198,188,255)
-			if pnl then pnl.Visible=true end
-		else
-			btn.BackgroundColor3 = Color3.fromRGB(26,24,40)
-			btn.TextColor3 = Color3.fromRGB(105,100,135)
-			if pnl then pnl.Visible=false end
-		end
-	end
-end
-
-for _,st in ipairs(COOK_SUBTABS) do
-	local btn = Instance.new("TextButton")
-	btn.Name = st.id.."SubTab"
-	btn.LayoutOrder = st.order
-	btn.Size = UDim2.new(0.333,-2,0,SUBTAB_H-4)
-	btn.BackgroundColor3 = Color3.fromRGB(26,24,40)
-	btn.BorderSizePixel = 0
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 14
-	btn.TextColor3 = Color3.fromRGB(105,100,135)
-	btn.Text = st.label
-	btn.AutoButtonColor = false
-	btn.ZIndex = 11
-	btn.Parent = subTabBar
-	Instance.new("UICorner",btn).CornerRadius = UDim.new(0,6)
-	cookSubBtns[st.id] = btn
-	local sId = st.id
-	btn.MouseButton1Click:Connect(function() switchCookSub(sId) end)
-end
-
--- ============================================================
--- RECIPES SUB-TAB
--- ============================================================
-local RecipesPanel = Instance.new("Frame")
-RecipesPanel.Name = "RecipesPanel"
-RecipesPanel.Size = UDim2.new(1,0,1,0)
-RecipesPanel.BackgroundTransparency = 1
-RecipesPanel.Visible = true
-RecipesPanel.ZIndex = 9
-RecipesPanel.Parent = cookContent
-cookSubPanels["RECIPES"] = RecipesPanel
-
-local searchBox = Instance.new("TextBox")
-searchBox.Size = UDim2.new(1-COOK_DET_W,-12,0,34)
-searchBox.Position = UDim2.new(0,4,0,4)
-searchBox.BackgroundColor3 = Color3.fromRGB(28,26,42)
-searchBox.BorderSizePixel = 0
-searchBox.Font = Enum.Font.Gotham
-searchBox.TextSize = 15
-searchBox.TextColor3 = Color3.fromRGB(245,242,255)
-searchBox.PlaceholderText = "Search recipes..."
-searchBox.PlaceholderColor3 = C.dim
-searchBox.Text = ""
-searchBox.ClearTextOnFocus = false
-searchBox.ZIndex = 10
-searchBox.Parent = RecipesPanel
-Instance.new("UICorner",searchBox).CornerRadius = UDim.new(0,8)
-local sbStroke = Instance.new("UIStroke")
-sbStroke.Thickness = 1
-sbStroke.Color = Color3.fromRGB(50,46,72)
-sbStroke.Parent = searchBox
-
-local recListHolder = Instance.new("Frame")
-recListHolder.Size = UDim2.new(1,-8,1,-46)
-recListHolder.Position = UDim2.new(0,4,0,42)
-recListHolder.BackgroundTransparency = 1
-recListHolder.ZIndex = 9
-recListHolder.Parent = RecipesPanel
-
-local recScroll  = buildCookList(recListHolder, Color3.fromRGB(65,48,128))
-local recDetailD = buildDetailPanel(RecipesPanel)
-
-local function showRecipeDetail(rd)
-	local col = RARITY_COL[rd.r] or RARITY_COL.Common
-	local bg2 = RARITY_BG[rd.r]  or RARITY_BG.Common
-	local d   = recDetailD
-
-	d.emojiL.Text = rd.emoji or "🍽"
-	d.hdr.BackgroundColor3 = bg2
-	d.nameL.Text = rd.n
-	d.nameL.TextColor3 = col
-	d.subNameL.Text = rd.zone or ""
-	d.subNameL.TextColor3 = Color3.fromRGB(155,152,178)
-
-	-- Badge 1: Cook method
-	d.cookVal.Text  = (rd.cook or ""):gsub("%(raw%)", ""):match("^%s*(.-)%s*$")
-	d.cookBadge.BackgroundColor3 = Color3.fromRGB(28,20,42)
-	d.cookVal.TextColor3 = Color3.fromRGB(200,170,255)
-
-	-- Badge 2: Allergen
-	local foundAllergen = "None"
-	for _,a in ipairs(ALLERGY_TYPES) do
-		if recipeHasAllergen(rd.i, a.name) then
-			foundAllergen = a.name
-			break
-		end
-	end
-	d.algIcon.Text = foundAllergen=="None" and "✓" or "⚠️"
-	d.algVal.Text  = foundAllergen
-	d.algBadge.BackgroundColor3 = foundAllergen=="None"
-		and Color3.fromRGB(18,42,20) or Color3.fromRGB(48,20,20)
-	d.algVal.TextColor3 = foundAllergen=="None"
-		and Color3.fromRGB(100,200,110) or Color3.fromRGB(255,140,140)
-
-	-- Badge 3: Stack limit (rarest ingredient)
-	local rarestRarity = getRarestIngredientRarity(rd.i)
-	local stackLimit   = STACK_LIMIT[rarestRarity] or 1
-	local stackColor   = STACK_COL[rarestRarity]   or Color3.fromRGB(172,170,192)
-	d.stkVal.Text  = stackLimit==1 and "×1 only" or "×"..stackLimit.." max"
-	d.stkBadge.BackgroundColor3 = RARITY_BG[rarestRarity] or Color3.fromRGB(28,26,42)
-	d.stkVal.TextColor3 = stackColor
-	d.stkIcon.TextColor3 = stackColor
-
-	-- Badge 4: Rarity
-	d.rarIcon.Text = rd.r=="Legendary" and "✨" or "⭐"
-	d.rarVal.Text  = rd.r
-	d.rarBadge.BackgroundColor3 = RARITY_BG[rd.r] or Color3.fromRGB(30,20,45)
-	d.rarVal.TextColor3 = RARITY_COL[rd.r] or Color3.fromRGB(175,140,255)
-
-	-- Stat pills
-	d.clVal.Text = rd.cl>0 and tostring(rd.cl) or "Buff"
-	d.clVal.TextColor3 = Color3.fromRGB(80,185,255)
-
-	local fuDisplay = getDisplayFullness(rd)
-	d.fuVal.Text = fuDisplay and "+"..fuDisplay or "—"
-	d.fuVal.TextColor3 = fuDisplay
-		and Color3.fromRGB(255,175,55) or Color3.fromRGB(60,58,78)
-
-	d.coVal.Text = rd.cost>0 and "$"..rd.cost or "FREE"
-	d.coVal.TextColor3 = Color3.fromRGB(100,225,100)
-	d.wtStatVal.Text = tostring(rd.wt)
-	d.wtStatVal.TextColor3 = Color3.fromRGB(220,180,90)
-
-	-- Cook depth bonus
-	local ingCount = 1
-	for _ in rd.i:gmatch("·") do ingCount=ingCount+1 end
-	local depthBonus = ingCount>=4 and "+15% CL (4+ ing)"
-		or ingCount==3 and "+10% CL (3 ing)"
-		or ingCount==2 and "+5% CL (2 ing)"
-		or "1 ingredient"
-
-	d.sec1Hdr.Text = "Ingredients:  ("..depthBonus..")"
-	d.sec1Body.Text = rd.i
-	d.sec1Body.TextColor3 = Color3.fromRGB(215,212,235)
-
-	d.sec2Hdr.Text = "Effect:"
-	d.sec2Body.Text = EFFECTS[rd.n] or "Effect coming soon."
-	d.sec2Body.TextColor3 = Color3.fromRGB(195,225,195)
-
-	-- Banner
-	local allergic = hasAllergen(rd.i)
-	local isFav    = _G.Chompers and _G.Chompers.GetFavourite
-		and rd.n==_G.Chompers.GetFavourite() or false
-	if allergic then
-		d.banner.Visible = true
-		d.banner.BackgroundColor3 = Color3.fromRGB(80,20,20)
-		d.bannerL.Text = "⚠ ALLERGIC — ×1.6 cleanliness when this hits you!"
-		d.bannerL.TextColor3 = Color3.fromRGB(255,140,140)
-		d.panel.BackgroundColor3 = Color3.fromRGB(30,16,16)
-	elseif isFav then
-		d.banner.Visible = true
-		d.banner.BackgroundColor3 = Color3.fromRGB(55,42,10)
-		d.bannerL.Text = "⭐ FAVOURITE — ×1.5 CL when thrown! They get +20 fullness."
-		d.bannerL.TextColor3 = Color3.fromRGB(255,210,80)
-		d.panel.BackgroundColor3 = Color3.fromRGB(28,24,12)
-	else
-		d.banner.Visible = false
-		d.panel.BackgroundColor3 = Color3.fromRGB(22,20,34)
-	end
-end
-
--- Build recipe rows
-local rarityOrder = {"Common","Uncommon","Rare","Ultra-Rare","Legendary"}
-local byRarity = {}
-for _,r in ipairs(rarityOrder) do byRarity[r]={} end
-for _,rd in ipairs(RECIPE_DATA) do
-	table.insert(byRarity[rd.r] or byRarity.Common, rd)
-end
-
-local recipeEntries    = {}
-local selectedRecEntry = nil
-local rowOrder = 0
-
-for _,rarity in ipairs(rarityOrder) do
-	local col = RARITY_COL[rarity] or RARITY_COL.Common
-	rowOrder = rowOrder+1
-	local hdr = Instance.new("TextLabel")
-	hdr.Size = UDim2.new(1,0,0,22)
-	hdr.BackgroundTransparency = 1
-	hdr.Text = rarity=="Legendary" and "✨  Legendary" or rarity
-	hdr.Font = Enum.Font.GothamBold
-	hdr.TextSize = 14
-	hdr.TextColor3 = col
-	hdr.TextXAlignment = Enum.TextXAlignment.Left
-	hdr.LayoutOrder = rowOrder
-	hdr.ZIndex = 11
-	hdr.Parent = recScroll
-
-	for _,rd in ipairs(byRarity[rarity]) do
-		rowOrder = rowOrder+1
-		local eCol   = RARITY_COL[rd.r] or RARITY_COL.Common
-		local fuD    = getDisplayFullness(rd)
-		local entry  = buildCookRow(recScroll,
-			rd.emoji, rd.n,
-			rd.cl>0 and rd.cl or "—",
-			fuD and "+"..fuD or "—",
-			"$"..rd.cost, rd.wt, eCol, rowOrder)
-		local hit = Instance.new("TextButton")
-		hit.Size = UDim2.new(1,0,1,0)
-		hit.BackgroundTransparency = 1
-		hit.Text = ""
-		hit.ZIndex = 13
-		hit.Parent = entry
-		hit.MouseButton1Click:Connect(function()
-			if selectedRecEntry then
-				selectedRecEntry.BackgroundColor3 = Color3.fromRGB(26,24,40)
+local function mkSubTabBar(parent, h, tabs, onSwitch)
+	local bar = Instance.new("Frame", parent)
+	bar.Size = UDim2.new(1,0,0,h); bar.BackgroundColor3 = Color3.fromRGB(16,14,26)
+	bar.BorderSizePixel = 0
+	local ll = Instance.new("UIListLayout", bar)
+	ll.FillDirection = Enum.FillDirection.Horizontal
+	ll.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	ll.VerticalAlignment = Enum.VerticalAlignment.Center
+	ll.Padding = UDim.new(0,2)
+	local btns = {}
+	for i, t in ipairs(tabs) do
+		local b = Instance.new("TextButton", bar)
+		b.Size = UDim2.new(1/#tabs,-2,0,h-4)
+		b.BackgroundColor3 = i==1 and t.color or Color3.fromRGB(26,24,40)
+		b.BorderSizePixel = 0; b.AutoButtonColor = false
+		b.Font = Enum.Font.GothamBold; b.TextSize = 13
+		b.TextColor3 = i==1 and C.white or C.dim
+		b.Text = t.label; corner(b, 6)
+		btns[t.id] = b
+		local tId = t.id; local tCol = t.color
+		b.MouseButton1Click:Connect(function()
+			for id, btn in pairs(btns) do
+				local isActive = id == tId
+				btn.BackgroundColor3 = isActive and tCol or Color3.fromRGB(26,24,40)
+				btn.TextColor3 = isActive and C.white or C.dim
 			end
-			selectedRecEntry = entry
-			entry.BackgroundColor3 = Color3.fromRGB(38,36,56)
-			showRecipeDetail(rd)
+			onSwitch(tId)
 		end)
-		table.insert(recipeEntries,{
-			frame=entry,
-			name=rd.n:lower(),
-			ing=rd.i:lower(),
-			r=rarity:lower()
-		})
+	end
+	return bar, btns
+end
+
+-- ── Emoji lookup ─────────────────────────────────────────────
+local EMOJI = {
+	-- Produce
+	Apple="🍎", Banana="🍌", Tomato="🍅", Lettuce="🥬", Onion="🧅", Carrot="🥕",
+	Spinach="🌿", Peas="🫛", Egg="🥚", Potato="🥔", Basil="🌿",
+	["Bell Pepper"]="🫑", Corn="🌽", Mango="🥭", Avocado="🥑", Garlic="🧄",
+	Tofu="⬜", Pineapple="🍍", Plantain="🍌", Beet="❤️", Kimchi="🌶️",
+	Coconut="🥥", Truffle="🍄",
+	-- Bakery
+	Bun="🍞", ["Bread Loaf"]="🍞", Flour="🌾", Sugar="🍬", Naan="🫓",
+	Dough="🫓", Chocolate="🍫", Honey="🍯", Croissant="🥐", Fondant="🎂",
+	-- Dairy
+	Milk="🥛", Yogurt="🫙", Cream="🥛", ["Cheese Block"]="🧀", Butter="🧈",
+	Mayonnaise="🫙", ["Blue Cheese"]="🫙", ["Ice Cream"]="🍦",
+	-- Freezer/Meat
+	Chicken="🍗", Beef="🥩", Pork="🥩", Sausage="🌭", ["Wagyu Beef"]="🥩",
+	Shrimp="🦐", Crab="🦀", Lobster="🦞", Tuna="🐟",
+	-- Aisles
+	Rice="🍚", Pasta="🍝", Noodles="🍜", Salt="🧂", Oil="🫙",
+	["Soy Sauce"]="🫙", ["Curry Powder"]="🌶️", ["Chili Powder"]="🌶️",
+	Peanut="🥜", Almond="🌰", ["Black Garlic"]="🧄", Saffron="🌸",
+	["Miso Paste"]="🍵", Tortilla="🫓",
+	-- Stockroom
+	Caviar="⚫",
+	-- Recipes
+	Burger="🍔", Taco="🌮", Fries="🍟", ["Egg Splat"]="🥚",
+	["Caprese Skewer"]="🍢", ["Tofu Scramble"]="🥣", ["Pound Cake"]="🎂",
+	["Mac and Cheese"]="🧀", ["Sausage Sandwich"]="🌭", ["Hummus Plate"]="🫙",
+	Roti="🫓", Samosa="🥟", Crepe="🥞", ["Grilled Cheese"]="🧀",
+	["Chocolate Banana"]="🍫", ["Pizza Slice"]="🍕", Quesadilla="🫓",
+	Burrito="🌯", ["Stir Fry"]="🥘", ["Chow Mein"]="🍜", Dumplings="🥟",
+	["Fried Rice"]="🍳", ["Naan Wrap"]="🫓", ["Spaghetti Pomodoro"]="🍝",
+	["Tofu Stir Fry"]="🥘", ["Plantain Chips"]="🍌", ["Garlic Bread"]="🥖",
+	["Poke Bowl"]="🍣", ["Sushi Roll"]="🍱", Shawarma="🌯", ["Jollof Rice"]="🍚",
+	["Kimchi Fried Rice"]="🍳", ["Pad Thai"]="🍜", Elote="🌽",
+	["Mango Lassi"]="🥤", Milkshake="🥤", ["Banana Pancakes"]="🥞",
+	["Shrimp Cocktail"]="🦐", Borscht="🍲", ["Miso Soup"]="🍵",
+	["Crab Rangoon"]="🦀", Callaloo="🌿", ["Tuna Melt"]="🐟",
+	["Chicken Curry"]="🍛", ["Vegetable Curry"]="🥘", ["Baked Potato"]="🥔",
+	["BBQ Ribs"]="🍖", ["Crispy Tofu Bowl"]="🥣", ["Mapo Tofu"]="🌶️",
+	Tamale="🌽", ["Groundnut Soup"]="🥜", Paella="🍛", ["Pepper Shrimp"]="🦐",
+	["Inferno Skewer"]="🔥", ["Almond Croissant"]="🥐", ["Ice Cream Sundae"]="🍨",
+	["Honey Glazed Ribs"]="🍖", ["Blue Cheese Pasta"]="🍝",
+	["Lobster Bisque"]="🦞", ["Chicken-Peanut Stew"]="🍲",
+	["Truffle Pasta"]="🍝", ["Coconut Curry"]="🥥", ["Saffron Rice"]="🍚",
+	["Wagyu Burger"]="🍔", ["Poke Deluxe"]="🍣", ["Guacamole Bomb"]="🥑",
+	["Golden Glaze"]="✨", ["Fondant Collapse"]="🎂",
+	["Million Dollar Steak"]="🥩",
+}
+local ZONE_EMOJI = {
+	Produce="🥦", Bakery="🥐", Dairy="🥛", Freezer="🧊",
+	Meat="🥩", Aisles="🏪", Stockroom="📦",
+}
+local function emoji(name, zone)
+	return EMOJI[name] or ZONE_EMOJI[zone] or "🍽"
+end
+
+-- normalise rarity
+local function nr(r)
+	if r == "UltraRare" then return "Ultra-Rare" end
+	return r or "Common"
+end
+
+-- sort helper
+local function rSort(a, b)
+	local ra = RARITY_ORDER[nr(a.rarity)] or 5
+	local rb = RARITY_ORDER[nr(b.rarity)] or 5
+	if ra ~= rb then return ra < rb end
+	return (a.name or "") < (b.name or "")
+end
+
+-- ============================================================
+-- HELPER — ingredient card (used in Cookbook > Ingredients)
+-- ============================================================
+
+local function buildIngredientCard(parent, item, order)
+	local r   = nr(item.rarity or "Common")
+	local bg  = RARITY_BG[r] or C.bgCard
+	local col = RARITY_COL[r] or C.stroke
+	local ic  = emoji(item.name, item.zone)
+
+	local card = Instance.new("Frame", parent)
+	card.Size = UDim2.new(1,0,0,100)
+	card.BackgroundColor3 = bg; card.BorderSizePixel = 0
+	card.LayoutOrder = order; card.ZIndex = 12
+	corner(card, 10); mkStroke(card, 2, col)
+
+	-- Emoji
+	mkLabel(card, ic, Enum.Font.GothamBold, 40, C.white,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,0), UDim2.new(0,88,1,0)).ZIndex = 13
+
+	-- Name
+	mkLabel(card, item.name, Enum.Font.GothamBlack, 16, C.white,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,92,0,8), UDim2.new(1,-100,0,22)).ZIndex = 13
+
+	-- Rarity + Zone
+	local zoneStr = (item.zone or "?") .. "  ·  " .. r
+	mkLabel(card, zoneStr, Enum.Font.GothamBold, 11, col,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,92,0,32), UDim2.new(1,-100,0,14)).ZIndex = 13
+
+	-- Stats row
+	local stats = {}
+	if item.wt  then table.insert(stats, "⚖ "  ..item.wt.."wt") end
+	if item.cost then table.insert(stats, "💲"..item.cost) end
+	if item.cl   then table.insert(stats, "🧼 +"..item.cl.." CL") end
+	if item.allergy and item.allergy ~= "None" then
+		table.insert(stats, "⚠ "..item.allergy)
+	end
+	mkLabel(card, table.concat(stats, "   "), Enum.Font.Gotham, 12,
+		Color3.fromRGB(160,155,195), Enum.TextXAlignment.Left,
+		UDim2.new(0,92,0,48), UDim2.new(1,-100,0,14)).ZIndex = 13
+
+	-- Effect
+	if item.effect and item.effect ~= "" then
+		local eL = mkLabel(card, item.effect, Enum.Font.Gotham, 12,
+			C.dim, Enum.TextXAlignment.Left,
+			UDim2.new(0,92,0,64), UDim2.new(1,-100,0,28))
+		eL.TextWrapped = true; eL.ZIndex = 13
 	end
 end
 
-searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-	local q = searchBox.Text:lower()
-	for _,e in ipairs(recipeEntries) do
-		e.frame.Visible = q==""
-			or e.name:find(q,1,true)
-			or e.ing:find(q,1,true)
-			or e.r:find(q,1,true)
+-- ============================================================
+-- HELPER — recipe card (used in Cookbook > Recipes and FavScroll)
+-- ============================================================
+
+local function buildRecipeCard(parent, item, order, compact)
+	local r   = nr(item.rarity or "Common")
+	local bg  = RARITY_BG[r] or C.bgCard
+	local col = RARITY_COL[r] or C.stroke
+	local ic  = emoji(item.name)
+	local h   = compact and 72 or 110
+
+	local card = Instance.new("Frame", parent)
+	card.Size = UDim2.new(1,0,0,h)
+	card.BackgroundColor3 = bg; card.BorderSizePixel = 0
+	card.LayoutOrder = order; card.ZIndex = 12
+	corner(card, 10); mkStroke(card, 2, col)
+	return card, ic, r, col
+end
+
+local function fillRecipeCard(card, item, ic, r, col, compact)
+	-- Emoji
+	mkLabel(card, ic, Enum.Font.GothamBold, compact and 28 or 38, C.white,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,0), UDim2.new(0, compact and 60 or 80, 1,0)).ZIndex = 13
+
+	local x = compact and 64 or 84
+
+	-- Name
+	mkLabel(card, item.name, Enum.Font.GothamBlack, compact and 14 or 16, C.white,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,x,0,6), UDim2.new(1,-x-8,0,20)).ZIndex = 13
+
+	-- Rarity
+	mkLabel(card, r, Enum.Font.GothamBold, 11, col,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,x,0,28), UDim2.new(1,-x-8,0,14)).ZIndex = 13
+
+	if not compact then
+		-- Ingredients
+		if item.ingredients then
+			local ingStr = table.concat(item.ingredients, " · ")
+			local iL = mkLabel(card, "📋 "..ingStr, Enum.Font.Gotham, 11,
+				C.dim, Enum.TextXAlignment.Left,
+				UDim2.new(0,x,0,44), UDim2.new(1,-x-8,0,24))
+			iL.TextWrapped = true; iL.ZIndex = 13
+		end
+		-- Stats
+		local stats = {}
+		if item.cl and item.cl > 0 then table.insert(stats, "🧼 +"..item.cl.." CL") end
+		if item.wt  then table.insert(stats, "⚖ "..item.wt.."wt") end
+		if item.station and item.station ~= "" then
+			table.insert(stats, "🍳 "..item.station)
+		end
+		mkLabel(card, table.concat(stats, "   "), Enum.Font.Gotham, 12,
+			Color3.fromRGB(160,155,195), Enum.TextXAlignment.Left,
+			UDim2.new(0,x,0,72), UDim2.new(1,-x-8,0,14)).ZIndex = 13
+		-- Notes
+		if item.notes and item.notes ~= "" then
+			mkLabel(card, "📝 "..item.notes, Enum.Font.Gotham, 10,
+				C.dim, Enum.TextXAlignment.Left,
+				UDim2.new(0,x,0,88), UDim2.new(1,-x-8,0,14)).ZIndex = 13
+		end
+	else
+		-- Compact stats
+		local stats = {}
+		if item.cl and item.cl > 0 then table.insert(stats, "🧼+"..item.cl) end
+		if item.station then table.insert(stats, item.station) end
+		mkLabel(card, table.concat(stats, " · "), Enum.Font.Gotham, 11,
+			C.dim, Enum.TextXAlignment.Left,
+			UDim2.new(0,x,0,44), UDim2.new(1,-x-8,0,14)).ZIndex = 13
 	end
+end
+
+-- ============================================================
+-- COOKBOOK TAB
+-- ============================================================
+
+-- Sub-tab bar inside CookPanel
+local COOK_SUBTAB_H = 40
+local cookSubBar, cookSubBtns = mkSubTabBar(CookPanel, COOK_SUBTAB_H, {
+	{id="INGREDIENTS", label="🥦 Ingredients", color=Color3.fromRGB(46,140,60)},
+	{id="RECIPES",     label="📖 Recipes",     color=Color3.fromRGB(65,48,128)},
+}, function(id)
+	CookPanel:FindFirstChild("IngredientsScroll").Visible = (id == "INGREDIENTS")
+	CookPanel:FindFirstChild("RecipesScroll").Visible    = (id == "RECIPES")
 end)
 
--- ============================================================
--- INGREDIENTS SUB-TAB
--- ============================================================
-local IngrPanel = Instance.new("Frame")
-IngrPanel.Name = "IngrPanel"
-IngrPanel.Size = UDim2.new(1,0,1,0)
-IngrPanel.BackgroundTransparency = 1
-IngrPanel.Visible = false
-IngrPanel.ZIndex = 9
-IngrPanel.Parent = cookContent
-cookSubPanels["INGREDIENTS"] = IngrPanel
+-- Ingredients scroll
+local ingScroll = mkScroll(CookPanel,
+	UDim2.new(1,0,1,-COOK_SUBTAB_H),
+	UDim2.new(0,0,0,COOK_SUBTAB_H),
+	C.green)
+ingScroll.Name = "IngredientsScroll"
 
-local filterFrame = Instance.new("Frame")
-filterFrame.Size = UDim2.new(1-COOK_DET_W,-12,0,34)
-filterFrame.Position = UDim2.new(0,4,0,4)
-filterFrame.BackgroundTransparency = 1
-filterFrame.ZIndex = 10
-filterFrame.Parent = IngrPanel
+-- Sort ingredients by rarity then alpha
+local sortedIng = {}
+for _, item in ipairs(Data.Ingredients) do table.insert(sortedIng, item) end
+table.sort(sortedIng, rSort)
 
-local filterLL = Instance.new("UIListLayout")
-filterLL.FillDirection = Enum.FillDirection.Horizontal
-filterLL.Padding = UDim.new(0,4)
-filterLL.VerticalAlignment = Enum.VerticalAlignment.Center
-filterLL.Parent = filterFrame
-
-local CATS = {"All","Produce","Bakery","Dairy","Freezer","Aisles","Stockroom"}
-local catFilter    = "All"
-local ingrEntries  = {}
-local activeCatBtn = nil
-
-local ingrListHolder = Instance.new("Frame")
-ingrListHolder.Size = UDim2.new(1,-8,1,-46)
-ingrListHolder.Position = UDim2.new(0,4,0,42)
-ingrListHolder.BackgroundTransparency = 1
-ingrListHolder.ZIndex = 9
-ingrListHolder.Parent = IngrPanel
-
-local ingrScroll  = buildCookList(ingrListHolder, Color3.fromRGB(65,48,128))
-local ingrDetailD = buildDetailPanel(IngrPanel)
-
-local catColMap = {
-	Produce  =Color3.fromRGB(45,105,40),
-	Bakery   =Color3.fromRGB(110,50,68),
-	Dairy    =Color3.fromRGB(38,62,100),
-	Freezer  =Color3.fromRGB(32,60,118),
-	Aisles   =Color3.fromRGB(78,65,28),
-	Stockroom=Color3.fromRGB(52,52,62),
-}
-local catBgMap = {
-	Produce  =Color3.fromRGB(22,42,20),
-	Bakery   =Color3.fromRGB(44,24,32),
-	Dairy    =Color3.fromRGB(16,28,50),
-	Freezer  =Color3.fromRGB(16,26,52),
-	Aisles   =Color3.fromRGB(38,32,14),
-	Stockroom=Color3.fromRGB(26,26,34),
-}
-
-local function showIngrDetail(ing)
-	local d      = ingrDetailD
-	local catCol = catColMap[ing.cat] or C.dim
-	local catBg  = catBgMap[ing.cat]  or Color3.fromRGB(28,26,42)
-
-	d.emojiL.Text = ing.emoji or "🍽"
-	d.hdr.BackgroundColor3 = catBg
-	d.nameL.Text = ing.n
-	d.nameL.TextColor3 = Color3.fromRGB(245,242,255)
-	d.subNameL.Text = ing.cat.." Zone  ·  "..ing.r
-	d.subNameL.TextColor3 = RARITY_COL[ing.r] or catCol
-
-	-- Badge 1: Allergen
-	d.cookIcon.Text = ing.allergy and "⚠️" or "✓"
-	d.cookVal.Text  = ing.allergy and ing.allergy or "No Allergen"
-	d.cookBadge.BackgroundColor3 = ing.allergy
-		and Color3.fromRGB(48,20,20) or Color3.fromRGB(18,42,20)
-	d.cookVal.TextColor3 = ing.allergy
-		and Color3.fromRGB(255,140,140) or Color3.fromRGB(100,200,110)
-
-	-- Badge 2: Zone
-	d.algIcon.Text = "🏪"
-	d.algVal.Text  = ing.cat
-	d.algBadge.BackgroundColor3 = catBg
-	d.algVal.TextColor3 = catCol
-
-	-- Badge 3: Stack amount (replaces zone in old design)
-	local stackLimit = STACK_LIMIT[ing.r] or 1
-	local stackColor = STACK_COL[ing.r]   or Color3.fromRGB(172,170,192)
-	d.stkIcon.Text = "📦"
-	d.stkVal.Text  = stackLimit==1
-		and "×1 only" or "×"..stackLimit.." stack"
-	d.stkBadge.BackgroundColor3 = RARITY_BG[ing.r] or Color3.fromRGB(28,26,42)
-	d.stkVal.TextColor3 = stackColor
-	d.stkIcon.TextColor3 = stackColor
-
-	-- Badge 4: Rarity (hidden for ingredient detail — use subNameL instead)
-	d.rarBadge.Visible = false
-
-	-- Stat pills
-	d.clVal.Text = "+"..tostring(ing.cl)
-	d.clVal.TextColor3 = Color3.fromRGB(80,185,255)
-	d.fuVal.Text = "—"
-	d.fuVal.TextColor3 = Color3.fromRGB(60,58,78)
-	d.coVal.Text = "$"..tostring(ing.cost)
-	d.coVal.TextColor3 = Color3.fromRGB(100,225,100)
-	d.wtStatVal.Text = tostring(ing.wt)
-	d.wtStatVal.TextColor3 = Color3.fromRGB(220,180,90)
-
-	d.sec1Hdr.Text = "Effect when thrown:"
-	d.sec1Body.Text = ing.effect or "Standard throw."
-	d.sec1Body.TextColor3 = Color3.fromRGB(195,225,195)
-
-	d.sec2Hdr.Text = "Combo potential:"
-	d.sec2Body.Text = INGR_COMBOS[ing.n] or "No special combo interaction."
-	d.sec2Body.TextColor3 = Color3.fromRGB(230,200,140)
-
-	d.banner.Visible = false
-	d.panel.BackgroundColor3 = Color3.fromRGB(22,20,34)
-	d.rarBadge.Visible = false
+for i, item in ipairs(sortedIng) do
+	buildIngredientCard(ingScroll, item, i)
 end
 
--- Category filter buttons
-for _,cat in ipairs(CATS) do
-	local fb = Instance.new("TextButton")
-	fb.AutomaticSize = Enum.AutomaticSize.X
-	fb.Size = UDim2.new(0,0,0,28)
-	fb.BackgroundColor3 = cat=="All"
-		and Color3.fromRGB(65,48,128) or Color3.fromRGB(26,24,40)
-	fb.BorderSizePixel = 0
-	fb.Font = Enum.Font.GothamBold
-	fb.TextSize = 12
-	fb.TextColor3 = cat=="All"
-		and Color3.fromRGB(198,188,255) or Color3.fromRGB(105,100,138)
-	fb.Text = "  "..cat.."  "
-	fb.AutoButtonColor = false
-	fb.ZIndex = 11
-	fb.Parent = filterFrame
-	Instance.new("UICorner",fb).CornerRadius = UDim.new(0,7)
-	if cat=="All" then activeCatBtn = fb end
-	local catName = cat
-	fb.MouseButton1Click:Connect(function()
-		if activeCatBtn then
-			activeCatBtn.BackgroundColor3 = Color3.fromRGB(26,24,40)
-			activeCatBtn.TextColor3 = Color3.fromRGB(105,100,138)
-		end
-		catFilter = catName
-		activeCatBtn = fb
-		fb.BackgroundColor3 = Color3.fromRGB(65,48,128)
-		fb.TextColor3 = Color3.fromRGB(198,188,255)
-		for _,e in ipairs(ingrEntries) do
-			e.frame.Visible = catName=="All" or e.cat==catName
-		end
-	end)
+-- Recipes scroll (hidden by default)
+local recScroll = mkScroll(CookPanel,
+	UDim2.new(1,0,1,-COOK_SUBTAB_H),
+	UDim2.new(0,0,0,COOK_SUBTAB_H),
+	Color3.fromRGB(65,48,128))
+recScroll.Name = "RecipesScroll"
+recScroll.Visible = false
+
+local sortedRec = {}
+for _, item in ipairs(Data.Recipes) do table.insert(sortedRec, item) end
+table.sort(sortedRec, rSort)
+
+for i, item in ipairs(sortedRec) do
+	local card, ic, r, col = buildRecipeCard(recScroll, item, i, false)
+	fillRecipeCard(card, item, ic, r, col, false)
 end
-
--- Build ingredient rows
-local selectedIngrEntry = nil
-local ingrOrder = 0
-for _,ing in ipairs(INGREDIENT_DATA) do
-	ingrOrder = ingrOrder+1
-	local catCol2 = catColMap[ing.cat] or Color3.fromRGB(50,48,65)
-	local stackLim = STACK_LIMIT[ing.r] or 1
-	local entry = buildCookRow(ingrScroll,
-		ing.emoji, ing.n,
-		"+"..ing.cl,
-		"×"..stackLim,
-		"$"..ing.cost, ing.wt, catCol2, ingrOrder)
-	-- Override the fullness pill to show stack amount
-	local pill2 = entry:FindFirstChild("Pill2")
-	if pill2 then
-		local lbl = pill2:FindFirstChildWhichIsA("TextLabel")
-		if lbl then
-			lbl.Text = "📦 ×"..stackLim
-			lbl.TextColor3 = STACK_COL[ing.r] or Color3.fromRGB(172,170,192)
-		end
-	end
-	local hit = Instance.new("TextButton")
-	hit.Size = UDim2.new(1,0,1,0)
-	hit.BackgroundTransparency = 1
-	hit.Text = ""
-	hit.ZIndex = 13
-	hit.Parent = entry
-	hit.MouseButton1Click:Connect(function()
-		if selectedIngrEntry then
-			selectedIngrEntry.BackgroundColor3 = Color3.fromRGB(26,24,40)
-		end
-		selectedIngrEntry = entry
-		entry.BackgroundColor3 = Color3.fromRGB(38,36,56)
-		showIngrDetail(ing)
-	end)
-	table.insert(ingrEntries,{frame=entry, cat=ing.cat})
-end
-
--- ============================================================
--- COMBOS SUB-TAB
--- ============================================================
-local CombosPanel = Instance.new("Frame")
-CombosPanel.Name = "CombosPanel"
-CombosPanel.Size = UDim2.new(1,0,1,0)
-CombosPanel.BackgroundTransparency = 1
-CombosPanel.Visible = false
-CombosPanel.ZIndex = 9
-CombosPanel.Parent = cookContent
-cookSubPanels["COMBOS"] = CombosPanel
-
-local comboScroll = Instance.new("ScrollingFrame")
-comboScroll.Size = UDim2.new(1,-16,1,-8)
-comboScroll.Position = UDim2.new(0,8,0,4)
-comboScroll.BackgroundTransparency = 1
-comboScroll.BorderSizePixel = 0
-comboScroll.ScrollBarThickness = 7
-comboScroll.ScrollBarImageColor3 = Color3.fromRGB(175,95,220)
-comboScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-comboScroll.CanvasSize = UDim2.new(0,0,0,0)
-comboScroll.ZIndex = 10
-comboScroll.Parent = CombosPanel
-local comboPad = Instance.new("UIPadding")
-comboPad.PaddingTop    = UDim.new(0,8)
-comboPad.PaddingBottom = UDim.new(0,8)
-comboPad.PaddingLeft   = UDim.new(0,4)
-comboPad.PaddingRight  = UDim.new(0,4)
-comboPad.Parent = comboScroll
-local comboLL2 = Instance.new("UIListLayout")
-comboLL2.SortOrder = Enum.SortOrder.LayoutOrder
-comboLL2.Padding = UDim.new(0,10)
-comboLL2.Parent = comboScroll
-
-local function addComboSection(title, color, combos)
-	local hdr = Instance.new("TextLabel")
-	hdr.Size = UDim2.new(1,0,0,36)
-	hdr.BackgroundTransparency = 1
-	hdr.Text = title
-	hdr.Font = Enum.Font.GothamBold
-	hdr.TextSize = 22
-	hdr.TextColor3 = color
-	hdr.TextXAlignment = Enum.TextXAlignment.Left
-	hdr.ZIndex = 11
-	hdr.Parent = comboScroll
-	for _,combo in ipairs(combos) do
-		local cf = Instance.new("Frame")
-		cf.Size = UDim2.new(1,0,0,0)
-		cf.AutomaticSize = Enum.AutomaticSize.Y
-		cf.BackgroundColor3 = Color3.fromRGB(26,24,40)
-		cf.BorderSizePixel = 0
-		cf.ZIndex = 11
-		cf.Parent = comboScroll
-		Instance.new("UICorner",cf).CornerRadius = UDim.new(0,10)
-		local cfp = Instance.new("UIPadding")
-		cfp.PaddingTop    = UDim.new(0,14)
-		cfp.PaddingBottom = UDim.new(0,14)
-		cfp.PaddingLeft   = UDim.new(0,16)
-		cfp.PaddingRight  = UDim.new(0,16)
-		cfp.Parent = cf
-		local accent = mkFrame(cf,"Accent",
-			UDim2.new(0,5,1,-10),UDim2.new(0,-10,0,5),
-			nil,color,3,true)
-		accent.ZIndex = 12
-		local chainL = mkLabel(cf,combo.chain,
-			Enum.Font.GothamBold,20,color,
-			Enum.TextXAlignment.Left,
-			UDim2.new(0,0,0,0),UDim2.new(1,0,0,28))
-		chainL.ZIndex = 12
-		local descL = mkLabel(cf,combo.desc,
-			Enum.Font.Gotham,17,Color3.fromRGB(210,207,228),
-			Enum.TextXAlignment.Left,
-			UDim2.new(0,0,0,32),UDim2.new(1,0,0,0))
-		descL.AutomaticSize = Enum.AutomaticSize.Y
-		descL.TextWrapped = true
-		descL.LineHeight = 1.45
-		descL.ZIndex = 12
-	end
-end
-
-addComboSection("⭐  Mark System (One Active At A Time)",
-	Color3.fromRGB(239,200,80), {
-		{chain="Tomato → MARK → +15% crit",
-			desc="Hit target with Tomato. Next hit against them deals +15% CL. 4s window. A small icon appears above Marked targets. ONE Mark active at a time — stronger Marks overwrite this."},
-		{chain="Soy Sauce or Black Garlic → MARK → +20% crit",
-			desc="The strongest Mark. +20% CL on next hit. 4s window. Overwrites any existing Mark. Use Tuna or Almond immediately after — they're the fastest projectiles."},
-		{chain="Stack strategy: Tomato ×3 or Soy Sauce ×2",
-			desc="Common Tomato stacks to ×3 — giving you 3 cheap Marks for sustained pressure. Uncommon Soy Sauce stacks to ×2 — use one for a Mark, save one for Chow Mein or Golden Glaze recipe."},
-	})
-
-addComboSection("⚡  Elemental Chains",
-	Color3.fromRGB(239,159,39), {
-		{chain="Oil → Fire Recipe = ×1.6 Cleanliness",
-			desc="Hit target with Oil (3s window). Then hit with any fire recipe: Stir Fry, Mapo Tofu, Kimchi Fried Rice, Inferno Skewer, Chicken Curry. Result: ×1.6 CL on the follow-up. Plan your recipe before throwing Oil!"},
-		{chain="Spice → AoE Recipe = Expanded Radius",
-			desc="Hit target with Chili Powder or Curry Powder. Your next AoE recipe against any target has significantly expanded radius. Stack both Spice Primers for maximum spread."},
-	})
-
-addComboSection("🎯  Control Chains",
-	Color3.fromRGB(65,165,235), {
-		{chain="Banana → Follow-up = Knockdown",
-			desc="Hit with Banana → any follow-up within 3s = guaranteed knockdown (2s stumble). Peel stays as floor hazard. Common ×3 stack means 3 potential knockdown setups."},
-		{chain="Cheese Block ×2 = ROOT (1.5s)",
-			desc="First Cheese = slow. Second Cheese = ROOT 1.5s. Stack expires after 8s. Uncommon stacks to ×2 — this combo is built into the stacking system. Natural and elegant."},
-		{chain="Noodles ×3 = Trap Chain",
-			desc="Two Noodle hits = trap + pull. Common stack of ×3 gives you enough for multiple attempts across different targets. Best in tight zones."},
-		{chain="Honey = Root + Floor Zone",
-			desc="1s root AND sticky floor zone (5s). Rare — no stacking. One root per Honey found. No allergy — affects everyone."},
-		{chain="Blue Cheese → Next Slow/Root +50%",
-			desc="After Blue Cheese hit, your next slow or root on ANY target lasts +50% longer. Blue Cheese + Ice Cream = 2.5s freeze (capped). Blue Cheese + Honey = 1.5s root."},
-		{chain="Ice Cream = Freeze 2s (cap 2.5s)",
-			desc="Heavy freeze slow on direct hit. Total freeze capped at 2.5s. Combine with Blue Cheese for maximum duration. Ultra-Rare — ×1 only, treat it as precious."},
-	})
-
-addComboSection("🧠  Utility Chains",
-	Color3.fromRGB(85,210,130), {
-		{chain="Garlic → Instant Buff Strip",
-			desc="Instantly removes 15% from ALL active buff durations simultaneously. Uncommon ×2 stack lets you carry enough to strip a buffed enemy and still have one for Dumplings or Garlic Bread."},
-		{chain="Truffle → Next Recipe +30% CL +1 Serving",
-			desc="Found in Produce — it's a mushroom! Rare ×1 only. Use near Prep Table before cooking. Plan your craft around Truffle — it's the strongest single item modifier in the game."},
-		{chain="Tuna or Almond → Mark Execution",
-			desc="Fastest projectiles in the game. After applying a Mark (4s window), use either to execute before the window closes. Both are Common — stack ×3 for consistent Mark follow-ups."},
-		{chain="Croissant = Three-Way Split",
-			desc="Splits into 3 independent mid-air projectiles. Rare ×1 — every Croissant throw counts. Learn the split angles for maximum value."},
-	})
-
-addComboSection("🤝  Alliance Combos",
-	Color3.fromRGB(100,210,255), {
-		{chain="Shared Cooking → Production Line",
-			desc="One ally gathers stacks of Commons, one ally cooks. Both add to the same Prep Table. The last player to interact gets the recipe. Stacking means fewer shopping trips — more cooking throughput."},
-		{chain="Mark → Ally Hit = 35% Assist Score",
-			desc="Apply a Mark. Ally hits the Marked target within 4s. You earn 35% of the damage as assist score. Stacking Tomato ×3 means sustained Mark application for your ally's recipe throws."},
-		{chain="Truffle Pasta → You + Ally Buffs",
-			desc="You: fullness immunity 30s. Nearby allies: +10% throw range 20s. Cook this early in Food Fight. Your ally throws further, you absorb fullness freely. Strongest alliance recipe in the game."},
-		{chain="⚠️ Garlic Bread near allies = bad time",
-			desc="AoE garlic cloud hits ALL nearby players including allies. -20% speed to everyone. Cook it in open space or use it to zone enemies away from your position."},
-	})
-
-addComboSection("💀  Advanced Combos",
-	Color3.fromRGB(175,95,220), {
-		{chain="Mark + Oil + Fire = Mega Burst",
-			desc="Mark target (Soy Sauce +20%). Oil hit (primer). Fire recipe (×1.6). Final: base × 1.6 × 1.2 = 1.92x CL. On Inferno Skewer (CL 32): 61+ CL before allergy. All three steps require planning."},
-		{chain="Blue Cheese + Ice Cream + Honey = Full Lock",
-			desc="Blue Cheese (amplify). Honey root → 1.5s. Ice Cream freeze → 2.5s (capped). ~4 seconds of continuous lock. Target is completely helpless for an Ultra-Rare follow-up."},
-		{chain="Truffle + Mark + Favourite = Near One-Shot",
-			desc="Truffle (+30%). Mark Soy Sauce (+20%). Favourite recipe (×1.5). Final: base × 1.3 × 1.2 × 1.5 = 2.34x CL. On Saffron Rice (CL 47 + depth bonus): 109+ CL. Requires full match-long planning."},
-		{chain="Stack Burst vs. Positioned Defense",
-			desc="After 3 throws in 2 seconds, a 0.4s cooldown applies between throws. Burst stacks are still powerful — but you cannot spam all 8 throws instantly. Time your burst window carefully."},
-		{chain="Food Fight to the Finish? Or Leave With a Friend?",
-			desc="When only your alliance remains — choices are private. Any single Fight vote breaks the alliance for all. Nobody knows who voted. The traitor is never named. In a 3-person alliance this can happen TWICE if one is eliminated before the second vote."},
-	})
 
 -- ============================================================
 -- ACCOLADES TAB
+-- Accolades sub-tab: per-match accolades reference
+-- Titles sub-tab:    24 honorifics with equip
 -- ============================================================
-local AccoladesPanel = ContentArea:WaitForChild("AccoladesPanel", 10)
-if not AccoladesPanel then
-	AccoladesPanel = Instance.new("Frame")
-	AccoladesPanel.Name = "AccoladesPanel"
-	AccoladesPanel.Size = UDim2.new(1,0,1,0)
-	AccoladesPanel.BackgroundTransparency = 1
-	AccoladesPanel.ZIndex = 9
-	AccoladesPanel.Parent = ContentArea
-end
-AccoladesPanel.Visible = false
 
--- ============================================================
--- ACCOLADES SUB-TABS
--- ============================================================
-local ACC_SUBTAB_H = 38
-
-local accSubBar = Instance.new("Frame")
-accSubBar.Size = UDim2.new(1,0,0,ACC_SUBTAB_H)
-accSubBar.Position = UDim2.new(0,0,0,0)
-accSubBar.BackgroundColor3 = Color3.fromRGB(20,18,32)
-accSubBar.BorderSizePixel = 0
-accSubBar.ZIndex = 10
-accSubBar.Parent = AccoladesPanel
-
-local accSubLL = Instance.new("UIListLayout")
-accSubLL.FillDirection = Enum.FillDirection.Horizontal
-accSubLL.HorizontalAlignment = Enum.HorizontalAlignment.Left
-accSubLL.VerticalAlignment = Enum.VerticalAlignment.Center
-accSubLL.Padding = UDim.new(0,2)
-accSubLL.Parent = accSubBar
-
-local ACC_SUBTABS = {
-	{id="ACCOLADES",    label="🏅  Accolades",    order=1},
-	{id="COSMETICS",    label="🎨  Cosmetics",    order=2},
-	{id="ACHIEVEMENTS", label="🏆  Achievements", order=3},
-}
-
-local accSubBtns   = {}
+local ACC_SUBTAB_H = 40
 local accSubPanels = {}
 
-local accContent = Instance.new("Frame")
-accContent.Size = UDim2.new(1,0,1,-ACC_SUBTAB_H)
-accContent.Position = UDim2.new(0,0,0,ACC_SUBTAB_H)
-accContent.BackgroundTransparency = 1
-accContent.ZIndex = 9
-accContent.Parent = AccoladesPanel
-
-local function switchAccSub(subId)
-	for _,st in ipairs(ACC_SUBTABS) do
-		local btn = accSubBtns[st.id]
-		local pnl = accSubPanels[st.id]
-		if st.id==subId then
-			btn.BackgroundColor3 = Color3.fromRGB(180,140,50)
-			btn.TextColor3 = Color3.fromRGB(255,230,140)
-			if pnl then pnl.Visible=true end
-		else
-			btn.BackgroundColor3 = Color3.fromRGB(26,24,40)
-			btn.TextColor3 = Color3.fromRGB(105,100,135)
-			if pnl then pnl.Visible=false end
-		end
+local accSubBar, accSubBtns = mkSubTabBar(AccPanel, ACC_SUBTAB_H, {
+	{id="ACCOLADES", label="🏅 Accolades", color=Color3.fromRGB(180,140,50)},
+	{id="TITLES",    label="🏆 Titles",    color=Color3.fromRGB(130,60,200)},
+}, function(id)
+	for sid, pnl in pairs(accSubPanels) do
+		pnl.Visible = (sid == id)
 	end
-end
-
-for _,st in ipairs(ACC_SUBTABS) do
-	local btn = Instance.new("TextButton")
-	btn.Name = st.id.."AccSubTab"
-	btn.LayoutOrder = st.order
-	btn.Size = UDim2.new(0.333,-2,0,ACC_SUBTAB_H-4)
-	btn.BackgroundColor3 = Color3.fromRGB(26,24,40)
-	btn.BorderSizePixel = 0
-	btn.Font = Enum.Font.GothamBold
-	btn.TextSize = 14
-	btn.TextColor3 = Color3.fromRGB(105,100,135)
-	btn.Text = st.label
-	btn.AutoButtonColor = false
-	btn.ZIndex = 11
-	btn.Parent = accSubBar
-	Instance.new("UICorner",btn).CornerRadius = UDim.new(0,6)
-	accSubBtns[st.id] = btn
-	local sId = st.id
-	btn.MouseButton1Click:Connect(function() switchAccSub(sId) end)
-end
-
--- ============================================================
--- ACCOLADES SUB-TAB — Post-battle awards display
--- ============================================================
-local AccAwardsPanel = Instance.new("Frame")
-AccAwardsPanel.Name = "AccAwardsPanel"
-AccAwardsPanel.Size = UDim2.new(1,0,1,0)
-AccAwardsPanel.BackgroundTransparency = 1
-AccAwardsPanel.Visible = true
-AccAwardsPanel.ZIndex = 9
-AccAwardsPanel.Parent = accContent
-accSubPanels["ACCOLADES"] = AccAwardsPanel
-
--- Header label
-mkLabel(AccAwardsPanel,
-	"🏅  Match Accolades",
-	Enum.Font.GothamBlack,28,
-	Color3.fromRGB(239,159,39),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,10),UDim2.new(1,0,0,36))
-
-mkLabel(AccAwardsPanel,
-	"Awarded at the end of each match · Medals fund Cosmetics",
-	Enum.Font.Gotham,16,
-	Color3.fromRGB(125,120,148),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,48),UDim2.new(1,0,0,22))
-
--- 5 accolade cards in a row, centre card larger
-local CARD_AREA_Y   = 80
-local CARD_AREA_H   = 220
-local CARD_GAP      = 10
-local CARD_CENTRE_W = 0.22
-local CARD_SIDE_W   = 0.175
-
--- Layout: [side][side][CENTRE][side][side]
--- Positions calculated as fractions
-local cardLayout = {
-	{acc=ACCOLADES[1], xPct=0,                    wPct=CARD_SIDE_W},
-	{acc=ACCOLADES[2], xPct=CARD_SIDE_W+0.01,     wPct=CARD_SIDE_W},
-	{acc=ACCOLADES[3], xPct=CARD_SIDE_W*2+0.02,   wPct=CARD_CENTRE_W, isCentre=true},
-	{acc=ACCOLADES[4], xPct=CARD_SIDE_W*2+CARD_CENTRE_W+0.03, wPct=CARD_SIDE_W},
-	{acc=ACCOLADES[5], xPct=CARD_SIDE_W*3+CARD_CENTRE_W+0.04, wPct=CARD_SIDE_W},
-}
-
-for _,layout in ipairs(cardLayout) do
-	local acc    = layout.acc
-	local h      = layout.isCentre and CARD_AREA_H or CARD_AREA_H-30
-	local yOff   = layout.isCentre and 0 or 15
-	local corner = layout.isCentre and 18 or 14
-
-	local card = mkFrame(AccAwardsPanel, acc.id,
-		UDim2.new(layout.wPct,-CARD_GAP,0,h),
-		UDim2.new(layout.xPct,CARD_GAP/2,0,CARD_AREA_Y+yOff),
-		nil, acc.bg, corner)
-	card.ZIndex = 10
-
-	-- Accent top bar
-	local topBar = mkFrame(card,"TopBar",
-		UDim2.new(1,0,0,layout.isCentre and 6 or 4),
-		UDim2.new(0,0,0,0),
-		nil,acc.color,corner,true)
-	topBar.ZIndex = 11
-
-	-- Emoji
-	local emojiSz = layout.isCentre and 52 or 40
-	mkLabel(card, acc.emoji,
-		Enum.Font.GothamBold, emojiSz,
-		acc.color,
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,layout.isCentre and 18 or 14),
-		UDim2.new(1,0,0,layout.isCentre and 60 or 48)).ZIndex = 11
-
-	-- Accolade name
-	local nameSz = layout.isCentre and 18 or 15
-	local nameL = mkLabel(card, acc.name,
-		Enum.Font.GothamBold, nameSz,
-		acc.color,
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,6,0,layout.isCentre and 82 or 66),
-		UDim2.new(1,-12,0,layout.isCentre and 40 or 34))
-	nameL.TextWrapped = true
-	nameL.ZIndex = 11
-
-	-- Description
-	local descSz = layout.isCentre and 14 or 12
-	local descL = mkLabel(card, acc.desc,
-		Enum.Font.Gotham, descSz,
-		Color3.fromRGB(155,152,178),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,6,0,layout.isCentre and 126 or 104),
-		UDim2.new(1,-12,0,layout.isCentre and 44 or 36))
-	descL.TextWrapped = true
-	descL.LineHeight = 1.3
-	descL.ZIndex = 11
-
-	-- Medal pill
-	local medalPill = mkFrame(card,"MedalPill",
-		UDim2.new(0.6,0,0,layout.isCentre and 32 or 28),
-		UDim2.new(0.2,0,1,-(layout.isCentre and 42 or 36)),
-		nil,Color3.fromRGB(45,35,10),10,true)
-	medalPill.ZIndex = 11
-	mkLabel(medalPill,
-		"🏅 "..acc.medals.." medals",
-		Enum.Font.GothamBold,
-		layout.isCentre and 15 or 13,
-		Color3.fromRGB(239,159,39),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,0),UDim2.new(1,0,1,0)).ZIndex = 12
-
-	-- Winner name placeholder (populated by server after match)
-	local winnerL = mkLabel(card,"",
-		Enum.Font.GothamMedium,
-		layout.isCentre and 16 or 13,
-		Color3.fromRGB(210,208,228),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,4,1,-(layout.isCentre and 72 or 60)),
-		UDim2.new(1,-8,0,layout.isCentre and 24 or 20))
-	winnerL.Text = "—"
-	winnerL.Name = acc.id.."_winner"
-	winnerL.ZIndex = 12
-end
-
--- Participation note
-mkLabel(AccAwardsPanel,
-	"Every player earns 5 medals for completing a match · Last player standing earns +15 bonus medals",
-	Enum.Font.Gotham,15,
-	Color3.fromRGB(90,88,110),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,16,0,CARD_AREA_Y+CARD_AREA_H+16),
-	UDim2.new(1,-32,0,22))
-
--- Victory condition note
-local vcNote = mkFrame(AccAwardsPanel,"VCNote",
-	UDim2.new(1,-32,0,60),
-	UDim2.new(0,16,0,CARD_AREA_Y+CARD_AREA_H+44),
-	nil,Color3.fromRGB(22,20,34),10)
-vcNote.ZIndex = 10
-
-mkLabel(vcNote,
-	"🏆  HOW TO WIN",
-	Enum.Font.GothamBold,17,
-	Color3.fromRGB(239,159,39),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,14,0,0),UDim2.new(1,-28,0,28)).ZIndex = 11
-
-local vcBodyL = mkLabel(vcNote,
-	"Most total Cleanliness damage dealt wins. Last player standing is the tiebreaker. "..
-		"Your alliance doesn't share your score — every player wins or loses individually.",
-	Enum.Font.Gotham,16,
-	Color3.fromRGB(195,192,218),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,14,0,28),UDim2.new(1,-28,0,28))
-vcBodyL.TextWrapped = true
-
--- ============================================================
--- COSMETICS SUB-TAB
--- ============================================================
-local CosmeticsSubPanel = Instance.new("Frame")
-CosmeticsSubPanel.Name = "CosmeticsSubPanel"
-CosmeticsSubPanel.Size = UDim2.new(1,0,1,0)
-CosmeticsSubPanel.BackgroundTransparency = 1
-CosmeticsSubPanel.Visible = false
-CosmeticsSubPanel.ZIndex = 9
-CosmeticsSubPanel.Parent = accContent
-accSubPanels["COSMETICS"] = CosmeticsSubPanel
-
-mkLabel(CosmeticsSubPanel,
-	"🎨  Cart and Basket Skins",
-	Enum.Font.GothamBold,28,
-	Color3.fromRGB(198,188,255),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,10),UDim2.new(1,0,0,36))
-
-mkLabel(CosmeticsSubPanel,
-	"Spend your Medals to unlock skins for your cart or basket",
-	Enum.Font.Gotham,18,
-	Color3.fromRGB(125,120,148),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,48),UDim2.new(1,0,0,24))
-
-local skinScroll = Instance.new("ScrollingFrame")
-skinScroll.Size = UDim2.new(1,-20,1,-80)
-skinScroll.Position = UDim2.new(0,10,0,76)
-skinScroll.BackgroundTransparency = 1
-skinScroll.BorderSizePixel = 0
-skinScroll.ScrollBarThickness = 6
-skinScroll.ScrollBarImageColor3 = Color3.fromRGB(112,82,198)
-skinScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-skinScroll.CanvasSize = UDim2.new(0,0,0,0)
-skinScroll.ZIndex = 10
-skinScroll.Parent = CosmeticsSubPanel
-
-local cosGrid = Instance.new("UIGridLayout")
-cosGrid.CellSize = UDim2.new(0,165,0,165)
-cosGrid.CellPadding = UDim2.new(0,12,0,12)
-cosGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
-cosGrid.SortOrder = Enum.SortOrder.LayoutOrder
-cosGrid.Parent = skinScroll
-local cosGridPad = Instance.new("UIPadding")
-cosGridPad.PaddingTop    = UDim.new(0,12)
-cosGridPad.PaddingBottom = UDim.new(0,12)
-cosGridPad.Parent = skinScroll
-
-local selectedSkinBtn = nil
-for i,skin in ipairs(SKINS) do
-	local slot = Instance.new("TextButton")
-	slot.BackgroundColor3 = skin.owned
-		and Color3.fromRGB(34,32,52) or Color3.fromRGB(22,20,34)
-	slot.BorderSizePixel = 0
-	slot.AutoButtonColor = false
-	slot.ZIndex = 10
-	slot.Parent = skinScroll
-	Instance.new("UICorner",slot).CornerRadius = UDim.new(0,14)
-	local ss = Instance.new("UIStroke")
-	ss.Thickness = 2
-	ss.Color = skin.owned
-		and Color3.fromRGB(88,68,152) or Color3.fromRGB(42,40,60)
-	ss.Parent = slot
-
-	local ico = Instance.new("TextLabel")
-	ico.Size = UDim2.new(1,0,0,80)
-	ico.Position = UDim2.new(0,0,0,10)
-	ico.BackgroundTransparency = 1
-	ico.Text = skin.icon
-	ico.Font = Enum.Font.GothamBold
-	ico.TextSize = 48
-	ico.TextXAlignment = Enum.TextXAlignment.Center
-	ico.ZIndex = 11
-	ico.Parent = slot
-
-	local nameL = Instance.new("TextLabel")
-	nameL.Size = UDim2.new(1,-8,0,24)
-	nameL.Position = UDim2.new(0,4,0,94)
-	nameL.BackgroundTransparency = 1
-	nameL.Text = skin.name
-	nameL.Font = Enum.Font.GothamBold
-	nameL.TextSize = 16
-	nameL.TextColor3 = skin.owned
-		and Color3.fromRGB(200,196,228) or Color3.fromRGB(90,86,115)
-	nameL.TextXAlignment = Enum.TextXAlignment.Center
-	nameL.ZIndex = 11
-	nameL.Parent = slot
-
-	local costL = Instance.new("TextLabel")
-	costL.Size = UDim2.new(1,-8,0,22)
-	costL.Position = UDim2.new(0,4,0,122)
-	costL.BackgroundTransparency = 1
-	costL.Text = skin.owned
-		and (i==1 and "Default" or "✓ Owned")
-		or  "🏅 "..skin.cost.." medals"
-	costL.Font = Enum.Font.Gotham
-	costL.TextSize = 14
-	costL.TextColor3 = skin.owned
-		and Color3.fromRGB(80,200,98) or Color3.fromRGB(215,155,40)
-	costL.TextXAlignment = Enum.TextXAlignment.Center
-	costL.ZIndex = 11
-	costL.Parent = slot
-
-	slot.MouseButton1Click:Connect(function()
-		if not skin.owned then return end
-		if selectedSkinBtn then
-			selectedSkinBtn.BackgroundColor3 = Color3.fromRGB(34,32,52)
-			local prev = selectedSkinBtn:FindFirstChildWhichIsA("UIStroke")
-			if prev then prev.Color = Color3.fromRGB(88,68,152) end
-		end
-		selectedSkinBtn = slot
-		slot.BackgroundColor3 = Color3.fromRGB(52,38,108)
-		ss.Color = Color3.fromRGB(158,125,255)
-		if _G.Chompers then
-			_G.Chompers.SelectedSkin = skin.name
-		end
-	end)
-	if i==1 then
-		selectedSkinBtn = slot
-		slot.BackgroundColor3 = Color3.fromRGB(52,38,108)
-		ss.Color = Color3.fromRGB(158,125,255)
-	end
-end
-
--- ============================================================
--- ACHIEVEMENTS SUB-TAB
--- ============================================================
-local AchievementsPanel = Instance.new("Frame")
-AchievementsPanel.Name = "AchievementsPanel"
-AchievementsPanel.Size = UDim2.new(1,0,1,0)
-AchievementsPanel.BackgroundTransparency = 1
-AchievementsPanel.Visible = false
-AchievementsPanel.ZIndex = 9
-AchievementsPanel.Parent = accContent
-accSubPanels["ACHIEVEMENTS"] = AchievementsPanel
-
-mkLabel(AchievementsPanel,
-	"🏆  Achievements",
-	Enum.Font.GothamBlack,28,
-	Color3.fromRGB(239,159,39),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,10),UDim2.new(1,0,0,36))
-
-mkLabel(AchievementsPanel,
-	"Earn medals each time you unlock an accolade · Tracked across all matches",
-	Enum.Font.Gotham,16,
-	Color3.fromRGB(125,120,148),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,44),UDim2.new(1,0,0,22))
-
-local achScroll = Instance.new("ScrollingFrame")
-achScroll.Size = UDim2.new(1,-20,1,-74)
-achScroll.Position = UDim2.new(0,10,0,70)
-achScroll.BackgroundTransparency = 1
-achScroll.BorderSizePixel = 0
-achScroll.ScrollBarThickness = 6
-achScroll.ScrollBarImageColor3 = Color3.fromRGB(239,159,39)
-achScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-achScroll.CanvasSize = UDim2.new(0,0,0,0)
-achScroll.ZIndex = 10
-achScroll.Parent = AchievementsPanel
-
-local achPad = Instance.new("UIPadding")
-achPad.PaddingTop    = UDim.new(0,6)
-achPad.PaddingBottom = UDim.new(0,6)
-achPad.PaddingLeft   = UDim.new(0,4)
-achPad.PaddingRight  = UDim.new(0,4)
-achPad.Parent = achScroll
-
-local achLL = Instance.new("UIListLayout")
-achLL.SortOrder = Enum.SortOrder.LayoutOrder
-achLL.Padding = UDim.new(0,8)
-achLL.Parent = achScroll
-
-for i,ach in ipairs(ACHIEVEMENTS) do
-	local card = mkFrame(achScroll, ach.name,
-		UDim2.new(1,0,0,72),
-		UDim2.new(0,0,0,0),
-		nil, Color3.fromRGB(26,24,40), 12, true)
-	card.LayoutOrder = i
-	card.ZIndex = 11
-
-	-- Left emoji circle
-	local emojiFrame = mkFrame(card,"EmojiFrame",
-		UDim2.new(0,52,0,52),
-		UDim2.new(0,10,0.5,-26),
-		nil, Color3.fromRGB(32,30,48), 26, true)
-	emojiFrame.ZIndex = 12
-	mkLabel(emojiFrame, ach.emoji,
-		Enum.Font.GothamBold, 28,
-		Color3.fromRGB(245,242,255),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,0), UDim2.new(1,0,1,0)).ZIndex = 13
-
-	-- Name
-	mkLabel(card, ach.name,
-		Enum.Font.GothamBold, 18,
-		Color3.fromRGB(230,228,245),
-		Enum.TextXAlignment.Left,
-		UDim2.new(0,72,0,10),
-		UDim2.new(0.55,0,0,26)).ZIndex = 12
-
-	-- Description
-	mkLabel(card, ach.desc,
-		Enum.Font.Gotham, 14,
-		Color3.fromRGB(115,112,140),
-		Enum.TextXAlignment.Left,
-		UDim2.new(0,72,0,36),
-		UDim2.new(0.55,0,0,22)).ZIndex = 12
-
-	-- Times earned (placeholder — populated by DataStore later)
-	local earnedFrame = mkFrame(card,"EarnedFrame",
-		UDim2.new(0,90,0,36),
-		UDim2.new(1,-108,0.5,-18),
-		nil, Color3.fromRGB(20,19,30), 8, true)
-	earnedFrame.ZIndex = 12
-
-	mkLabel(earnedFrame, "Earned",
-		Enum.Font.Gotham, 11,
-		Color3.fromRGB(90,88,110),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,2), UDim2.new(1,0,0,16)).ZIndex = 13
-
-	local timesL = mkLabel(earnedFrame, "0×",
-		Enum.Font.GothamBlack, 18,
-		Color3.fromRGB(239,159,39),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,18), UDim2.new(1,0,0,20))
-	timesL.Name = "TimesEarned"
-	timesL.ZIndex = 13
-
-	-- Medal value pill
-	local medalPill = mkFrame(card,"MedalPill",
-		UDim2.new(0,80,0,26),
-		UDim2.new(1,-88,1,-32),
-		nil, Color3.fromRGB(45,35,10), 8, true)
-	medalPill.ZIndex = 12
-	mkLabel(medalPill, "🏅 "..ach.medals,
-		Enum.Font.GothamBold, 13,
-		Color3.fromRGB(239,159,39),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,0), UDim2.new(1,0,1,0)).ZIndex = 13
-
-	-- Locked overlay (shown when 0 times earned)
-	local locked = mkFrame(card,"LockedOverlay",
-		UDim2.new(1,0,1,0),
-		UDim2.new(0,0,0,0),
-		nil, Color3.fromRGB(16,15,24), 12, true)
-	locked.BackgroundTransparency = 0.45
-	locked.ZIndex = 14
-	locked.Name = "LockedOverlay"
-	mkLabel(locked, "🔒  Not yet earned",
-		Enum.Font.GothamBold, 14,
-		Color3.fromRGB(90,88,115),
-		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,0), UDim2.new(1,0,1,0)).ZIndex = 15
-end
-
--- ============================================================
--- POPULATE FAVOURITE SCROLL
--- (FavScroll was left empty by PrelobbyGuiBuilder)
--- ============================================================
-local FavScroll = Panel
-	:WaitForChild("ContentArea",5)
-	and Panel:FindFirstChild("ContentArea")
-	and Panel:FindFirstChild("ContentArea"):FindFirstChild("PrefPanel")
-	and Panel:FindFirstChild("ContentArea"):FindFirstChild("PrefPanel")
-	:FindFirstChild("FavouriteScroll")
-
-if not FavScroll then
-	-- Try alternate path
-	local prefPanel = ContentArea:FindFirstChild("PrefPanel")
-	if prefPanel then
-		FavScroll = prefPanel:FindFirstChild("FavouriteScroll")
-	end
-end
-
-if FavScroll then
-	local favRarityOrder = {"Common","Uncommon","Rare","Ultra-Rare","Legendary"}
-	local favGrouped = {}
-	for _,r in ipairs(favRarityOrder) do favGrouped[r]={} end
-	for _,rd in ipairs(RECIPE_DATA) do
-		table.insert(favGrouped[rd.r] or favGrouped.Common, rd.n)
-	end
-
-	local selectedFavBtn = nil
-
-	for _,rarity in ipairs(favRarityOrder) do
-		local col = RARITY_COL[rarity] or RARITY_COL.Common
-
-		local hdr = Instance.new("TextLabel")
-		hdr.Size = UDim2.new(1,0,0,22)
-		hdr.BackgroundTransparency = 1
-		hdr.Text = rarity=="Legendary" and "✨  Legendary" or rarity
-		hdr.Font = Enum.Font.GothamBold
-		hdr.TextSize = 13
-		hdr.TextColor3 = col
-		hdr.TextXAlignment = Enum.TextXAlignment.Left
-		hdr.ZIndex = 10
-		hdr.Parent = FavScroll
-
-		for _,recipeName in ipairs(favGrouped[rarity]) do
-			local btn = Instance.new("TextButton")
-			btn.Name = recipeName
-			btn.Size = UDim2.new(1,0,0,36)
-			btn.BackgroundColor3 = Color3.fromRGB(28,26,42)
-			btn.BorderSizePixel = 0
-			btn.AutoButtonColor = false
-			btn.ZIndex = 10
-			btn.Parent = FavScroll
-			Instance.new("UICorner",btn).CornerRadius = UDim.new(0,7)
-
-			local dot = Instance.new("Frame")
-			dot.Size = UDim2.new(0,4,0.5,0)
-			dot.Position = UDim2.new(0,4,0.25,0)
-			dot.BackgroundColor3 = col
-			dot.BorderSizePixel = 0
-			dot.Parent = btn
-			Instance.new("UICorner",dot).CornerRadius = UDim.new(0,2)
-
-			local nameL = Instance.new("TextLabel")
-			nameL.Size = UDim2.new(1,-14,1,0)
-			nameL.Position = UDim2.new(0,12,0,0)
-			nameL.BackgroundTransparency = 1
-			nameL.Text = recipeName
-			nameL.Font = Enum.Font.GothamMedium
-			nameL.TextSize = 14
-			nameL.TextColor3 = Color3.fromRGB(190,188,210)
-			nameL.TextXAlignment = Enum.TextXAlignment.Left
-			nameL.TextYAlignment = Enum.TextYAlignment.Center
-			nameL.ZIndex = 10
-			nameL.Parent = btn
-
-			btn.MouseButton1Click:Connect(function()
-				-- Check if confirmed and game started
-				local confirmed = _G.Chompers and
-					_G.Chompers.IsConfirmed and
-					_G.Chompers.IsConfirmed() or false
-				if confirmed then return end
-
-				if _G.Chompers and _G.Chompers.GetFavourite and
-					_G.Chompers.GetFavourite()==recipeName then
-					-- Deselect
-					if _G.Chompers.SetFavourite then
-						_G.Chompers.SetFavourite(nil)
-					end
-					btn.BackgroundColor3 = Color3.fromRGB(28,26,42)
-					nameL.TextColor3 = Color3.fromRGB(190,188,210)
-					selectedFavBtn = nil
-					-- Update FavSelected label
-					local prefPanel = ContentArea:FindFirstChild("PrefPanel")
-					if prefPanel then
-						local fs = prefPanel:FindFirstChild("FavSelected") -- label
-						-- Find by searching children
-						for _,child in ipairs(prefPanel:GetChildren()) do
-							if child:IsA("TextLabel") and
-								child.Text:find("⭐") then
-								child.Text = "None selected"
-								child.TextColor3 = Color3.fromRGB(210,148,42)
-								break
-							end
-						end
-					end
-				else
-					if selectedFavBtn then
-						selectedFavBtn.BackgroundColor3 = Color3.fromRGB(28,26,42)
-						local prev = selectedFavBtn:FindFirstChildWhichIsA("TextLabel")
-						if prev then
-							prev.TextColor3 = Color3.fromRGB(190,188,210)
-						end
-					end
-					selectedFavBtn = btn
-					btn.BackgroundColor3 = Color3.fromRGB(50,36,8)
-					nameL.TextColor3 = col
-
-					if _G.Chompers and _G.Chompers.SetFavourite then
-						_G.Chompers.SetFavourite(recipeName)
-					end
-
-					-- Update FavSelected label in PrefPanel
-					local prefPanel = ContentArea:FindFirstChild("PrefPanel")
-					if prefPanel then
-						for _,child in ipairs(prefPanel:GetChildren()) do
-							if child:IsA("TextLabel") and
-								child.TextColor3 ==
-								Color3.fromRGB(210,148,42) then
-								child.Text = "⭐  "..recipeName
-								break
-							end
-						end
-					end
-				end
-
-				-- Update billboard via PrelobbyGuiBuilder
-				if _G.Chompers and _G.Chompers.UpdateBillboard then
-					_G.Chompers.UpdateBillboard()
-				end
-				-- Fire remote
-				local Remotes = game:GetService("ReplicatedStorage")
-					:FindFirstChild("ChompersRemotes")
-				if Remotes then
-					Remotes.PlayerSelectFavourite:FireServer(
-						_G.Chompers and _G.Chompers.GetFavourite
-							and _G.Chompers.GetFavourite() or nil)
-				end
-			end)
-		end
-	end
-end
-
--- ============================================================
--- TAB SWITCHING — register panels with PrelobbyGuiBuilder
--- ============================================================
--- PrelobbyGuiBuilder's switchTab hides/shows panels in tabPanels{}
--- We inject our panels into the same system via _G.Chompers
-if _G.Chompers then
-	-- Expose our panels so PrelobbyGuiBuilder can hide them
-	_G.Chompers.CookPanel      = CookPanel
-	_G.Chompers.AccoladesPanel = AccoladesPanel
-
-	-- Expose GetAllergy and GetFavourite so recipe cards update correctly
-	-- These are set in PrelobbyGuiBuilder when player selects
-	-- CookbookBuilder reads them when showing recipe detail
-
-	-- Expose UpdateBillboard trigger
-	-- PrelobbyGuiBuilder sets this function reference
-	-- CookbookBuilder calls it when favourite changes via FavScroll
-
-	-- Switch cookbook sub-tab to Recipes by default
-	switchCookSub("RECIPES")
-	switchAccSub("ACCOLADES")
-end
-
--- ============================================================
--- WIRE COOKBOOK TAB BUTTON
--- CookPanel needs to show/hide with the COOKBOOK tab
--- We find the tab button and add our show logic
--- ============================================================
--- Register panels with PrelobbyGuiBuilder's tab system
-
-task.spawn(function()
-	task.wait(0.2)
-	if _G.Chompers and _G.Chompers.RegisterTabPanel then
-		_G.Chompers.RegisterTabPanel("COOKBOOK",   CookPanel)
-		_G.Chompers.RegisterTabPanel("ACCOLADES",  AccoladesPanel)
-	end
-	-- Also directly register in tabPanels via the shared ContentArea
-	-- PrelobbyGuiBuilder's switchTab finds panels by name in ContentArea
-	-- CookPanel and AccoladesPanel are already parented to ContentArea
-	-- so switchTab's HideAll + show by tabPanels[id] works cleanly
 end)
 
+-- ── Accolades sub-panel ────────────────────────────────────
+local accPanel = Instance.new("Frame", AccPanel)
+accPanel.Name = "AccoladesContent"
+accPanel.Size = UDim2.new(1,0,1,-ACC_SUBTAB_H)
+accPanel.Position = UDim2.new(0,0,0,ACC_SUBTAB_H)
+accPanel.BackgroundTransparency = 1; accPanel.Visible = true
+accSubPanels["ACCOLADES"] = accPanel
+
+local accScroll = mkScroll(accPanel,
+	UDim2.new(1,0,1,0), UDim2.new(0,0,0,0),
+	Color3.fromRGB(180,140,50))
+
+local function accSection(title, color, rows)
+	local hdr = Instance.new("TextLabel", accScroll)
+	hdr.Size = UDim2.new(1,0,0,30); hdr.BackgroundTransparency = 1
+	hdr.Text = title; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 18
+	hdr.TextColor3 = color; hdr.TextXAlignment = Enum.TextXAlignment.Left
+	hdr.ZIndex = 12
+	for i, row in ipairs(rows) do
+		local rf = Instance.new("Frame", accScroll)
+		rf.Size = UDim2.new(1,0,0,50); rf.BackgroundColor3 = C.bgLight
+		rf.BorderSizePixel = 0; rf.ZIndex = 12; corner(rf, 8)
+		mkLabel(rf, row.icon.."  "..row.name, Enum.Font.GothamBlack, 14, C.white,
+			Enum.TextXAlignment.Left,
+			UDim2.new(0,12,0,4), UDim2.new(0.7,0,0,22)).ZIndex = 13
+		mkLabel(rf, row.desc, Enum.Font.Gotham, 11, C.dim,
+			Enum.TextXAlignment.Left,
+			UDim2.new(0,12,0,26), UDim2.new(0.7,0,0,18)).ZIndex = 13
+		mkLabel(rf, "🏅 "..row.medals, Enum.Font.GothamBlack, 16, C.gold,
+			Enum.TextXAlignment.Right,
+			UDim2.new(0.7,0,0,0), UDim2.new(0.3,-12,1,0)).ZIndex = 13
+	end
+end
+
+accSection("🏆 Top 5 Per-Match Accolades", C.gold, {
+	{icon="🏅", name="Last One Standing",  medals="60", desc="Final survivor or Together winners"},
+	{icon="🏆", name="Chomper Champion",   medals="50", desc="Most total Points scored"},
+	{icon="💥", name="Chaos Agent",        medals="40", desc="Most total CL + FL damage dealt"},
+	{icon="👨‍🍳",name="Master Chef",         medals="35", desc="Most unique recipes cooked"},
+	{icon="🛒", name="Super Shopper",      medals="25", desc="Most ingredients purchased at checkout"},
+})
+
+accSection("⭐ Bonus Accolades", Color3.fromRGB(180,140,50), {
+	{icon="🧼", name="Squeaky Clean",      medals="25", desc="Reached Food Fight with 0 breaks used"},
+	{icon="🗡️", name="Executioner",        medals="25", desc="Most 100% CL triggers caused"},
+	{icon="🧑‍🍳",name="Sous-Chef Supreme",  medals="25", desc="Most sous-chef ingredient contributions"},
+	{icon="🛒", name="Resource Raider",    medals="15", desc="Most total items gathered"},
+})
+
+accSection("📦 Base Medals", Color3.fromRGB(105,100,138), {
+	{icon="✅", name="Participation",       medals="5",  desc="Complete a match"},
+	{icon="💪", name="Still Standing",      medals="+15",desc="Alive when the match ends"},
+	{icon="🤝", name="Together Victory",   medals="42", desc="70% of Last One Standing value (per player)"},
+})
+
+-- ── Titles sub-panel ───────────────────────────────────────
+local titlesPanel = Instance.new("Frame", AccPanel)
+titlesPanel.Name = "TitlesContent"
+titlesPanel.Size = UDim2.new(1,0,1,-ACC_SUBTAB_H)
+titlesPanel.Position = UDim2.new(0,0,0,ACC_SUBTAB_H)
+titlesPanel.BackgroundTransparency = 1; titlesPanel.Visible = false
+accSubPanels["TITLES"] = titlesPanel
+
+-- Equipped display header
+local equippedDisplay = mkLabel(titlesPanel,
+	"Equipped: (none)",
+	Enum.Font.GothamBlack, 14, C.title,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,4), UDim2.new(1,0,0,22))
+equippedDisplay.Name = "EquippedDisplay"
+
+local titlesScroll = mkScroll(titlesPanel,
+	UDim2.new(1,0,1,-30), UDim2.new(0,0,0,28),
+	C.purple)
+
+local HONORIFICS = {
+	{n=1,  icon="📦", name='"Expired Goods"',          unlock="Be eliminated first in 10 matches",                   cost=25,    tier="Starter"},
+	{n=2,  icon="🧺", name='"Paper or Plastic?"',       unlock="Win 10 matches with basket AND 10 with cart",         cost=50,    tier="Starter"},
+	{n=3,  icon="🚫", name='"The Negotiator"',           unlock="Decline 10 alliance offers lifetime",                 cost=75,    tier="Starter"},
+	{n=4,  icon="📋", name='"The Regular"',              unlock="Play 100 matches",                                    cost=100,   tier="Starter"},
+	{n=5,  icon="🤝", name='"Loyalty Card"',             unlock="Form 30 alliances lifetime",                          cost=125,   tier="Common"},
+	{n=6,  icon="🏎️",name='"Cart Racer"',               unlock="Win 5 matches using the Cart",                        cost=150,   tier="Common"},
+	{n=7,  icon="🕊️",name='"The Diplomat"',             unlock="Win a Together victory 5 times",                      cost=175,   tier="Common"},
+	{n=8,  icon="🛒", name='"Checkout Champion"',        unlock="Be first to checkout in 10 matches",                  cost=175,   tier="Common"},
+	{n=9,  icon="🛡️",name='"Aisle Survivor"',           unlock="Survive 20 matches without elimination",              cost=200,   tier="Common"},
+	{n=10, icon="🧻", name='"Napkin Hoarder"',           unlock="Collect 20 napkins from outdoor loot lifetime",       cost=200,   tier="Common"},
+	{n=11, icon="🧼", name='"Clean Sweep"',              unlock="Win Squeaky Clean accolade 10 times",                 cost=250,   tier="Uncommon"},
+	{n=12, icon="🧾", name='"Five-Star Shopper"',        unlock="Complete 50 full checkouts lifetime",                 cost=250,   tier="Uncommon"},
+	{n=13, icon="🍽️",name='"Sous-Chef Royale"',         unlock="Contribute to 100 recipes as Sous-Chef lifetime",     cost=300,   tier="Uncommon"},
+	{n=14, icon="👨‍🍳",name='"Master Chef"',              unlock="Cook 50 unique recipes lifetime",                     cost=325,   tier="Uncommon"},
+	{n=15, icon="💥", name='"Notorious"',                unlock="Win Chaos Agent accolade 10 times",                   cost=350,   tier="Uncommon"},
+	{n=16, icon="🔁", name='"Brand Loyalty"',            unlock="Same favourite food in 20 consecutive matches",       cost=400,   tier="Rare"},
+	{n=17, icon="🚽", name='"The Spillage"',             unlock="Cause 25 forced bathroom trips to others",            cost=450,   tier="Rare"},
+	{n=18, icon="🔪", name='"The Butcher"',              unlock="Cause 50 eliminations lifetime",                      cost=500,   tier="Rare"},
+	{n=19, icon="💰", name='"Golden Shopper"',           unlock="Purchase $500+ of ingredients in a single match",     cost=600,   tier="Rare"},
+	{n=20, icon="🪙", name='"Last Receipt"',             unlock="Win a match with $1 or less remaining",               cost=750,   tier="Elite"},
+	{n=21, icon="☠️", name='"Food Poisoning"',           unlock="Eliminate 3 players in a single match",               cost=800,   tier="Elite"},
+	{n=22, icon="🎯", name='"Smooth Criminal"',          unlock="Win 5 matches as last alliance member standing",      cost=1000,  tier="Elite"},
+	{n=23, icon="⚡", name='"Freshest in the Store"',    unlock="Win 3 consecutive matches",                           cost=1500,  tier="Legendary"},
+	{n=24, icon="💣", name='"Market Mayhem"',            unlock="Deal 500 total CL damage in a single match",          cost=2500,  tier="Legendary"},
+}
+
+local TIER_COL = {
+	Starter   = Color3.fromRGB(100, 175, 100),
+	Common    = Color3.fromRGB(80, 120, 200),
+	Uncommon  = Color3.fromRGB(130, 60, 200),
+	Rare      = Color3.fromRGB(218, 65, 65),
+	Elite     = Color3.fromRGB(239, 159, 39),
+	Legendary = Color3.fromRGB(220, 180, 30),
+}
+
+local equippedTitle = nil
+local titleBtns = {}
+
+local function refreshTitleButtons()
+	for _, btn in pairs(titleBtns) do
+		local isEq = btn:GetAttribute("TitleName") == equippedTitle
+		btn.Text = isEq and "✓ Equipped" or "Equip"
+		btn.BackgroundColor3 = isEq
+			and Color3.fromRGB(30,110,46)
+			or Color3.fromRGB(70,20,20)
+		btn.TextColor3 = isEq
+			and Color3.fromRGB(200,255,210)
+			or C.white
+	end
+end
+
+for _, h in ipairs(HONORIFICS) do
+	local tierCol = TIER_COL[h.tier] or C.dim
+	local fullTitle = h.icon.." "..h.name
+
+	local card = Instance.new("Frame", titlesScroll)
+	card.Size = UDim2.new(1,0,0,76)
+	card.BackgroundColor3 = Color3.fromRGB(22,20,34)
+	card.BorderSizePixel = 0; card.LayoutOrder = h.n; card.ZIndex = 12
+	corner(card, 10)
+	mkStroke(card, 1.5, Color3.fromRGB(45,42,65))
+
+	-- Tier badge (left accent)
+	local accent = Instance.new("Frame", card)
+	accent.Size = UDim2.new(0,4,1,-12); accent.Position = UDim2.new(0,4,0,6)
+	accent.BackgroundColor3 = tierCol; accent.BorderSizePixel = 0
+	corner(accent, 2)
+
+	-- Title name (large)
+	mkLabel(card, fullTitle, Enum.Font.GothamBlack, 15, C.title,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,16,0,6), UDim2.new(1,-170,0,22)).ZIndex = 13
+
+	-- Tier label
+	mkLabel(card, h.tier, Enum.Font.GothamBold, 10, tierCol,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,16,0,30), UDim2.new(0.4,0,0,14)).ZIndex = 13
+
+	-- Unlock condition
+	mkLabel(card, "🔒 "..h.unlock, Enum.Font.Gotham, 11, C.dim,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,16,0,46), UDim2.new(1,-170,0,20)).ZIndex = 13
+
+	-- Cost badge
+	local costFmt = h.cost >= 1000
+		and tostring(h.cost/1000):gsub("%.0","").."k"
+		or tostring(h.cost)
+	local costBg = Instance.new("Frame", card)
+	costBg.Size = UDim2.new(0,72,0,24)
+	costBg.AnchorPoint = Vector2.new(1,0)
+	costBg.Position = UDim2.new(1,-90,0,6)
+	costBg.BackgroundColor3 = Color3.fromRGB(40,30,8)
+	costBg.BorderSizePixel = 0; costBg.ZIndex = 13; corner(costBg,6)
+	mkLabel(costBg, "🏅 "..costFmt, Enum.Font.GothamBlack, 13, C.gold).ZIndex = 14
+
+	-- Equip button
+	local equipBtn = Instance.new("TextButton", card)
+	equipBtn.Size = UDim2.new(0,78,0,30)
+	equipBtn.AnchorPoint = Vector2.new(1,1)
+	equipBtn.Position = UDim2.new(1,-8,1,-8)
+	equipBtn.BackgroundColor3 = Color3.fromRGB(70,20,20)
+	equipBtn.BorderSizePixel = 0; equipBtn.AutoButtonColor = false
+	equipBtn.Font = Enum.Font.GothamBold; equipBtn.TextSize = 12
+	equipBtn.TextColor3 = C.white; equipBtn.Text = "Equip"
+	equipBtn.ZIndex = 13; corner(equipBtn, 6)
+	equipBtn:SetAttribute("TitleName", fullTitle)
+	titleBtns[h.n] = equipBtn
+
+	equipBtn.MouseButton1Click:Connect(function()
+		equippedTitle = fullTitle
+		equippedDisplay.Text = "Equipped: "..fullTitle
+		refreshTitleButtons()
+		if _G.Chompers and _G.Chompers.EquipTitle then
+			_G.Chompers.EquipTitle(fullTitle)
+		end
+	end)
+end
+
 -- ============================================================
--- EXPOSE API TO _G.CHOMPERS
+-- FAVOURITE FOOD PICKER (FavouriteScroll in Preferences)
+-- Players pick from all 69 recipes
 -- ============================================================
-if _G.Chompers then
-	-- Called by server/other scripts to populate accolade winners
-	_G.Chompers.SetAccoladeWinner = function(accoladeId, playerName)
-		local card = AccAwardsPanel:FindFirstChild(accoladeId)
-		if card then
-			local winnerL = card:FindFirstChild(accoladeId.."_winner")
-			if winnerL then
-				winnerL.Text = playerName or "—"
-				winnerL.TextColor3 = Color3.fromRGB(239,200,80)
-			end
+
+local selectedFavBtn = nil
+
+for i, item in ipairs(sortedRec) do
+	local r   = nr(item.rarity or "Common")
+	local col = RARITY_COL[r] or C.stroke
+	local ic  = emoji(item.name)
+
+	local row = Instance.new("TextButton", FavScroll)
+	row.Name = "Fav_"..i
+	row.Size = UDim2.new(1,0,0,60)
+	row.BackgroundColor3 = Color3.fromRGB(24,22,38)
+	row.BorderSizePixel = 0; row.AutoButtonColor = false
+	row.LayoutOrder = i; row.ZIndex = 12
+	corner(row, 10); mkStroke(row, 1.5, col)
+
+	-- Emoji
+	mkLabel(row, ic, Enum.Font.GothamBold, 26, C.white,
+		Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,0), UDim2.new(0,52,1,0)).ZIndex = 13
+
+	-- Name
+	local nameL = mkLabel(row, item.name, Enum.Font.GothamBlack, 14, C.white,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,56,0,6), UDim2.new(1,-64,0,20))
+	nameL.ZIndex = 13
+
+	-- CL + station
+	local clStr = item.cl and item.cl > 0
+		and ("🧼 +"..item.cl.."   🍳 "..item.station)
+		or ("🟢 Buff/self-consume   🍳 "..item.station)
+	mkLabel(row, clStr, Enum.Font.Gotham, 11, C.dim,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,56,0,28), UDim2.new(1,-64,0,14)).ZIndex = 13
+
+	-- Click: select as favourite
+	local capItem = item
+	row.MouseButton1Click:Connect(function()
+		-- Deselect previous
+		if selectedFavBtn then
+			selectedFavBtn.BackgroundColor3 = Color3.fromRGB(24,22,38)
+			local s = selectedFavBtn:FindFirstChildWhichIsA("UIStroke")
+			if s then s.Color = RARITY_COL[nr(s:GetAttribute("Rarity") or "Common")] or C.stroke end
 		end
-	end
+		-- Select new
+		row.BackgroundColor3 = Color3.fromRGB(35,20,55)
+		local s = row:FindFirstChildWhichIsA("UIStroke")
+		if s then s.Color = C.purple end
+		selectedFavBtn = row
 
-	-- Called by server to unlock achievements
-	_G.Chompers.SetAchievementCount = function(achName, count)
-		for _,card in ipairs(achScroll:GetChildren()) do
-			if card:IsA("Frame") and card.Name==achName then
-				local timesL = card:FindFirstChild("TimesEarned")
-				local locked = card:FindFirstChild("LockedOverlay")
-				if timesL then
-					timesL.Text = tostring(count).."×"
-				end
-				if locked then
-					locked.Visible = count==0
-				end
-				break
-			end
+		-- Update FavSelected label and fire server
+		FavSelected.Text = "✓ "..capItem.name
+		if Remotes then
+			local r = Remotes:FindFirstChild("PlayerSelectFavourite")
+			if r then r:FireServer(capItem.name) end
 		end
-	end
-
-	-- Expose recipe names for any script that needs them
-	_G.Chompers.GetRecipeNames = function()
-		local names = {}
-		for _,rd in ipairs(RECIPE_DATA) do
-			table.insert(names, rd.n)
-		end
-		return names
-	end
-
-	-- Expose ingredient data
-	_G.Chompers.GetIngredientData = function()
-		return INGREDIENT_DATA
-	end
-
-	-- Expose stack limit lookup
-	_G.Chompers.GetStackLimit = function(rarity)
-		return STACK_LIMIT[rarity] or 1
-	end
+	end)
 end
 
 print("CookbookBuilder loaded!")
