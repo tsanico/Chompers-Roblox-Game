@@ -198,14 +198,10 @@ end
 -- PHASE-BASED DOOR CONTROL
 -- ============================================================
 
--- Open all doors flagged OpenOnGathering or IsFireExit
+-- At Gathering: ALL doors disappear — full store access, no barriers
 local function openGatheringDoors()
-	if not DoorsFolder then return end
 	for door, state in pairs(doorStates) do
-		if door:GetAttribute("OpenOnGathering") == true
-		or door:GetAttribute("IsFireExit") == true then
-			tweenDoorOpen(door, state)
-		end
+		disappearDoor(door, state)
 	end
 end
 
