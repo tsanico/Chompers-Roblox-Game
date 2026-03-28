@@ -165,8 +165,11 @@ end
 -- PHASE LOGIC
 -- ============================================================
 
+-- Forward declarations — all phase functions reference each other cyclically
+local startPrelobby, startGathering, startCooking, startFoodFight, startEndGame
+
 -- ── PRELOBBY ─────────────────────────────────────────────────
-local function startPrelobby()
+startPrelobby = function()
 	cancelTimer()
 	readyPlayers = {}
 	setPhase(PHASE.PRELOBBY)
@@ -188,7 +191,7 @@ local function startPrelobby()
 end
 
 -- ── GATHERING ────────────────────────────────────────────────
-local function startGathering()
+startGathering = function()
 	cancelTimer()
 	matchNumber = matchNumber + 1
 	print(string.format("[GameManager] Starting match #%d", matchNumber))
@@ -211,7 +214,7 @@ local function startGathering()
 end
 
 -- ── COOKING ──────────────────────────────────────────────────
-local function startCooking()
+startCooking = function()
 	cancelTimer()
 	setPhase(PHASE.COOKING)
 
@@ -229,7 +232,7 @@ local function startCooking()
 end
 
 -- ── FOOD FIGHT ───────────────────────────────────────────────
-local function startFoodFight()
+startFoodFight = function()
 	cancelTimer()
 	setPhase(PHASE.FOODFIGHT)
 
@@ -263,7 +266,7 @@ local function startFoodFight()
 end
 
 -- ── END GAME ─────────────────────────────────────────────────
-local function startEndGame(survivors)
+startEndGame = function(survivors)
 	cancelTimer()
 	setPhase(PHASE.ENDGAME)
 
@@ -396,3 +399,13 @@ end)
 task.wait(2)   -- brief wait for other scripts to initialise
 startPrelobby()
 print("[GameManager] Boot complete — Prelobby started")
+
+-- TEMP TEST ONLY — remove before shipping
+if game:GetService("RunService"):IsStudio() then
+	task.delay(5, function()
+		if #Players:GetPlayers() < C.Phase.PreglobbyMinPlayers then
+			print("[GameManager] Studio solo test — force starting Gathering")
+			startGathering()
+		end
+	end)
+end
