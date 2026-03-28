@@ -1,257 +1,245 @@
--- IngredientSpawner (ModuleScript in ServerScriptService)
+-- ============================================================
+-- IngredientSpawner — ModuleScript
+-- Location: ServerScriptService > IngredientSpawner
+--
+-- Spawns all ingredients and outdoor loot at Gathering start.
+-- Handles respawning on rarity timer.
+-- All ingredient data sourced from ChompersData — no local tables.
+-- All prop names verified against map audit (March 2026).
+--
+-- REQUIRES: ReplicatedStorage > ChompersData
+--           ServerScriptService > PhaseChangedEvent (BindableEvent)
+-- ============================================================
+
+local ServerScriptService = game:GetService("ServerScriptService")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+
+local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
+local C             = ChompersData.Constants
+
+local PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
 
 local LIVE_FOLDER_NAME = "Ingredients_Live"
 
-local RESPAWN_TIMES = {
-	Common         = 25,
-	Uncommon       = 35,
-	Rare           = 50,
-	["Ultra-Rare"] = 90,
-	Legendary      = math.huge,
-}
-
+-- Rarity → spawn weight (higher = more common on surfaces)
 local RARITY_WEIGHTS = {
-	Common         = 60,
-	Uncommon       = 25,
-	Rare           = 10,
-	["Ultra-Rare"] = 4,
-	Legendary      = 1,
+	Common    = 60,
+	Uncommon  = 25,
+	Rare      = 10,
+	UltraRare = 4,
+	Legendary = 1,
 }
 
+-- Rarity display colours
 local RARITY_COLORS = {
-	Common         = Color3.fromRGB(172,170,192),
-	Uncommon       = Color3.fromRGB(85,185,95),
-	Rare           = Color3.fromRGB(75,135,220),
-	["Ultra-Rare"] = Color3.fromRGB(175,95,220),
-	Legendary      = Color3.fromRGB(239,159,39),
+	Common    = Color3.fromRGB(172, 170, 192),
+	Uncommon  = Color3.fromRGB(85,  185, 95),
+	Rare      = Color3.fromRGB(75,  135, 220),
+	UltraRare = Color3.fromRGB(175, 95,  220),
+	Legendary = Color3.fromRGB(239, 159, 39),
+}
+
+-- Respawn times by rarity (seconds). 0 = never respawns.
+local RESPAWN_TIMES = {
+	Common    = C.Respawn.Common,     -- 25
+	Uncommon  = C.Respawn.Uncommon,   -- 35
+	Rare      = C.Respawn.Rare,       -- 50
+	UltraRare = C.Respawn.UltraRare,  -- 90
+	Legendary = 0,                    -- never
 }
 
 -- ============================================================
--- ALL INGREDIENT POOLS
+-- SURFACE DEFINITIONS
+-- Verified against map audit (March 2026). All prop names are
+-- exact matches to what exists in workspace.
+--
+-- surfaceTop = part.Position.Y + part.Size.Y/2
+-- ingredients spawn at surfaceTop + 1 (their centre above surface)
 -- ============================================================
-local ALL_INGREDIENTS = {
-	-- PRODUCE
-	{n="Apple",        r="Common",     wt=1,cost=2, emoji="🍎",allergy="Produce", zone="Produce"},
-	{n="Banana",       r="Common",     wt=1,cost=2, emoji="🍌",allergy="Produce", zone="Produce"},
-	{n="Tomato",       r="Common",     wt=1,cost=2, emoji="🍅",allergy="Produce", zone="Produce"},
-	{n="Lettuce",      r="Common",     wt=1,cost=1, emoji="🥬",allergy="Produce", zone="Produce"},
-	{n="Onion",        r="Common",     wt=1,cost=2, emoji="🧅",allergy="Produce", zone="Produce"},
-	{n="Carrot",       r="Common",     wt=1,cost=2, emoji="🥕",allergy="Produce", zone="Produce"},
-	{n="Spinach",      r="Common",     wt=1,cost=1, emoji="🥬",allergy="Produce", zone="Produce"},
-	{n="Peas",         r="Common",     wt=1,cost=1, emoji="🫛",allergy="Produce", zone="Produce"},
-	{n="Egg",          r="Common",     wt=1,cost=2, emoji="🥚",allergy="Eggs",    zone="Produce"},
-	{n="Bell Pepper",  r="Uncommon",   wt=1,cost=2, emoji="🫑",allergy="Produce", zone="Produce"},
-	{n="Corn",         r="Uncommon",   wt=2,cost=2, emoji="🌽",allergy="Produce", zone="Produce"},
-	{n="Mango",        r="Uncommon",   wt=2,cost=3, emoji="🥭",allergy="Produce", zone="Produce"},
-	{n="Avocado",      r="Uncommon",   wt=2,cost=3, emoji="🥑",allergy="Produce", zone="Produce"},
-	{n="Garlic",       r="Uncommon",   wt=1,cost=3, emoji="🧄",allergy="Produce", zone="Produce"},
-	{n="Tofu",         r="Uncommon",   wt=2,cost=3, emoji="⬜",allergy="Soy",     zone="Produce"},
-	{n="Plantain",     r="Rare",       wt=2,cost=3, emoji="🍌",allergy="Produce", zone="Produce"},
-	{n="Beet",         r="Rare",       wt=1,cost=2, emoji="🟣",allergy="Produce", zone="Produce"},
-	{n="Kimchi",       r="Rare",       wt=2,cost=4, emoji="🌶",allergy="Spicy",   zone="Produce"},
-	{n="Ackee",        r="Rare",       wt=1,cost=3, emoji="🍈",allergy="Produce", zone="Produce"},
-	{n="Coconut",      r="Rare",       wt=3,cost=5, emoji="🥥",allergy="Nuts",    zone="Produce"},
-	-- Truffle is produce (it's a mushroom!)
-	{n="Truffle",      r="Rare",       wt=1,cost=15,emoji="🍄",allergy="Produce", zone="Produce"},
-	-- BAKERY
-	{n="Bun",          r="Common",     wt=2,cost=2, emoji="🥖",allergy="Gluten",  zone="Bakery"},
-	{n="Bread Loaf",   r="Common",     wt=2,cost=3, emoji="🍞",allergy="Gluten",  zone="Bakery"},
-	{n="Flour",        r="Common",     wt=2,cost=2, emoji="🌾",allergy="Gluten",  zone="Bakery"},
-	{n="Sugar",        r="Common",     wt=1,cost=2, emoji="🍬",allergy="None",    zone="Bakery"},
-	{n="Naan",         r="Uncommon",   wt=1,cost=3, emoji="🍞",allergy="Gluten",  zone="Bakery"},
-	{n="Dough",        r="Uncommon",   wt=3,cost=3, emoji="🍞",allergy="Gluten",  zone="Bakery"},
-	{n="Chocolate",    r="Uncommon",   wt=2,cost=3, emoji="🍫",allergy="None",    zone="Bakery"},
-	-- DAIRY
-	{n="Milk",         r="Common",     wt=2,cost=3, emoji="🥛",allergy="Dairy",   zone="Dairy"},
-	{n="Yogurt",       r="Common",     wt=2,cost=3, emoji="🍶",allergy="Dairy",   zone="Dairy"},
-	{n="Cheese Block", r="Uncommon",   wt=2,cost=4, emoji="🧀",allergy="Dairy",   zone="Dairy"},
-	{n="Butter",       r="Uncommon",   wt=2,cost=4, emoji="🧈",allergy="Dairy",   zone="Dairy"},
-	-- FREEZER
-	{n="Chicken",      r="Common",     wt=3,cost=5, emoji="🍗",allergy="Meat",    zone="Freezer"},
-	{n="Sausage",      r="Common",     wt=3,cost=5, emoji="🌭",allergy="Meat",    zone="Freezer"},
-	{n="Pork",         r="Uncommon",   wt=4,cost=5, emoji="🐷",allergy="Meat",    zone="Freezer"},
-	{n="Beef",         r="Uncommon",   wt=4,cost=6, emoji="🥩",allergy="Meat",    zone="Freezer"},
-	{n="Shrimp",       r="Rare",       wt=2,cost=6, emoji="🦐",allergy="Seafood", zone="Freezer"},
-	{n="Lobster",      r="Ultra-Rare", wt=6,cost=10,emoji="🦞",allergy="Seafood", zone="Freezer"},
-	-- AISLES
-	{n="Rice",         r="Common",     wt=2,cost=3, emoji="🍚",allergy="None",    zone="Aisles"},
-	{n="Pasta",        r="Common",     wt=2,cost=3, emoji="🍝",allergy="Gluten",  zone="Aisles"},
-	{n="Noodles",      r="Common",     wt=2,cost=3, emoji="🍜",allergy="Gluten",  zone="Aisles"},
-	{n="Salt",         r="Common",     wt=1,cost=2, emoji="🧂",allergy="None",    zone="Aisles"},
-	{n="Tortilla",     r="Common",     wt=1,cost=3, emoji="🥙",allergy="Gluten",  zone="Aisles"},
-	{n="Chili Powder", r="Uncommon",   wt=1,cost=3, emoji="🌶",allergy="Spicy",   zone="Aisles"},
-	{n="Soy Sauce",    r="Uncommon",   wt=1,cost=4, emoji="🍶",allergy="Soy",     zone="Aisles"},
-	{n="Peanut",       r="Uncommon",   wt=1,cost=4, emoji="🥜",allergy="Nuts",    zone="Aisles"},
-	{n="Oil",          r="Uncommon",   wt=2,cost=4, emoji="🍵",allergy="None",    zone="Aisles"},
-	{n="Curry Powder", r="Rare",       wt=1,cost=4, emoji="🌿",allergy="Spicy",   zone="Aisles"},
-	-- STOCKROOM ULTRA-RARE (now stays here but also in home zones above)
-	{n="Saffron",      r="Ultra-Rare", wt=1,cost=10,emoji="🌺",allergy="None",    zone="Stockroom"},
-	{n="Wagyu Beef",   r="Ultra-Rare", wt=5,cost=18,emoji="🥩",allergy="Meat",    zone="Stockroom"},
-	{n="Caviar",       r="Legendary",  wt=1,cost=12,emoji="🐟",allergy="Seafood", zone="Stockroom"},
-}
 
--- Build zone-filtered pools from master list
-local function buildPool(zoneName)
-	local pool = {}
-	for _, ing in ipairs(ALL_INGREDIENTS) do
-		if ing.zone == zoneName then
-			table.insert(pool, ing)
-		end
-	end
-	return pool
-end
-
--- Stockroom gets EVERYTHING
-local function buildStockroomPool()
-	return ALL_INGREDIENTS
-end
-
-local ZONE_POOLS = {
-	Produce   = buildPool("Produce"),
-	Bakery    = buildPool("Bakery"),
-	Dairy     = buildPool("Dairy"),
-	Freezer   = buildPool("Freezer"),
-	Aisles    = buildPool("Aisles"),
-	Stockroom = buildStockroomPool(),
-}
-
--- ============================================================
--- SPAWN SURFACE DEFINITIONS
--- surfaceTop = exact Y of the top surface of the part
--- ingredients spawn at surfaceTop + 1 (their centre above the surface)
--- ============================================================
--- Part Y=2.5, sizeY=5  → top = 2.5+2.5 = 5.0
--- Part Y=5.0, sizeY=10 → top = 5.0+5.0 = 10.0
--- Part Y=6.0, sizeY=12 → top = 6.0+6.0 = 12.0
--- Part Y=7.0, sizeY=14 → top = 7.0+7.0 = 14.0
+-- Props path: workspace > Map > Props > {subFolder} > {name}
+-- Row shelves path: workspace > Map > Props > Props_Aisles > {name}
 
 local ZONE_SURFACES = {
+
+	-- ── PRODUCE (23 ingredients) ──────────────────────────
+	-- All parts in Map > Props > Props_Produce
 	Produce = {
-		{folder="Props/Props_Produce",name="BinRow1_Veg_A",      surfaceTop=5,  maxItems=4},
-		{folder="Props/Props_Produce",name="BinRow1_Fruit_A",    surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Produce",name="BinRow1_Fruit_B",    surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Produce",name="BinRow2_Misting_A",  surfaceTop=5,  maxItems=4},
-		{folder="Props/Props_Produce",name="BinRow2_Specialty_A",surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Produce",name="ChilledCase",        surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Produce",name="MidShelf_Front",     surfaceTop=5,  maxItems=2},
-		{folder="Props/Props_Produce",name="MidShelf_Back",      surfaceTop=5,  maxItems=2},
-		{folder="Props/Props_Produce",name="WallShelf_A",        surfaceTop=12, maxItems=5},
-		{folder="Props/Props_Produce",name="WallShelf_B",        surfaceTop=12, maxItems=6},
+		{ folder = "Props/Props_Produce", name = "BinRow1_Veg_A",        surfaceTop = 5,  maxItems = 4 },
+		{ folder = "Props/Props_Produce", name = "BinRow2_Misting_A",     surfaceTop = 5,  maxItems = 4 },
+		{ folder = "Props/Props_Produce", name = "BinRow1_Fruit_A",       surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Produce", name = "BinRow2_Specialty_A",   surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Produce", name = "BinRow1_Fruit_B_Front", surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Produce", name = "BinRow1_Fruit_B_Back",  surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Produce", name = "ChilledCase",            surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Produce", name = "ProduceMidShelf_Front",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Produce", name = "ProduceMidShelf_Back",   surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Produce", name = "ProduceWallShelf_A",     surfaceTop = 12, maxItems = 5 },
+		{ folder = "Props/Props_Produce", name = "ProduceWallShelf_B",     surfaceTop = 12, maxItems = 6 },
 	},
+
+	-- ── BAKERY (10 ingredients) ───────────────────────────
+	-- All parts in Map > Props > Props_Bakery
 	Bakery = {
-		{folder="Props/Props_Bakery",name="BinRow1_Bread_A",    surfaceTop=5,  maxItems=4},
-		{folder="Props/Props_Bakery",name="BinRow1_Pastry_A",   surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Bakery",name="BinRow1_Cake_A",     surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Bakery",name="BinRow2_Bread_A",    surfaceTop=5,  maxItems=4},
-		{folder="Props/Props_Bakery",name="BinRow2_DryGoods_A", surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Bakery",name="BreadWarmerCase",    surfaceTop=5,  maxItems=3},
-		{folder="Props/Props_Bakery",name="MidShelf_Front",     surfaceTop=5,  maxItems=2},
-		{folder="Props/Props_Bakery",name="MidShelf_Back",      surfaceTop=5,  maxItems=2},
-		{folder="Props/Props_Bakery",name="WallShelf_A",        surfaceTop=12, maxItems=5},
-		{folder="Props/Props_Bakery",name="WallShelf_B",        surfaceTop=12, maxItems=6},
+		{ folder = "Props/Props_Bakery", name = "BinRow1_Bread_A",     surfaceTop = 5,  maxItems = 4 },
+		{ folder = "Props/Props_Bakery", name = "BinRow2_Bread_A",     surfaceTop = 5,  maxItems = 4 },
+		{ folder = "Props/Props_Bakery", name = "BinRow1_Pastry_A",    surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Bakery", name = "BinRow2_DryGoods_A",  surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Bakery", name = "BinRow1_Cake_A_Front",surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Bakery", name = "BinRow1_Cake_A_Back", surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Bakery", name = "BreadWarmerCase",      surfaceTop = 5,  maxItems = 3 },
+		{ folder = "Props/Props_Bakery", name = "BakeryMidShelf_Front", surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Bakery", name = "BakeryMidShelf_Back",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Bakery", name = "BakeryWallShelf_A",    surfaceTop = 12, maxItems = 5 },
+		{ folder = "Props/Props_Bakery", name = "BakeryWallShelf_B",    surfaceTop = 12, maxItems = 6 },
 	},
+
+	-- ── DAIRY (8 ingredients) — Row1 shelves ─────────────
+	-- Row1 (Light Royal blue, leftmost) — inside Zone_Freezer, Dairy side
+	-- Pos Y=5, Size Y=10 → surfaceTop = 10
 	Dairy = {
-		{folder="Freezers",name="Row2_Front",surfaceTop=10,maxItems=6},
-		{folder="Freezers",name="Row2_Back", surfaceTop=10,maxItems=6},
-		{folder="Freezers",name="Row3_Front",surfaceTop=10,maxItems=6},
-		{folder="Freezers",name="Row3_Back", surfaceTop=10,maxItems=6},
+		{ folder = "Props/Props_Aisles", name = "Row1_Front", surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles", name = "Row1_Back",  surfaceTop = 10, maxItems = 6 },
 	},
+
+	-- ── FREEZER / MEAT (9 ingredients) — Row2–3 shelves ──
+	-- Row2 and Row3 (Light Royal blue) — inside Zone_Freezer
 	Freezer = {
-		{folder="Freezers",name="Row1_Front",surfaceTop=10,maxItems=6},
-		{folder="Freezers",name="Row1_Back", surfaceTop=10,maxItems=6},
-		{folder="Freezers",name="Row2_Front",surfaceTop=10,maxItems=4},
-		{folder="Freezers",name="Row2_Back", surfaceTop=10,maxItems=4},
+		{ folder = "Props/Props_Aisles", name = "Row2_Front", surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles", name = "Row2_Back",  surfaceTop = 10, maxItems = 6 },
+		{ folder = "Props/Props_Aisles", name = "Row3_Front", surfaceTop = 10, maxItems = 5 },
+		{ folder = "Props/Props_Aisles", name = "Row3_Back",  surfaceTop = 10, maxItems = 5 },
 	},
+
+	-- ── AISLES (14 ingredients) — Row4–6 shelves ─────────
+	-- Row4–6 (Curry coloured) — inside Zone_Aisles
 	Aisles = {
-		{folder="Shelves",name="Row4_Front",surfaceTop=10,maxItems=7},
-		{folder="Shelves",name="Row4_Back", surfaceTop=10,maxItems=7},
-		{folder="Shelves",name="Row5_Front",surfaceTop=10,maxItems=7},
-		{folder="Shelves",name="Row5_Back", surfaceTop=10,maxItems=7},
-		{folder="Shelves",name="Row6_Front",surfaceTop=10,maxItems=7},
-		{folder="Shelves",name="Row6_Back", surfaceTop=10,maxItems=7},
+		{ folder = "Props/Props_Aisles", name = "Row4_Front", surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles", name = "Row4_Back",  surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles", name = "Row5_Front", surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles", name = "Row5_Back",  surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles", name = "Row6_Front", surfaceTop = 10, maxItems = 7 },
+		{ folder = "Props/Props_Aisles", name = "Row6_Back",  surfaceTop = 10, maxItems = 7 },
 	},
+
+	-- ── DELI COUNTER — mid-tier loot node (Part 33) ───────
+	-- Accessible from store floor (Z<100), spawns mixed mid-tier
+	-- ingredients from Dairy, Freezer, Produce zones
+	-- Pos Y=2.5, Size Y=5 → surfaceTop = 5
+	Deli = {
+		{ folder = "Props/Props_Kitchen", name = "DeliCounter_FarLeft",  surfaceTop = 5, maxItems = 3 },
+		{ folder = "Props/Props_Kitchen", name = "DeliCounter_MidLeft",  surfaceTop = 5, maxItems = 4 },
+		{ folder = "Props/Props_Kitchen", name = "DeliCounter_MidRight", surfaceTop = 5, maxItems = 4 },
+		{ folder = "Props/Props_Kitchen", name = "DeliCounter_FarRight", surfaceTop = 5, maxItems = 3 },
+	},
+
+	-- ── STOCKROOM (all 65 ingredients, higher density) ────
+	-- Caviar (Legendary) ONLY spawns here — never in other zones
+	-- LowCrates: Pos Y=2.5, Size Y=5 → surfaceTop = 5
+	-- TallStacks: Pos Y=7, Size Y=14 → surfaceTop = 14
+	-- LootCrates: Pos Y=4, Size Y=5 → surfaceTop ~6.5
+	-- MidCrates: Pos Y=3.5, Size Y=5 → surfaceTop ~6
 	Stockroom = {
-		-- LowCrates (surfaceTop = 2.5+2.5 = 5)
-		{folder="Props/Props_Stockroom",name="LowCrate_1", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_2", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_3", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_5", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_6", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_7", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_8", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_9", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_10",surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LowCrate_12",surfaceTop=5, maxItems=2},
-		-- TallStacks (surfaceTop = 7+7 = 14)
-		{folder="Props/Props_Stockroom",name="TallStack_3", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_4", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_5", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_6", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_7", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_8", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_9", surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_10",surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_11",surfaceTop=14,maxItems=2},
-		{folder="Props/Props_Stockroom",name="TallStack_12",surfaceTop=14,maxItems=2},
-		-- LootCrates (surfaceTop = 2.5+2.5 = 5)
-		{folder="Props/Props_Stockroom",name="LootCrate_1", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LootCrate_2", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LootCrate_3", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LootCrate_4", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LootCrate_5", surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="LootCrate_6", surfaceTop=5, maxItems=2},
-		-- MidCrates (surfaceTop = 2.5+2.5 = 5)
-		{folder="Props/Props_Stockroom",name="MidCrate_1",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_2",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_3",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_4",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_5",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_6",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_7",  surfaceTop=5, maxItems=2},
-		{folder="Props/Props_Stockroom",name="MidCrate_8",  surfaceTop=5, maxItems=2},
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_1",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_2",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_3",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_5",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_6",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_7",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_8",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_9",  surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_10", surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_12", surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_13", surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LowCrate_14", surfaceTop = 5,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_3", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_4", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_5", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_6", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_7", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_8", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_9", surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_10",surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_11",surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "TallStack_12",surfaceTop = 14, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_1", surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_2", surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_3", surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_4", surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_5", surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_6", surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "LootCrate_Centre", surfaceTop = 6, maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_1",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_2",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_3",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_4",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_5",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_6",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_7",  surfaceTop = 6,  maxItems = 2 },
+		{ folder = "Props/Props_Stockroom", name = "MidCrate_8",  surfaceTop = 6,  maxItems = 2 },
 	},
 }
 
--- ============================================================
--- LOOT DEFINITIONS (cash + napkins — outside only)
--- Spawn on the ground at Y=2 (floor level + 1 for part centre)
--- Back area Z=-250 to -400, sides X=300-400 and X=-300-400
--- EXCLUDED: front prelobby Z=-200 to -230
--- ============================================================
-local LOOT_TYPES = {
-	-- Loose cash (common)
-	{n="Loose Cash",   emoji="💵", rarity="Common",     value=math.random(1,5),  color=Color3.fromRGB(75,205,60),  type="cash"},
-	{n="Cash Stack",   emoji="💵", rarity="Uncommon",   value=math.random(8,15), color=Color3.fromRGB(55,165,45),  type="cash"},
-	{n="Big Stack",    emoji="💵", rarity="Rare",       value=math.random(18,25),color=Color3.fromRGB(239,159,39), type="cash"},
-	{n="Napkin",       emoji="🧻", rarity="Ultra-Rare", value=1,                 color=Color3.fromRGB(100,180,255),type="napkin"},
+-- ── Outdoor loot zones (cash + napkins + bracelets) ─────────
+-- Back car park, side alleys — NOT the prelobby spawn area
+local LOOT_ZONES = {
+	{ minX = -350, maxX = 350,  minZ = -395, maxZ = -350, y = 2, count = 20 }, -- back of car park
+	{ minX =  310, maxX = 368,  minZ = -180, maxZ =  180, y = 2, count = 12 }, -- left side alley
+	{ minX = -368, maxX = -310, minZ = -180, maxZ =  180, y = 2, count = 12 }, -- right side alley
+	{ minX = -300, maxX = 300,  minZ = -340, maxZ = -250, y = 2, count = 15 }, -- mid car park rows
 }
 
-local LOOT_RARITY_WEIGHTS = {
-	Common=65, Uncommon=25, Rare=8, ["Ultra-Rare"]=2
-}
+-- Loot rarity weights
+local LOOT_WEIGHTS = { Common = 65, Uncommon = 25, Rare = 8, UltraRare = 2 }
 
--- Outside spawn positions: back wall, side alleys
--- Back benches: Z=-394, X=-200, -100, 100, 200 (Y=4 seat top = 5)
--- Side benches: X=372, Z=-240,-300,-360 and X=-372 same (Y=4 seat top = 5)
--- General ground scatter: random positions in safe outside zones
-local LOOT_SPAWN_ZONES = {
-	-- Back of car park (Z=-350 to -395, full X width, NOT prelobby)
-	{minX=-350, maxX=350, minZ=-395, maxZ=-350, y=2, count=20},
-	-- Right side alley (X=310 to 370, Z=-200 to 200)
-	{minX=310,  maxX=368, minZ=-180, maxZ=180,  y=2, count=12},
-	-- Left side alley (X=-370 to -310, Z=-200 to 200)
-	{minX=-368, maxX=-310,minZ=-180, maxZ=180,  y=2, count=12},
-	-- Middle car park rows (Z=-250 to -340, avoiding front prelobby)
-	{minX=-300, maxX=300, minZ=-340, maxZ=-250, y=2, count=15},
-}
+-- ============================================================
+-- INGREDIENT POOLS (built from ChompersData — no hardcoding)
+-- ============================================================
+
+-- Build per-zone pool from ChompersData.Ingredients
+-- Deli pool = Dairy + Freezer + mid-tier Produce (Uncommon+)
+local function buildPools()
+	local pools = {}
+
+	-- Standard zones
+	for _, zoneName in ipairs({"Produce","Bakery","Dairy","Freezer","Aisles"}) do
+		pools[zoneName] = ChompersData.GetIngredientsByZone(zoneName)
+	end
+
+	-- Stockroom = all 65 ingredients
+	pools.Stockroom = ChompersData.Ingredients
+
+	-- Deli = mid-tier mix: Dairy + Freezer Uncommon+, Produce Uncommon+
+	-- (lower CL common ingredients excluded — deli is a "mid-tier loot node")
+	pools.Deli = {}
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		local zone = ing.zone
+		local rarity = ing.rarity
+		if (zone == "Dairy" or zone == "Freezer") and rarity ~= "UltraRare" and rarity ~= "Legendary" then
+			table.insert(pools.Deli, ing)
+		elseif zone == "Produce" and (rarity == "Uncommon" or rarity == "Rare") then
+			table.insert(pools.Deli, ing)
+		end
+	end
+
+	return pools
+end
 
 -- ============================================================
 -- HELPERS
 -- ============================================================
-local Map = workspace:WaitForChild("Map", 10)
 
+local Map = workspace:WaitForChild("Map", 10)
+if not Map then warn("[IngredientSpawner] Map folder not found") end
+
+-- Navigate a slash-delimited path inside Map
 local function getFolder(path)
 	local current = Map
+	if not current then return nil end
 	for segment in path:gmatch("[^/]+") do
 		current = current:FindFirstChild(segment)
 		if not current then return nil end
@@ -259,32 +247,33 @@ local function getFolder(path)
 	return current
 end
 
-local function weightedRandom(pool, weightTable)
-	local wt = weightTable or RARITY_WEIGHTS
+-- Weighted random pick from pool using rarity weights
+local function weightedPick(pool)
 	local total = 0
 	local weighted = {}
-	for _, item in ipairs(pool) do
-		local w = wt[item.r] or wt[item.rarity] or 1
+	for _, ing in ipairs(pool) do
+		local w = RARITY_WEIGHTS[ing.rarity] or 1
 		total = total + w
-		table.insert(weighted, {item=item, cumulative=total})
+		table.insert(weighted, { ing = ing, cumulative = total })
 	end
 	if total == 0 then return pool[1] end
 	local roll = math.random() * total
 	for _, entry in ipairs(weighted) do
-		if roll <= entry.cumulative then return entry.item end
+		if roll <= entry.cumulative then return entry.ing end
 	end
 	return pool[1]
 end
 
+-- Distribute N spawn points evenly across a part's top surface
 local function getSurfacePoints(part, count)
 	local pos   = part.Position
 	local sizeX = part.Size.X
 	local sizeZ = part.Size.Z
-	local points = {}
-	local cols = math.ceil(math.sqrt(count))
-	local rows = math.ceil(count / cols)
+	local cols  = math.ceil(math.sqrt(count))
+	local rows  = math.ceil(count / cols)
 	local stepX = sizeX / (cols + 1)
 	local stepZ = sizeZ / (rows + 1)
+	local points = {}
 	local i = 0
 	for row = 1, rows do
 		for col = 1, cols do
@@ -293,100 +282,110 @@ local function getSurfacePoints(part, count)
 			local jX = (math.random() - 0.5) * stepX * 0.35
 			local jZ = (math.random() - 0.5) * stepZ * 0.35
 			table.insert(points, Vector3.new(
-				pos.X - sizeX/2 + stepX*col + jX,
+				pos.X - sizeX/2 + stepX * col + jX,
 				0,
-				pos.Z - sizeZ/2 + stepZ*row + jZ))
+				pos.Z - sizeZ/2 + stepZ * row + jZ))
 		end
 	end
 	return points
 end
 
 -- ============================================================
--- SPAWN ONE INGREDIENT
+-- BILLBOARD + PROMPT (UI on spawned part)
 -- ============================================================
-local LiveFolder
-local respawnQueue = {}
 
-local function createBillboard(parent, emoji, name, rarityColor)
+local function createBillboard(parent, ing)
+	local color = RARITY_COLORS[ing.rarity] or Color3.fromRGB(200, 200, 200)
+
 	local bb = Instance.new("BillboardGui")
-	bb.Size         = UDim2.new(0,70,0,70)
-	bb.StudsOffset  = Vector3.new(0,2.5,0)
-	bb.AlwaysOnTop  = false
+	bb.Size          = UDim2.new(0, 70, 0, 70)
+	bb.StudsOffset   = Vector3.new(0, 2.5, 0)
+	bb.AlwaysOnTop   = false
 	bb.LightInfluence = 0
-	bb.Parent = parent
+	bb.Parent        = parent
 
-	local emojiL = Instance.new("TextLabel")
-	emojiL.Size = UDim2.new(1,0,0.58,0)
-	emojiL.BackgroundTransparency = 1
-	emojiL.Text = emoji
-	emojiL.TextScaled = true
-	emojiL.Font = Enum.Font.GothamBold
-	emojiL.Parent = bb
+	local emojiLabel = Instance.new("TextLabel")
+	emojiLabel.Size                 = UDim2.new(1, 0, 0.58, 0)
+	emojiLabel.BackgroundTransparency = 1
+	emojiLabel.Text                 = ing.emoji or "🍽"
+	emojiLabel.TextScaled           = true
+	emojiLabel.Font                 = Enum.Font.GothamBold
+	emojiLabel.Parent               = bb
 
-	local nameL = Instance.new("TextLabel")
-	nameL.Size = UDim2.new(1,0,0.42,0)
-	nameL.Position = UDim2.new(0,0,0.58,0)
-	nameL.BackgroundTransparency = 1
-	nameL.Text = name
-	nameL.TextScaled = true
-	nameL.Font = Enum.Font.GothamBold
-	nameL.TextColor3 = rarityColor
-	nameL.TextStrokeTransparency = 0.4
-	nameL.TextStrokeColor3 = Color3.fromRGB(0,0,0)
-	nameL.Parent = bb
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size                  = UDim2.new(1, 0, 0.42, 0)
+	nameLabel.Position              = UDim2.new(0, 0, 0.58, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text                  = ing.name
+	nameLabel.TextScaled            = true
+	nameLabel.Font                  = Enum.Font.GothamBold
+	nameLabel.TextColor3            = color
+	nameLabel.TextStrokeTransparency = 0.4
+	nameLabel.TextStrokeColor3      = Color3.fromRGB(0, 0, 0)
+	nameLabel.Parent                = bb
 end
 
-local function createPrompt(parent, emoji, name, holdTime)
+local function createPrompt(parent, ing, holdTime)
 	local prompt = Instance.new("ProximityPrompt")
-	prompt.ActionText = "Pick up"
-	prompt.ObjectText = emoji.."  "..name
-	prompt.KeyboardKeyCode = Enum.KeyCode.E
-	prompt.HoldDuration = holdTime or 0.25
+	prompt.ActionText            = "Pick up"
+	prompt.ObjectText            = (ing.emoji or "🍽") .. " " .. ing.name
+	prompt.KeyboardKeyCode       = Enum.KeyCode.E
+	prompt.HoldDuration          = holdTime or 0.25
 	prompt.MaxActivationDistance = 8
-	prompt.RequiresLineOfSight = false
-	prompt.Parent = parent
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent                = parent
 	return prompt
 end
 
-local function spawnIngredientAt(worldX, worldZ, surfaceTop, ingData, surfacePart)
-	local part = Instance.new("Part")
-	part.Name     = ingData.n
-	part.Size     = Vector3.new(2,2,2)
-	-- Place centre of ingredient 1 stud above surface top
-	part.Position = Vector3.new(worldX, surfaceTop + 1, worldZ)
-	part.Anchored    = true
-	part.CanCollide  = true
-	part.CastShadow  = false
-	part.Color       = RARITY_COLORS[ingData.r] or Color3.fromRGB(200,200,200)
-	part.Material    = Enum.Material.SmoothPlastic
+-- ============================================================
+-- SPAWN ONE INGREDIENT PART
+-- ============================================================
 
-	part:SetAttribute("IngredientName", ingData.n)
-	part:SetAttribute("Rarity",         ingData.r)
-	part:SetAttribute("Weight",         ingData.wt)
-	part:SetAttribute("Cost",           ingData.cost)
-	part:SetAttribute("Emoji",          ingData.emoji)
-	part:SetAttribute("Allergy",        ingData.allergy)
-	part:SetAttribute("Zone",           ingData.zone)
+local LiveFolder   = nil
+local respawnQueue = {}
+
+local function spawnIngredientAt(worldX, worldZ, surfaceTop, ing, surfacePart)
+	if not LiveFolder then return end
+
+	local color = RARITY_COLORS[ing.rarity] or Color3.fromRGB(200, 200, 200)
+
+	local part = Instance.new("Part")
+	part.Name     = ing.name
+	part.Size     = Vector3.new(2, 2, 2)
+	part.Position = Vector3.new(worldX, surfaceTop + 1, worldZ)
+	part.Anchored = true
+	part.CanCollide     = true
+	part.CastShadow     = false
+	part.Color          = color
+	part.Material       = Enum.Material.SmoothPlastic
+
+	-- Attributes used by IngredientPickupServer
 	part:SetAttribute("IsIngredient",   true)
+	part:SetAttribute("IngredientName", ing.name)
+	part:SetAttribute("Rarity",         ing.rarity)
+	part:SetAttribute("Weight",         ing.wt)
+	part:SetAttribute("Cost",           ing.cost)
+	part:SetAttribute("Emoji",          ing.emoji or "🍽")
+	part:SetAttribute("Allergy",        ing.allergy)
+	part:SetAttribute("Zone",           ing.zone)
 	part:SetAttribute("IsPaid",         false)
 	part:SetAttribute("IsTrash",        false)
+	part:SetAttribute("CLValue",        ing.cl)   -- raw CL for combat system
 
-	createBillboard(part, ingData.emoji, ingData.n,
-		RARITY_COLORS[ingData.r] or Color3.fromRGB(200,200,200))
-	createPrompt(part, ingData.emoji, ingData.n, 0.25)
-
+	createBillboard(part, ing)
+	createPrompt(part, ing, 0.25)
 	part.Parent = LiveFolder
 
-	-- Schedule respawn
-	local rt = RESPAWN_TIMES[ingData.r] or 30
-	if rt ~= math.huge and surfacePart then
+	-- Queue respawn (Legendary = 0, never respawns)
+	local rt = RESPAWN_TIMES[ing.rarity] or 0
+	if rt > 0 and surfacePart then
 		table.insert(respawnQueue, {
-			ingData     = ingData,
-			worldX      = worldX,
-			worldZ      = worldZ,
-			surfaceTop  = surfaceTop,
+			ing        = ing,
+			worldX     = worldX,
+			worldZ     = worldZ,
+			surfaceTop = surfaceTop,
 			surfacePart = surfacePart,
-			respawnAt   = os.clock() + rt,
+			respawnAt  = os.clock() + rt,
 		})
 	end
 
@@ -394,145 +393,177 @@ local function spawnIngredientAt(worldX, worldZ, surfaceTop, ingData, surfacePar
 end
 
 -- ============================================================
--- SPAWN ONE LOOT ITEM (cash or napkin)
+-- SPAWN OUTDOOR LOOT (cash, napkins)
 -- ============================================================
-local function spawnLootAt(worldX, worldZ, y)
-	-- Pick a random loot type (weighted by rarity)
-	local lootPool = LOOT_TYPES
+
+-- Loot pool built inline — these aren't ingredients, just economy items
+local function pickLoot()
+	local lootTypes = {
+		{ name="Loose Cash",  emoji="💵", rarity="Common",    type="cash",   value=math.random(1,3),   color=Color3.fromRGB(75,205,60)  },
+		{ name="Cash Stack",  emoji="💵", rarity="Uncommon",  type="cash",   value=math.random(10,15), color=Color3.fromRGB(55,165,45)  },
+		{ name="Big Stack",   emoji="💵", rarity="Rare",      type="cash",   value=math.random(18,25), color=Color3.fromRGB(239,159,39) },
+		{ name="Napkin",      emoji="🧻", rarity="UltraRare", type="napkin", value=1,                  color=Color3.fromRGB(100,180,255) },
+	}
 	local total = 0
 	local weighted = {}
-	for _, lt in ipairs(lootPool) do
-		local w = LOOT_RARITY_WEIGHTS[lt.rarity] or 1
+	for _, lt in ipairs(lootTypes) do
+		local w = LOOT_WEIGHTS[lt.rarity] or 1
 		total = total + w
-		table.insert(weighted, {item=lt, cumulative=total})
+		table.insert(weighted, { lt = lt, cumulative = total })
 	end
 	local roll = math.random() * total
-	local loot = lootPool[1]
 	for _, entry in ipairs(weighted) do
-		if roll <= entry.cumulative then
-			loot = entry.item
-			break
-		end
+		if roll <= entry.cumulative then return entry.lt end
 	end
+	return lootTypes[1]
+end
+
+local function spawnLootAt(worldX, worldZ, y)
+	if not LiveFolder then return end
+
+	local loot = pickLoot()
 
 	local part = Instance.new("Part")
-	part.Name     = loot.n
-	part.Size     = Vector3.new(1.5,0.3,1.5)
+	part.Name     = loot.name
+	part.Size     = Vector3.new(1.5, 0.3, 1.5)
 	part.Position = Vector3.new(worldX, y, worldZ)
-	part.Anchored    = true
-	part.CanCollide  = true
-	part.CastShadow  = false
-	part.Color       = loot.color
-	part.Material    = Enum.Material.SmoothPlastic
+	part.Anchored   = true
+	part.CanCollide = true
+	part.CastShadow = false
+	part.Color      = loot.color
+	part.Material   = Enum.Material.SmoothPlastic
 
-	part:SetAttribute("IsLoot",     true)
-	part:SetAttribute("LootType",   loot.type)
-	part:SetAttribute("LootName",   loot.n)
-	part:SetAttribute("LootValue",  loot.value)
-	part:SetAttribute("LootEmoji",  loot.emoji)
-	part:SetAttribute("Rarity",     loot.rarity)
+	part:SetAttribute("IsLoot",    true)
+	part:SetAttribute("LootType",  loot.type)
+	part:SetAttribute("LootName",  loot.name)
+	part:SetAttribute("LootValue", loot.value)
+	part:SetAttribute("LootEmoji", loot.emoji)
+	part:SetAttribute("Rarity",    loot.rarity)
 
-	-- Flat billboard showing value
+	-- Billboard
 	local bb = Instance.new("BillboardGui")
-	bb.Size        = UDim2.new(0,60,0,50)
-	bb.StudsOffset = Vector3.new(0,2,0)
+	bb.Size        = UDim2.new(0, 60, 0, 50)
+	bb.StudsOffset = Vector3.new(0, 2, 0)
 	bb.AlwaysOnTop = false
-	bb.Parent = part
+	bb.Parent      = part
 
 	local emojiL = Instance.new("TextLabel")
-	emojiL.Size = UDim2.new(1,0,0.5,0)
+	emojiL.Size                   = UDim2.new(1, 0, 0.5, 0)
 	emojiL.BackgroundTransparency = 1
-	emojiL.Text = loot.emoji
-	emojiL.TextScaled = true
-	emojiL.Font = Enum.Font.GothamBold
-	emojiL.Parent = bb
+	emojiL.Text                   = loot.emoji
+	emojiL.TextScaled             = true
+	emojiL.Font                   = Enum.Font.GothamBold
+	emojiL.Parent                 = bb
 
 	local valL = Instance.new("TextLabel")
-	valL.Size = UDim2.new(1,0,0.5,0)
-	valL.Position = UDim2.new(0,0,0.5,0)
+	valL.Size                   = UDim2.new(1, 0, 0.5, 0)
+	valL.Position               = UDim2.new(0, 0, 0.5, 0)
 	valL.BackgroundTransparency = 1
-	valL.Text = loot.type=="cash"
-		and "$"..tostring(loot.value)
-		or  "Napkin"
-	valL.TextScaled = true
-	valL.Font = Enum.Font.GothamBold
-	valL.TextColor3 = loot.color
+	valL.Text                   = loot.type == "cash"
+		and "$" .. tostring(loot.value)
+		or loot.name
+	valL.TextScaled             = true
+	valL.Font                   = Enum.Font.GothamBold
+	valL.TextColor3             = loot.color
 	valL.TextStrokeTransparency = 0.4
-	valL.TextStrokeColor3 = Color3.fromRGB(0,0,0)
-	valL.Parent = bb
+	valL.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+	valL.Parent                 = bb
 
-	createPrompt(part, loot.emoji, loot.n..(loot.type=="cash" and " ($"..loot.value..")" or ""), 0.2)
+	-- Prompt
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText            = "Pick up"
+	prompt.ObjectText            = loot.emoji .. " " .. loot.name
+		.. (loot.type == "cash" and " ($" .. loot.value .. ")" or "")
+	prompt.KeyboardKeyCode       = Enum.KeyCode.E
+	prompt.HoldDuration          = 0.2
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent                = part
 
 	part.Parent = LiveFolder
 
-	-- Loot respawns on a 45 second timer
-	local respawnDelay = loot.rarity=="Common" and 45
-		or loot.rarity=="Uncommon" and 60
-		or loot.rarity=="Rare" and 90
-		or math.huge
-	if respawnDelay ~= math.huge then
+	-- Loot respawn (napkins/bracelets: never)
+	local rt = loot.type == "cash"
+		and (loot.rarity == "Common" and C.Respawn.Cash_Small or C.Respawn.Cash_Stack)
+		or 0  -- napkins never respawn
+	if rt > 0 then
 		table.insert(respawnQueue, {
-			isLoot    = true,
-			worldX    = worldX,
-			worldZ    = worldZ,
-			y         = y,
-			respawnAt = os.clock() + respawnDelay,
+			isLoot = true,
+			worldX = worldX, worldZ = worldZ, y = y,
+			respawnAt = os.clock() + rt,
 		})
 	end
 end
 
 -- ============================================================
--- INITIAL SPAWN — ingredients on surfaces
+-- MAIN SPAWN — ingredients across all zones
 -- ============================================================
-local function spawnIngredients()
+
+local function spawnAllIngredients(pools)
+	local totalSpawned = 0
+
 	for zoneName, surfaces in pairs(ZONE_SURFACES) do
-		local pool = ZONE_POOLS[zoneName]
-		if not pool or #pool == 0 then continue end
+		local pool = pools[zoneName]
+		if not pool or #pool == 0 then
+			warn("[IngredientSpawner] No ingredient pool for zone: " .. zoneName)
+			continue
+		end
 
 		for _, surface in ipairs(surfaces) do
 			local folder = getFolder(surface.folder)
 			if not folder then
-				warn("IngredientSpawner: folder not found: "..surface.folder)
+				warn(string.format("[IngredientSpawner] Folder not found: %s", surface.folder))
 				continue
 			end
+
 			local part = folder:FindFirstChild(surface.name)
 			if not part then
-				warn("IngredientSpawner: part not found: "
-					..surface.name.." in "..surface.folder)
+				warn(string.format("[IngredientSpawner] Part not found: %s in %s",
+					surface.name, surface.folder))
 				continue
 			end
 
 			local points = getSurfacePoints(part, surface.maxItems)
 			for _, pt in ipairs(points) do
-				local ingData = weightedRandom(pool, RARITY_WEIGHTS)
-				spawnIngredientAt(pt.X, pt.Z,
-					surface.surfaceTop, ingData, part)
+				local ing = weightedPick(pool)
+				spawnIngredientAt(pt.X, pt.Z, surface.surfaceTop, ing, part)
+				totalSpawned = totalSpawned + 1
 			end
 		end
 	end
+
+	return totalSpawned
 end
 
 -- ============================================================
--- INITIAL SPAWN — loot outside
+-- MAIN SPAWN — outdoor loot
 -- ============================================================
-local function spawnOutsideLoot()
-	for _, zone in ipairs(LOOT_SPAWN_ZONES) do
-		for i = 1, zone.count do
-			local rx = zone.minX + math.random()*(zone.maxX - zone.minX)
-			local rz = zone.minZ + math.random()*(zone.maxZ - zone.minZ)
+
+local function spawnAllLoot()
+	local totalSpawned = 0
+	for _, zone in ipairs(LOOT_ZONES) do
+		for _ = 1, zone.count do
+			local rx = zone.minX + math.random() * (zone.maxX - zone.minX)
+			local rz = zone.minZ + math.random() * (zone.maxZ - zone.minZ)
 			spawnLootAt(rx, rz, zone.y)
+			totalSpawned = totalSpawned + 1
 		end
 	end
+	return totalSpawned
 end
 
 -- ============================================================
 -- RESPAWN LOOP
 -- ============================================================
+
 task.spawn(function()
 	while true do
 		task.wait(1)
+		if not LiveFolder then continue end
+
 		local now = os.clock()
 		local remaining = {}
+
 		for _, entry in ipairs(respawnQueue) do
 			if now >= entry.respawnAt then
 				if entry.isLoot then
@@ -540,13 +571,14 @@ task.spawn(function()
 				elseif entry.surfacePart and entry.surfacePart.Parent then
 					spawnIngredientAt(
 						entry.worldX, entry.worldZ,
-						entry.surfaceTop, entry.ingData,
+						entry.surfaceTop, entry.ing,
 						entry.surfacePart)
 				end
 			else
 				table.insert(remaining, entry)
 			end
 		end
+
 		respawnQueue = remaining
 	end
 end)
@@ -554,31 +586,54 @@ end)
 -- ============================================================
 -- PUBLIC API
 -- ============================================================
+
 local IngredientSpawner = {}
 
 function IngredientSpawner.StartGatheringPhase()
+	-- Set up or clear the live folder
 	LiveFolder = workspace:FindFirstChild(LIVE_FOLDER_NAME)
 	if not LiveFolder then
 		LiveFolder = Instance.new("Folder")
-		LiveFolder.Name = LIVE_FOLDER_NAME
+		LiveFolder.Name   = LIVE_FOLDER_NAME
 		LiveFolder.Parent = workspace
 	else
 		LiveFolder:ClearAllChildren()
 	end
+
 	respawnQueue = {}
 	math.randomseed(os.clock())
 
-	spawnIngredients()
-	spawnOutsideLoot()
+	-- Build ingredient pools fresh each match from ChompersData
+	local pools = buildPools()
 
-	print("IngredientSpawner: "
-		..#LiveFolder:GetChildren()
-		.." items spawned (ingredients + loot)!")
+	local ingCount  = spawnAllIngredients(pools)
+	local lootCount = spawnAllLoot()
+
+	print(string.format(
+		"[IngredientSpawner] Gathering started — %d ingredients, %d loot items (%d total)",
+		ingCount, lootCount, ingCount + lootCount))
 end
 
 function IngredientSpawner.ClearAll()
 	if LiveFolder then LiveFolder:ClearAllChildren() end
 	respawnQueue = {}
+end
+
+-- ============================================================
+-- PHASE LISTENER — auto-trigger on Gathering start
+-- ============================================================
+
+if PhaseChangedEvent then
+	PhaseChangedEvent.Event:Connect(function(newPhase)
+		if newPhase == "Gathering" then
+			IngredientSpawner.StartGatheringPhase()
+		elseif newPhase == "Prelobby" then
+			-- Clean up between matches
+			IngredientSpawner.ClearAll()
+		end
+	end)
+else
+	warn("[IngredientSpawner] PhaseChangedEvent not found — call StartGatheringPhase() manually")
 end
 
 return IngredientSpawner
