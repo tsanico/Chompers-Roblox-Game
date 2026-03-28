@@ -400,7 +400,7 @@ local ZONE_COLS = {
 
 local function worldToFrac(wx, wz)
 	return math.clamp((300 - wx) / 600, 0, 1),
-		   math.clamp((wz + 200) / 400, 0, 1)
+	math.clamp((wz + 200) / 400, 0, 1)
 end
 
 -- Draw zone blocks
