@@ -57,7 +57,7 @@ local ALLERGY_TYPES = {
 }
 
 -- ── State ─────────────────────────────────────────────────────
-local Selections    = {cart="basket", allergy=nil, favourite=nil, confirmed=false}
+local Selections    = {cart="basket", allergy=nil, favourite=nil, confirmed=false, equippedTitle=nil}
 local isOpen        = false
 local prefsLocked   = false   -- true ONLY during Gathering/Cooking/FoodFight
 local activeTab     = "PREFERENCES"
@@ -108,37 +108,54 @@ local function updateBillboard()
 	if not head then return end
 	local ex = head:FindFirstChild("ChompersBillboard")
 	if ex then ex:Destroy() end
-	if not Selections.allergy and not Selections.favourite then return end
+	-- Only show billboard if at least one thing to display
+	if not Selections.equippedTitle
+	and not Selections.favourite
+	and not Selections.allergy then return end
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name="ChompersBillboard"; bb.ResetOnSpawn=false
-	bb.Size=UDim2.new(0,280,0,60); bb.StudsOffset=Vector3.new(0,3.2,0)
+	bb.Size=UDim2.new(0,280,0,80); bb.StudsOffset=Vector3.new(0,3.2,0)
 	bb.AlwaysOnTop=false; bb.Parent=head
 	local ll=Instance.new("UIListLayout",bb)
-	ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,2)
+	ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,1)
 	ll.HorizontalAlignment=Enum.HorizontalAlignment.Center
 
+	-- 1: Title (below Roblox username)
+	if Selections.equippedTitle then
+		local l=Instance.new("TextLabel",bb)
+		l.Size=UDim2.new(1,0,0,22); l.BackgroundTransparency=1
+		l.Text=Selections.equippedTitle
+		l.Font=Enum.Font.GothamBlack; l.TextSize=13
+		l.TextColor3=Color3.fromRGB(200,170,255)
+		l.TextStrokeTransparency=0.3; l.TextStrokeColor3=Color3.new(0,0,0)
+		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=1
+	end
+
+	-- 2: Favourite Food
+	if Selections.favourite then
+		local l=Instance.new("TextLabel",bb)
+		l.Size=UDim2.new(1,0,0,22); l.BackgroundTransparency=1
+		l.Text="⭐ "..Selections.favourite
+		l.Font=Enum.Font.GothamBold; l.TextSize=14
+		l.TextColor3=C.gold
+		l.TextStrokeTransparency=0.3; l.TextStrokeColor3=Color3.new(0,0,0)
+		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=2
+	end
+
+	-- 3: Allergy
 	if Selections.allergy then
 		local col=Color3.fromRGB(226,75,74)
 		for _,a in ipairs(ALLERGY_TYPES) do
 			if a.name==Selections.allergy then col=a.color; break end
 		end
 		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,28); l.BackgroundTransparency=1
+		l.Size=UDim2.new(1,0,0,22); l.BackgroundTransparency=1
 		l.Text="⚠ Allergic to "..Selections.allergy
-		l.Font=Enum.Font.GothamBold; l.TextSize=15
-		l.TextColor3=col; l.TextStrokeTransparency=0.3
-		l.TextStrokeColor3=Color3.new(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=1
-	end
-	if Selections.favourite then
-		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,28); l.BackgroundTransparency=1
-		l.Text="⭐ Loves "..Selections.favourite
-		l.Font=Enum.Font.GothamBold; l.TextSize=15
-		l.TextColor3=C.gold; l.TextStrokeTransparency=0.3
-		l.TextStrokeColor3=Color3.new(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=2
+		l.Font=Enum.Font.GothamBold; l.TextSize=14
+		l.TextColor3=col
+		l.TextStrokeTransparency=0.3; l.TextStrokeColor3=Color3.new(0,0,0)
+		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=3
 	end
 end
 
@@ -235,6 +252,7 @@ local TABS = {
 	{id="PREFERENCES", label="😋 Preferences",  color=Color3.fromRGB(46,140,60),    order=3},
 	{id="ACCOLADES",   label="🏅 Accolades",    color=Color3.fromRGB(180,140,50),   order=4},
 	{id="MATCH",       label="📋 Match",        color=Color3.fromRGB(50,70,100),    order=5},
+	{id="TITLES",      label="🏆 Titles",       color=Color3.fromRGB(130,60,200),   order=6},
 }
 
 local function switchTab(tabId)
@@ -294,10 +312,10 @@ end)
 for _, t in ipairs(TABS) do
 	local btn=Instance.new("TextButton",TabBar)
 	btn.Name=t.id.."Tab"; btn.LayoutOrder=t.order
-	btn.Size=UDim2.new(0.2,-2,0,TAB_H-4)
+	btn.Size=UDim2.new(1/6,-2,0,TAB_H-4)
 	btn.BackgroundColor3=Color3.fromRGB(30,28,44)
 	btn.BorderSizePixel=0; btn.Font=Enum.Font.GothamBold
-	btn.TextSize=13; btn.TextColor3=Color3.fromRGB(105,100,135)
+	btn.TextSize=11; btn.TextColor3=Color3.fromRGB(105,100,135)
 	btn.Text=t.label; btn.AutoButtonColor=false; btn.ZIndex=11
 	corner(btn,8); tabButtons[t.id]=btn
 	local tId=t.id
@@ -581,30 +599,26 @@ div.BackgroundColor3=Color3.fromRGB(40,38,54); div.BorderSizePixel=0
 
 local alHY=118; local descY=alHY+30; local selY=descY+56; local scrollY=selY+24
 
-mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,22,Color3.fromRGB(226,75,74),
-	Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
-local aDesc=mkLabel(PrefPanel,
-	"Your kryptonite. Get hit by your allergen → ×1.75 CL damage. Everything else → ×0.75. Egg counts as Dairy.",
-	Enum.Font.Gotham,15,Color3.fromRGB(215,185,185),Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,descY),UDim2.new(0.5,-PAD-4,0,54))
-aDesc.TextWrapped=true; aDesc.LineHeight=1.4
-
 mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBold,22,C.gold,
-	Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
+	Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
 local fDesc=mkLabel(PrefPanel,
 	"Throw your fav → +min(Base×50%, 30) CL bonus. Self-consume → ×1.5 buff duration. Enemy hits you with it → ×2 FL spike.",
 	Enum.Font.Gotham,15,Color3.fromRGB(215,205,175),Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,descY),UDim2.new(0.5,-PAD-4,0,54))
+	UDim2.new(0,PAD,0,descY),UDim2.new(0.5,-PAD-4,0,54))
 fDesc.TextWrapped=true; fDesc.LineHeight=1.4
 
-local AllergySelected=mkLabel(PrefPanel,"None selected",
-	Enum.Font.GothamMedium,14,Color3.fromRGB(210,78,78),Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,20))
+mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,22,Color3.fromRGB(226,75,74),
+	Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
+local aDesc=mkLabel(PrefPanel,
+	"Your kryptonite. Get hit by your allergen → ×1.75 CL damage. Everything else → ×0.75. Egg counts as Dairy.",
+	Enum.Font.Gotham,15,Color3.fromRGB(215,185,185),Enum.TextXAlignment.Left,
+	UDim2.new(0.5,PAD/2,0,descY),UDim2.new(0.5,-PAD-4,0,54))
+aDesc.TextWrapped=true; aDesc.LineHeight=1.4
 
--- FavSelected — CookbookBuilder finds this by Name
+-- FavSelected on left, AllergySelected on right
 local FavSelected=mkLabel(PrefPanel,"None selected",
 	Enum.Font.GothamMedium,14,Color3.fromRGB(210,148,42),Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,20))
+	UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,20))
 FavSelected.Name="FavSelected"
 
 -- When CookbookBuilder updates FavSelected, sync to Selections and refresh billboard
@@ -618,12 +632,17 @@ FavSelected:GetPropertyChangedSignal("Text"):Connect(function()
 	updateBillboard()
 end)
 
-local AllergyScroll=mkScroll(PrefPanel,"AllergyScroll",
-	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0,PAD,0,scrollY))
+local AllergySelected=mkLabel(PrefPanel,"None selected",
+	Enum.Font.GothamMedium,14,Color3.fromRGB(210,78,78),Enum.TextXAlignment.Left,
+	UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,20))
 
--- FavouriteScroll — CookbookBuilder populates this
+-- FavouriteScroll on LEFT — CookbookBuilder populates this
 local FavouriteScroll=mkScroll(PrefPanel,"FavouriteScroll",
-	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0.5,PAD/2,0,scrollY),C.gold)
+	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0,PAD,0,scrollY),C.gold)
+
+-- AllergyScroll on RIGHT
+local AllergyScroll=mkScroll(PrefPanel,"AllergyScroll",
+	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0.5,PAD/2,0,scrollY))
 
 local ConfirmBtn=Instance.new("TextButton",PrefPanel)
 ConfirmBtn.Name="ConfirmButton"
@@ -913,7 +932,139 @@ switchMatchSub("SCOREBOARD")
 -- ============================================================
 
 -- ============================================================
--- PHASE-BASED AUTO-TAB ROUTING + PREFERENCES LOCKING
+-- TITLES TAB — 24 Honorifics (medal-purchasable titles)
+-- ============================================================
+
+local TitlesPanel=Instance.new("Frame",ContentArea)
+TitlesPanel.Name="TitlesPanel"; TitlesPanel.Size=UDim2.new(1,0,1,0)
+TitlesPanel.BackgroundTransparency=1; TitlesPanel.Visible=false; TitlesPanel.ZIndex=9
+tabPanels["TITLES"]=TitlesPanel
+
+-- Header
+mkLabel(TitlesPanel,
+	"🏆 Titles — equipped beneath your username. Unlock by meeting conditions, then purchase.",
+	Enum.Font.GothamBold,14,C.dim,Enum.TextXAlignment.Center,
+	UDim2.new(0,12,0,4),UDim2.new(1,-24,0,22)).TextWrapped=true
+
+-- Currently equipped display
+local equippedLabel=mkLabel(TitlesPanel,"Equipped: (none)",
+	Enum.Font.GothamBlack,15,Color3.fromRGB(200,170,255),
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,12,0,26),UDim2.new(1,-24,0,18))
+equippedLabel.Name="EquippedLabel"
+
+local titlesScroll=Instance.new("ScrollingFrame",TitlesPanel)
+titlesScroll.Size=UDim2.new(1,-24,1,-52); titlesScroll.Position=UDim2.new(0,12,0,50)
+titlesScroll.BackgroundTransparency=1; titlesScroll.BorderSizePixel=0
+titlesScroll.ScrollBarThickness=6
+titlesScroll.ScrollBarImageColor3=Color3.fromRGB(130,60,200)
+titlesScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+titlesScroll.CanvasSize=UDim2.new(0,0,0,0); titlesScroll.ZIndex=10
+local tLL=Instance.new("UIListLayout",titlesScroll)
+tLL.SortOrder=Enum.SortOrder.LayoutOrder; tLL.Padding=UDim.new(0,5)
+local tPad=Instance.new("UIPadding",titlesScroll)
+tPad.PaddingTop=UDim.new(0,4);tPad.PaddingBottom=UDim.new(0,8)
+
+local HONORIFICS = {
+	{n=1,  title='👨‍🍳 "Master Chef"',      unlock="Cook 50 unique recipes lifetime",                      cost=100, locked=true},
+	{n=2,  title='🛡️ "Aisle Survivor"',    unlock="Survive 20 matches without elimination",               cost=80,  locked=true},
+	{n=3,  title='📋 "The Regular"',        unlock="Play 100 matches",                                     cost=75,  locked=true},
+	{n=4,  title='🧼 "Clean Sweep"',        unlock="Win Squeaky Clean accolade 10 times",                  cost=90,  locked=true},
+	{n=5,  title='🔪 "The Butcher"',        unlock="Cause 50 eliminations lifetime",                       cost=120, locked=true},
+	{n=6,  title='🤝 "Loyalty Card"',       unlock="Form 30 alliances lifetime",                           cost=70,  locked=true},
+	{n=7,  title='💰 "Golden Shopper"',     unlock="Purchase $500+ of ingredients in a single match",     cost=110, locked=true},
+	{n=8,  title='💥 "Notorious"',          unlock="Win Chaos Agent accolade 10 times",                    cost=100, locked=true},
+	{n=9,  title='🕊️ "The Diplomat"',      unlock="Win a Together victory 5 times",                       cost=80,  locked=true},
+	{n=10, title='🍽️ "Sous-Chef Royale"',  unlock="Contribute to 100 recipes as Sous-Chef lifetime",     cost=90,  locked=true},
+	{n=11, title='⚡ "Freshest in the Store"',unlock="Win 3 consecutive matches",                          cost=150, locked=true},
+	{n=12, title='📦 "Expired Goods"',      unlock="Be eliminated first in 10 matches",                   cost=40,  locked=true},
+	{n=13, title='🧾 "Five-Star Shopper"',  unlock="Complete 50 full checkouts lifetime",                 cost=85,  locked=true},
+	{n=14, title='🚽 "The Spillage"',       unlock="Cause 25 forced bathroom trips to others",            cost=100, locked=true},
+	{n=15, title='🧺 "Paper or Plastic?"',  unlock="Win 10 matches with basket AND 10 with cart",         cost=60,  locked=true},
+	{n=16, title='🏎️ "Cart Racer"',        unlock="Win 5 matches using the Cart",                        cost=95,  locked=true},
+	{n=17, title='🪙 "Last Receipt"',       unlock="Win a match with $1 or less remaining",               cost=110, locked=true},
+	{n=18, title='🧻 "Napkin Hoarder"',     unlock="Collect 20 napkins from outdoor loot lifetime",       cost=80,  locked=true},
+	{n=19, title='🚫 "The Negotiator"',     unlock="Decline 10 alliance offers lifetime",                 cost=70,  locked=true},
+	{n=20, title='☠️ "Food Poisoning"',     unlock="Eliminate 3 players in a single match",               cost=130, locked=true},
+	{n=21, title='🔁 "Brand Loyalty"',      unlock="Use the same favourite in 20 consecutive matches",    cost=120, locked=true},
+	{n=22, title='🛒 "Checkout Champion"',  unlock="Be first to checkout in 10 matches",                  cost=85,  locked=true},
+	{n=23, title='💣 "Market Mayhem"',      unlock="Deal 500 total CL damage in a single match",          cost=140, locked=true},
+	{n=24, title='🎯 "Smooth Criminal"',    unlock="Win 5 matches as the last alliance member standing",  cost=100, locked=true},
+}
+
+local function equipTitle(honorific)
+	Selections.equippedTitle = honorific.title
+	equippedLabel.Text = "Equipped: "..honorific.title
+	updateBillboard()
+	-- Rebuild list to update button states
+	for _, child in ipairs(titlesScroll:GetChildren()) do
+		if child:IsA("Frame") then
+			local lbl = child:FindFirstChild("TitleLabel")
+			local btn = child:FindFirstChild("EquipBtn")
+			if lbl and btn then
+				local isEquipped = lbl.Text == honorific.title
+				btn.Text = isEquipped and "✓ Equipped" or "Equip"
+				btn.BackgroundColor3 = isEquipped
+					and Color3.fromRGB(30,110,46)
+					or Color3.fromRGB(80,30,30)
+			end
+		end
+	end
+end
+
+for _, h in ipairs(HONORIFICS) do
+	local card=Instance.new("Frame",titlesScroll)
+	card.Size=UDim2.new(1,0,0,72); card.LayoutOrder=h.n
+	card.BackgroundColor3=h.locked
+		and Color3.fromRGB(22,20,34)
+		or Color3.fromRGB(28,26,44)
+	card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
+	local cs=mkStroke(card,1.5,h.locked
+		and Color3.fromRGB(40,38,55)
+		or Color3.fromRGB(130,60,200))
+
+	-- Title name
+	local titleL=mkLabel(card,h.title,
+		Enum.Font.GothamBlack,16,h.locked and C.dim or Color3.fromRGB(200,170,255),
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,12,0,6),UDim2.new(0.7,-4,0,22))
+	titleL.Name="TitleLabel"; titleL.ZIndex=12
+
+	-- Medal cost badge
+	local costBg=Instance.new("Frame",card)
+	costBg.Size=UDim2.new(0,60,0,22); costBg.Position=UDim2.new(1,-72,0,6)
+	costBg.BackgroundColor3=Color3.fromRGB(50,38,10); costBg.BorderSizePixel=0; costBg.ZIndex=12
+	corner(costBg,5)
+	mkLabel(costBg,"🏅 "..h.cost,Enum.Font.GothamBlack,11,C.gold).ZIndex=13
+
+	-- Unlock condition
+	mkLabel(card,h.locked and "🔒 "..h.unlock or "✓ "..h.unlock,
+		Enum.Font.Gotham,12,h.locked and C.dim or C.green,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,12,0,30),UDim2.new(1,-80,0,16)).ZIndex=12
+
+	-- Equip button (placeholder — DataStore not wired yet)
+	local equipBtn=Instance.new("TextButton",card)
+	equipBtn.Name="EquipBtn"
+	equipBtn.Size=UDim2.new(0,72,0,24)
+	equipBtn.AnchorPoint=Vector2.new(1,1)
+	equipBtn.Position=UDim2.new(1,-8,1,-8)
+	equipBtn.BackgroundColor3=h.locked
+		and Color3.fromRGB(35,33,50)
+		or Color3.fromRGB(80,30,30)
+	equipBtn.BorderSizePixel=0; equipBtn.AutoButtonColor=false
+	equipBtn.Font=Enum.Font.GothamBold; equipBtn.TextSize=12
+	equipBtn.TextColor3=h.locked and C.dim or C.white
+	equipBtn.Text=h.locked and "Locked" or "Equip"
+	equipBtn.ZIndex=13; corner(equipBtn,6)
+
+	if not h.locked then
+		local capH=h
+		equipBtn.MouseButton1Click:Connect(function()
+			equipTitle(capH)
+		end)
+	end
+end
 --
 -- Prelobby   → auto-open to Preferences
 -- Gathering  → 10s buffer for preferences, then lock → open to Cookbook
