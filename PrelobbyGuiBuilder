@@ -239,11 +239,27 @@ local TABS = {
 
 local function switchTab(tabId)
 	activeTab = tabId
+	-- Track registered panels so we know what CookbookBuilder added
+	local registered = {}
+	for _, p in pairs(tabPanels) do registered[p] = true end
+
 	for _, child in ipairs(ContentArea:GetChildren()) do
-		if child:IsA("Frame") then child.Visible=false end
+		if child:IsA("Frame") then
+			if registered[child] then
+				-- Our panel: show only if it's the selected one
+				child.Visible = (child == tabPanels[tabId])
+			else
+				-- Unknown frame (CookbookBuilder added to ContentArea directly)
+				-- Show it when we're on COOKBOOK or ACCOLADES
+				child.Visible = (tabId == "COOKBOOK" or tabId == "ACCOLADES")
+			end
+		end
 	end
+	-- Always show our registered panel too (covers CookPanel / AccoladesPanel
+	-- even if CookbookBuilder doesn't use them)
 	local pnl = tabPanels[tabId]
-	if pnl then pnl.Visible=true end
+	if pnl then pnl.Visible = true end
+
 	for _, t in ipairs(TABS) do
 		local btn=tabButtons[t.id]; if not btn then continue end
 		if t.id==tabId then
@@ -266,23 +282,7 @@ for _, t in ipairs(TABS) do
 	btn.Text=t.label; btn.AutoButtonColor=false; btn.ZIndex=11
 	corner(btn,8); tabButtons[t.id]=btn
 	local tId=t.id
-	btn.MouseButton1Click:Connect(function()
-		if activeTab=="PREFERENCES" and tId~="PREFERENCES"
-		and not prefsLocked and not Selections.confirmed then
-			local missing={}
-			if not Selections.allergy then table.insert(missing,"allergy") end
-			if not Selections.favourite then table.insert(missing,"favourite food") end
-			if #missing>0 then
-				showWarnDialog(
-					"You haven't disclosed your "..table.concat(missing," or ").."!",
-					function() switchTab(tId) end,  -- Yes = switch anyway
-					nil                              -- No = stay on Preferences
-				)
-				return
-			end
-		end
-		switchTab(tId)
-	end)
+	btn.MouseButton1Click:Connect(function() switchTab(tId) end)
 end
 
 -- CookbookBuilder placeholder panels
@@ -294,67 +294,6 @@ local function makePlaceholder(name,tabId)
 end
 makePlaceholder("CookPanel","COOKBOOK")
 makePlaceholder("AccoladesPanel","ACCOLADES")
-
--- ============================================================
--- WARNING DIALOG (incomplete preferences on close/tab switch)
--- ============================================================
-
-local WarnDialog = Instance.new("Frame", Overlay)
-WarnDialog.Name="WarnDialog"
-WarnDialog.Size=UDim2.new(0,520,0,230)
-WarnDialog.AnchorPoint=Vector2.new(0.5,0.5)
-WarnDialog.Position=UDim2.new(0.5,0,0.5,0)
-WarnDialog.BackgroundColor3=Color3.fromRGB(24,22,36)
-WarnDialog.BorderSizePixel=0; WarnDialog.ZIndex=20; WarnDialog.Visible=false
-corner(WarnDialog,16)
-local wdStroke=mkStroke(WarnDialog,2,C.red)
-
-local warnIcon=mkLabel(WarnDialog,"⚠",Enum.Font.GothamBlack,42,C.gold,
-	Enum.TextXAlignment.Center,UDim2.new(0,0,0,14),UDim2.new(1,0,0,48))
-warnIcon.ZIndex=21
-
-local warnTitle=mkLabel(WarnDialog,"Hold on!",Enum.Font.GothamBlack,24,C.red,
-	Enum.TextXAlignment.Center,UDim2.new(0,0,0,16),UDim2.new(1,0,0,34))
-warnTitle.ZIndex=21
-
-local warnBody=mkLabel(WarnDialog,"",Enum.Font.Gotham,17,
-	Color3.fromRGB(210,208,225),Enum.TextXAlignment.Center,
-	UDim2.new(0,16,0,56),UDim2.new(1,-32,0,60))
-warnBody.TextWrapped=true; warnBody.ZIndex=21; warnBody.Name="WarnBody"
-
-local warnYes=Instance.new("TextButton",WarnDialog)
-warnYes.Size=UDim2.new(0.44,0,0,46); warnYes.Position=UDim2.new(0.04,0,1,-58)
-warnYes.BackgroundColor3=Color3.fromRGB(180,35,35); warnYes.BorderSizePixel=0
-warnYes.AutoButtonColor=false; warnYes.Font=Enum.Font.GothamBold; warnYes.TextSize=15
-warnYes.TextColor3=C.white; warnYes.Text="Close anyway"; warnYes.ZIndex=22
-corner(warnYes,10)
-
-local warnNo=Instance.new("TextButton",WarnDialog)
-warnNo.Size=UDim2.new(0.44,0,0,46); warnNo.Position=UDim2.new(0.52,0,1,-58)
-warnNo.BackgroundColor3=Color3.fromRGB(46,165,66); warnNo.BorderSizePixel=0
-warnNo.AutoButtonColor=false; warnNo.Font=Enum.Font.GothamBold; warnNo.TextSize=15
-warnNo.TextColor3=Color3.fromRGB(220,255,224); warnNo.Text="Set my preferences"; warnNo.ZIndex=22
-corner(warnNo,10)
-
-local warnOnConfirm = nil  -- callback for "close anyway"
-local warnOnCancel  = nil  -- callback for "set my preferences"
-
-local function showWarnDialog(message, onConfirm, onCancel)
-	warnBody.Text = message.."\n\nAre you sure?"
-	warnOnConfirm = onConfirm
-	warnOnCancel  = onCancel
-	WarnDialog.Visible = true
-end
-
-warnYes.MouseButton1Click:Connect(function()
-	WarnDialog.Visible=false
-	if warnOnConfirm then warnOnConfirm(); warnOnConfirm=nil end
-end)
-warnNo.MouseButton1Click:Connect(function()
-	WarnDialog.Visible=false
-	if warnOnCancel then warnOnCancel(); warnOnCancel=nil end
-	switchTab("PREFERENCES")
-end)
 
 -- ============================================================
 -- OPEN / CLOSE
@@ -383,22 +322,7 @@ local function openGuide(tabId)
 	switchTab(tabId or activeTab or "RULES")
 end
 
-CloseBtn.MouseButton1Click:Connect(function()
-	if not prefsLocked and not Selections.confirmed then
-		local missing = {}
-		if not Selections.allergy then table.insert(missing, "allergy") end
-		if not Selections.favourite then table.insert(missing, "favourite food") end
-		if #missing > 0 then
-			showWarnDialog(
-				"You haven't disclosed your "..table.concat(missing," or ").."!",
-				closeGuide,  -- Yes = close anyway
-				nil          -- No = go to Preferences (handled in warnNo)
-			)
-			return
-		end
-	end
-	closeGuide()
-end)
+CloseBtn.MouseButton1Click:Connect(closeGuide)
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.KeyCode==Enum.KeyCode.Escape and isOpen then closeGuide() end
@@ -957,32 +881,91 @@ switchMatchSub("SCOREBOARD")
 -- Unlock during: Prelobby, EndGame, Accolades
 -- ============================================================
 
+-- ============================================================
+-- PHASE-BASED AUTO-TAB ROUTING + PREFERENCES LOCKING
+--
+-- Prelobby   → auto-open to Preferences
+-- Gathering  → 10s buffer for preferences, then lock → open to Cookbook
+-- Cooking    → auto-open to Cookbook (if clicked)
+-- FoodFight  → auto-open to Match → Scoreboard
+-- EndGame /
+-- Accolades  → auto-open to Accolades
+-- ============================================================
+
+local currentPhase    = "Prelobby"
+local prefBufferTimer = nil   -- task handle for the 10s grace period
+
+-- Which tab the guide defaults to based on phase
+local function defaultTabForPhase(phase)
+	if phase == "Prelobby"                           then return "PREFERENCES" end
+	if phase == "Gathering" or phase == "Cooking"
+	or phase == "CookingGrace"                       then return "COOKBOOK" end
+	if phase == "FoodFight"                          then return "MATCH" end
+	if phase == "EndGame" or phase == "Accolades"   then return "ACCOLADES" end
+	return activeTab
+end
+
+-- Override openGuide so it always routes to the right tab for the current phase
+local _rawOpen = openGuide
+_G.Chompers.OpenStoreGuide = function(tabId)
+	_rawOpen(tabId or defaultTabForPhase(currentPhase))
+end
+openGuide = _G.Chompers.OpenStoreGuide   -- keep local reference in sync
+
 local PhaseRemote = Remotes and Remotes:FindFirstChild("PhaseChanged")
 if PhaseRemote then
 	PhaseRemote.OnClientEvent:Connect(function(phase)
+		currentPhase = phase
+
 		local lockPhases = {Gathering=true, Cooking=true, CookingGrace=true, FoodFight=true}
-		if lockPhases[phase] then
+
+		if phase == "Gathering" then
+			-- 10-second preferences buffer before locking
+			if not Selections.confirmed then
+				openGuide("PREFERENCES")
+				-- Cancel any prior buffer
+				if prefBufferTimer then pcall(task.cancel, prefBufferTimer); prefBufferTimer = nil end
+				prefBufferTimer = task.delay(10, function()
+					prefsLocked = true
+					PrefLock.Visible = true
+					if isOpen and activeTab == "PREFERENCES" then
+						switchTab("COOKBOOK")
+					end
+					-- If guide is open on Preferences, switch it
+					if not isOpen then return end
+				end)
+			else
+				prefsLocked = true
+				PrefLock.Visible = true
+			end
+
+		elseif lockPhases[phase] then
+			-- Other lock phases (Cooking, FoodFight) — lock immediately
 			prefsLocked = true
 			PrefLock.Visible = true
-			if isOpen and activeTab=="PREFERENCES" then
-				switchTab("RULES")
+			if isOpen and activeTab == "PREFERENCES" then
+				switchTab(defaultTabForPhase(phase))
 			end
+
 		else
+			-- Prelobby / EndGame / Accolades — unlock
 			prefsLocked = false
 			PrefLock.Visible = false
-			if phase=="Prelobby" then
+			if phase == "Prelobby" then
 				Selections.confirmed = false
 				ConfirmBtn.Text = "✓ Ready to Shop!"
 				ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
-				-- Auto-open Store Guide on Prelobby so players set preferences
 				task.wait(1)
 				if not isOpen then openGuide("PREFERENCES") end
+			elseif phase == "EndGame" or phase == "Accolades" then
+				task.wait(0.5)
+				openGuide("ACCOLADES")
 			end
 		end
 	end)
 end
 
--- Auto-open on first spawn (before phase remote fires)
+-- Auto-open on initial spawn (before first phase fires)
 task.spawn(function()
 	task.wait(1.5)
 	if not isOpen then openGuide("PREFERENCES") end
