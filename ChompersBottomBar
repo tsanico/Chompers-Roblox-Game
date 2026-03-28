@@ -456,7 +456,6 @@ end
 NapkinBtn.MouseButton1Click:Connect(function()
 	if napkinUsing or napkinCooldown > 0 or napkinCount <= 0 then return end
 	napkinUsing = true
-	cdLabel.Text = "Using..."
 	task.wait(2)
 	if napkinUsing then
 		napkinCount    = napkinCount - 1
