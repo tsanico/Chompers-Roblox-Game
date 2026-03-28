@@ -1,1162 +1,1578 @@
 -- ============================================================
--- PrelobbyGuiBuilder — LocalScript
+-- StoreGuide — LocalScript
 -- Location: StarterGui > PrelobbyGui
 --
--- Store Guide is accessible at ALL TIMES.
--- Preferences LOCK only during Gathering / Cooking / FoodFight.
--- Preferences UNLOCK during Prelobby, EndGame, Accolades.
+-- Single source of truth for the entire Store Guide panel.
+-- Replaces PrelobbyGuiBuilder + CookbookBuilder entirely.
 --
--- Tab order: Rules | Cookbook | Preferences | Accolades | Match
---
--- CookbookBuilder hookpoints (do NOT rename):
---   ContentArea (Frame), tabPanels (table),
---   FavSelected (TextLabel), FavouriteScroll (ScrollingFrame)
+-- Tabs: Rules | Cookbook | Preferences | Accolades | Match
+-- Cookbook sub-tabs:   Ingredients | Recipes
+-- Accolades sub-tabs:  Accolades   | Titles
+-- Match sub-tabs:      Scoreboard  | Keybindings | Teams | Settings
 -- ============================================================
 
-local PrelobbyGui = script.Parent
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
 
-local player  = Players.LocalPlayer
-local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local player    = Players.LocalPlayer
+local PrelobbyGui = script.Parent
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local Data      = require(ReplicatedStorage:WaitForChild("ChompersData", 10))
 
 PrelobbyGui.DisplayOrder   = 5
 PrelobbyGui.IgnoreGuiInset = true
 
--- Wait for _G.Chompers stubs
-local waited = 0
-while not (_G.Chompers and _G.Chompers.SetMoney) and waited < 6 do
-	task.wait(0.1); waited = waited + 0.1
+-- Wait for _G.Chompers stubs from ChompersBottomBar
+local t = 0
+while not (_G.Chompers and _G.Chompers.SetMoney) and t < 6 do
+    task.wait(0.1); t = t + 0.1
 end
 
 -- ── Colours ──────────────────────────────────────────────────
 local C = {
-	bg      = Color3.fromRGB(20, 18, 32),
-	bgLight = Color3.fromRGB(28, 26, 42),
-	stroke  = Color3.fromRGB(50, 46, 72),
-	red     = Color3.fromRGB(218, 65, 65),
-	gold    = Color3.fromRGB(239, 159, 39),
-	green   = Color3.fromRGB(70, 195, 85),
-	white   = Color3.fromRGB(245, 242, 255),
-	dim     = Color3.fromRGB(105, 100, 138),
-	money   = Color3.fromRGB(75, 205, 60),
-	ally    = Color3.fromRGB(100, 210, 255),
+    bg      = Color3.fromRGB(18, 16, 28),
+    bgLight = Color3.fromRGB(26, 24, 40),
+    bgCard  = Color3.fromRGB(30, 28, 46),
+    stroke  = Color3.fromRGB(48, 44, 70),
+    red     = Color3.fromRGB(218, 65, 65),
+    gold    = Color3.fromRGB(239, 159, 39),
+    green   = Color3.fromRGB(70, 195, 85),
+    white   = Color3.fromRGB(245, 242, 255),
+    dim     = Color3.fromRGB(105, 100, 138),
+    purple  = Color3.fromRGB(130, 60, 200),
+    title   = Color3.fromRGB(200, 170, 255),
+    ally    = Color3.fromRGB(100, 210, 255),
+    warn    = Color3.fromRGB(230, 80, 60),
 }
 
-local ALLERGY_TYPES = {
-	{name="Dairy",   color=Color3.fromRGB(180,220,255), icon="🥛"},
-	{name="Gluten",  color=Color3.fromRGB(230,190,120), icon="🌾"},
-	{name="Produce", color=Color3.fromRGB(100,210,80),  icon="🥦"},
-	{name="Meat",    color=Color3.fromRGB(220,100,80),  icon="🥩"},
-	{name="Seafood", color=Color3.fromRGB(80,160,230),  icon="🦐"},
-	{name="Nuts",    color=Color3.fromRGB(180,130,70),  icon="🥜"},
-	{name="Spicy",   color=Color3.fromRGB(240,90,50),   icon="🌶️"},
-	{name="Soy",     color=Color3.fromRGB(210,185,120), icon="🧃"},
+local RARITY_COL = {
+    Common    = Color3.fromRGB(80, 78, 100),
+    Uncommon  = Color3.fromRGB(50, 140, 60),
+    Rare      = Color3.fromRGB(50, 100, 200),
+    UltraRare = Color3.fromRGB(130, 60, 200),
+    Legendary = Color3.fromRGB(200, 140, 30),
 }
+local RARITY_BG = {
+    Common    = Color3.fromRGB(30, 28, 46),
+    Uncommon  = Color3.fromRGB(18, 36, 20),
+    Rare      = Color3.fromRGB(14, 22, 46),
+    UltraRare = Color3.fromRGB(28, 14, 44),
+    Legendary = Color3.fromRGB(44, 32, 6),
+}
+local RARITY_ORDER = { Legendary=1, UltraRare=2, Rare=3, Uncommon=4, Common=5 }
+local function nRarity(r)
+    if r == "Ultra-Rare" then return "UltraRare" end
+    return r or "Common"
+end
+
+-- ── Emoji lookup ─────────────────────────────────────────────
+local EMOJI = {
+    -- Produce
+    Apple="🍎",Banana="🍌",Tomato="🍅",Lettuce="🥬",Onion="🧅",Carrot="🥕",
+    Spinach="🌿",Peas="🫛",Egg="🥚",Potato="🥔",Basil="🌿",
+    ["Bell Pepper"]="🫑",Corn="🌽",Mango="🥭",Avocado="🥑",Garlic="🧄",
+    Tofu="⬜",Pineapple="🍍",Plantain="🍌",Beet="❤️",Kimchi="🌶️",
+    Coconut="🥥",Truffle="🍄",
+    -- Bakery
+    Bun="🍞",["Bread Loaf"]="🍞",Flour="🌾",Sugar="🍬",Naan="🫓",
+    Dough="🫓",Chocolate="🍫",Honey="🍯",Croissant="🥐",Fondant="🎂",
+    -- Dairy
+    Milk="🥛",Yogurt="🫙",Cream="🥛",["Cheese Block"]="🧀",Butter="🧈",
+    Mayonnaise="🫙",["Blue Cheese"]="🫙",["Ice Cream"]="🍦",
+    -- Freezer / Meat
+    Chicken="🍗",Beef="🥩",Pork="🥩",Sausage="🌭",["Wagyu Beef"]="🥩",
+    Shrimp="🦐",Crab="🦀",Lobster="🦞",Tuna="🐟",
+    -- Aisles
+    Rice="🍚",Pasta="🍝",Noodles="🍜",Salt="🧂",Oil="🫙",
+    ["Soy Sauce"]="🫙",["Curry Powder"]="🌶️",["Chili Powder"]="🌶️",
+    Peanut="🥜",Almond="🌰",["Black Garlic"]="🧄",Saffron="🌸",
+    ["Miso Paste"]="🍵",Tortilla="🫓",Caviar="⚫",
+    -- Recipes
+    Burger="🍔",Taco="🌮",Fries="🍟",["Egg Splat"]="🥚",
+    ["Caprese Skewer"]="🍢",["Tofu Scramble"]="🥣",["Pound Cake"]="🎂",
+    ["Mac and Cheese"]="🧀",["Sausage Sandwich"]="🌭",["Hummus Plate"]="🫙",
+    Roti="🫓",Samosa="🥟",Crepe="🥞",["Grilled Cheese"]="🧀",
+    ["Chocolate Banana"]="🍫",["Pizza Slice"]="🍕",Quesadilla="🫓",
+    Burrito="🌯",["Stir Fry"]="🥘",["Chow Mein"]="🍜",Dumplings="🥟",
+    ["Fried Rice"]="🍳",["Naan Wrap"]="🫓",["Spaghetti Pomodoro"]="🍝",
+    ["Tofu Stir Fry"]="🥘",["Plantain Chips"]="🍌",["Garlic Bread"]="🥖",
+    ["Poke Bowl"]="🍣",["Sushi Roll"]="🍱",Shawarma="🌯",["Jollof Rice"]="🍚",
+    ["Kimchi Fried Rice"]="🍳",["Pad Thai"]="🍜",Elote="🌽",
+    ["Mango Lassi"]="🥤",Milkshake="🥤",["Banana Pancakes"]="🥞",
+    ["Shrimp Cocktail"]="🦐",Borscht="🍲",["Miso Soup"]="🍵",
+    ["Crab Rangoon"]="🦀",Callaloo="🌿",["Tuna Melt"]="🐟",
+    ["Chicken Curry"]="🍛",["Vegetable Curry"]="🥘",["Baked Potato"]="🥔",
+    ["BBQ Ribs"]="🍖",["Crispy Tofu Bowl"]="🥣",["Mapo Tofu"]="🌶️",
+    Tamale="🌽",["Groundnut Soup"]="🥜",Paella="🍛",["Pepper Shrimp"]="🦐",
+    ["Inferno Skewer"]="🔥",["Almond Croissant"]="🥐",["Ice Cream Sundae"]="🍨",
+    ["Honey Glazed Ribs"]="🍖",["Blue Cheese Pasta"]="🍝",
+    ["Lobster Bisque"]="🦞",["Chicken-Peanut Stew"]="🍲",
+    ["Truffle Pasta"]="🍝",["Coconut Curry"]="🥥",["Saffron Rice"]="🍚",
+    ["Wagyu Burger"]="🍔",["Poke Deluxe"]="🍣",["Guacamole Bomb"]="🥑",
+    ["Golden Glaze"]="✨",["Fondant Collapse"]="🎂",["Million Dollar Steak"]="🥩",
+}
+local ZONE_EMJ = { Produce="🥦",Bakery="🥐",Dairy="🥛",Freezer="🧊",
+    Meat="🥩",Aisles="🏪",Stockroom="📦" }
+local function emj(name, zone) return EMOJI[name] or ZONE_EMJ[zone] or "🍽" end
 
 -- ── State ─────────────────────────────────────────────────────
-local Selections    = {cart="basket", allergy=nil, favourite=nil, confirmed=false, equippedTitle=nil}
-local isOpen        = false
-local prefsLocked   = false   -- true ONLY during Gathering/Cooking/FoodFight
-local activeTab     = "PREFERENCES"
+local Selections = {
+    cart="basket", allergy=nil, favourite=nil,
+    confirmed=false, equippedTitle=nil,
+}
+local isOpen      = false
+local prefsLocked = false
+local activeTab   = "PREFERENCES"
+local currentPhase = "Prelobby"
 
 -- ── Helpers ──────────────────────────────────────────────────
 local function corner(p, r)
-	Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 12)
+    Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 8)
 end
-local function mkStroke(p, t, c)
-	local s = Instance.new("UIStroke", p)
-	s.Thickness = t or 1.5; s.Color = c or C.stroke; return s
+local function mkStroke(p, t, col)
+    local s = Instance.new("UIStroke", p)
+    s.Thickness = t or 1.5; s.Color = col or C.stroke; return s
 end
 local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
-	local l = Instance.new("TextLabel")
-	l.Text=text or ""; l.Font=font or Enum.Font.Gotham
-	l.TextSize=size or 16; l.TextColor3=color or C.white
-	l.TextXAlignment=xAlign or Enum.TextXAlignment.Left
-	l.TextYAlignment=Enum.TextYAlignment.Center
-	l.BackgroundTransparency=1
-	l.Position=pos or UDim2.new(0,0,0,0)
-	l.Size=sz or UDim2.new(1,0,1,0)
-	l.Parent=p; return l
+    local l = Instance.new("TextLabel")
+    l.Text = text or ""; l.Font = font or Enum.Font.Gotham
+    l.TextSize = size or 14; l.TextColor3 = color or C.white
+    l.TextXAlignment = xAlign or Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Center
+    l.BackgroundTransparency = 1
+    l.Position = pos or UDim2.new(0,0,0,0)
+    l.Size = sz or UDim2.new(1,0,1,0)
+    l.Parent = p; return l
 end
-local function mkScroll(p, name, size, pos, barColor)
-	local sf = Instance.new("ScrollingFrame")
-	sf.Name=name; sf.Size=size; sf.Position=pos
-	sf.BackgroundTransparency=1; sf.BorderSizePixel=0
-	sf.ScrollBarThickness=7
-	sf.ScrollBarImageColor3=barColor or C.red
-	sf.AutomaticCanvasSize=Enum.AutomaticSize.Y
-	sf.CanvasSize=UDim2.new(0,0,0,0); sf.Parent=p
-	local pad=Instance.new("UIPadding",sf)
-	pad.PaddingTop=UDim.new(0,6);pad.PaddingBottom=UDim.new(0,6)
-	pad.PaddingLeft=UDim.new(0,6);pad.PaddingRight=UDim.new(0,6)
-	local ll=Instance.new("UIListLayout",sf)
-	ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,6)
-	return sf
+local function mkScroll(parent, size, pos, barCol)
+    local sf = Instance.new("ScrollingFrame", parent)
+    sf.Size = size; sf.Position = pos or UDim2.new(0,0,0,0)
+    sf.BackgroundTransparency = 1; sf.BorderSizePixel = 0
+    sf.ScrollBarThickness = 6
+    sf.ScrollBarImageColor3 = barCol or C.stroke
+    sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    sf.CanvasSize = UDim2.new(0,0,0,0)
+    local ll = Instance.new("UIListLayout", sf)
+    ll.SortOrder = Enum.SortOrder.LayoutOrder; ll.Padding = UDim.new(0,6)
+    local pad = Instance.new("UIPadding", sf)
+    pad.PaddingTop    = UDim.new(0,8);  pad.PaddingBottom = UDim.new(0,8)
+    pad.PaddingLeft   = UDim.new(0,10); pad.PaddingRight  = UDim.new(0,10)
+    return sf
+end
+
+-- sorted copy of a data table
+local function rSort(tbl)
+    local out = {}
+    for _, v in ipairs(tbl) do table.insert(out, v) end
+    table.sort(out, function(a, b)
+        local ra = RARITY_ORDER[nRarity(a.rarity)] or 5
+        local rb = RARITY_ORDER[nRarity(b.rarity)] or 5
+        if ra ~= rb then return ra < rb end
+        return (a.name or "") < (b.name or "")
+    end)
+    return out
 end
 
 -- ============================================================
--- BILLBOARD — shows allergy + favourite above head AT ALL TIMES
+-- BILLBOARD
+-- Order (top → bottom beneath username): Title → Favourite → Allergy
 -- ============================================================
 
 local function updateBillboard()
-	local char = player.Character
-	if not char then return end
-	local head = char:FindFirstChild("Head")
-	if not head then return end
-	local ex = head:FindFirstChild("ChompersBillboard")
-	if ex then ex:Destroy() end
-	-- Only show billboard if at least one thing to display
-	if not Selections.equippedTitle
-	and not Selections.favourite
-	and not Selections.allergy then return end
+    local char = player.Character
+    if not char then return end
+    local head = char:FindFirstChild("Head")
+    if not head then return end
+    local ex = head:FindFirstChild("ChompersBillboard")
+    if ex then ex:Destroy() end
+    if not Selections.equippedTitle
+    and not Selections.favourite
+    and not Selections.allergy then return end
 
-	local bb = Instance.new("BillboardGui")
-	bb.Name="ChompersBillboard"; bb.ResetOnSpawn=false
-	bb.Size=UDim2.new(0,280,0,80); bb.StudsOffset=Vector3.new(0,3.2,0)
-	bb.AlwaysOnTop=false; bb.Parent=head
-	local ll=Instance.new("UIListLayout",bb)
-	ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,1)
-	ll.HorizontalAlignment=Enum.HorizontalAlignment.Center
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "ChompersBillboard"; bb.ResetOnSpawn = false
+    bb.Size = UDim2.new(0,300,0,80); bb.StudsOffset = Vector3.new(0,3.2,0)
+    bb.AlwaysOnTop = false; bb.Parent = head
+    local ll = Instance.new("UIListLayout", bb)
+    ll.SortOrder = Enum.SortOrder.LayoutOrder; ll.Padding = UDim.new(0,1)
+    ll.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-	-- 1: Title (below Roblox username)
-	if Selections.equippedTitle then
-		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,22); l.BackgroundTransparency=1
-		l.Text=Selections.equippedTitle
-		l.Font=Enum.Font.GothamBlack; l.TextSize=13
-		l.TextColor3=Color3.fromRGB(200,170,255)
-		l.TextStrokeTransparency=0.3; l.TextStrokeColor3=Color3.new(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=1
-	end
-
-	-- 2: Favourite Food
-	if Selections.favourite then
-		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,22); l.BackgroundTransparency=1
-		l.Text="⭐ "..Selections.favourite
-		l.Font=Enum.Font.GothamBold; l.TextSize=14
-		l.TextColor3=C.gold
-		l.TextStrokeTransparency=0.3; l.TextStrokeColor3=Color3.new(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=2
-	end
-
-	-- 3: Allergy
-	if Selections.allergy then
-		local col=Color3.fromRGB(226,75,74)
-		for _,a in ipairs(ALLERGY_TYPES) do
-			if a.name==Selections.allergy then col=a.color; break end
-		end
-		local l=Instance.new("TextLabel",bb)
-		l.Size=UDim2.new(1,0,0,22); l.BackgroundTransparency=1
-		l.Text="⚠ Allergic to "..Selections.allergy
-		l.Font=Enum.Font.GothamBold; l.TextSize=14
-		l.TextColor3=col
-		l.TextStrokeTransparency=0.3; l.TextStrokeColor3=Color3.new(0,0,0)
-		l.TextXAlignment=Enum.TextXAlignment.Center; l.LayoutOrder=3
-	end
+    if Selections.equippedTitle then
+        local l = Instance.new("TextLabel", bb); l.LayoutOrder = 1
+        l.Size = UDim2.new(1,0,0,22); l.BackgroundTransparency = 1
+        l.Text = Selections.equippedTitle
+        l.Font = Enum.Font.GothamBlack; l.TextSize = 13
+        l.TextColor3 = C.title; l.TextXAlignment = Enum.TextXAlignment.Center
+        l.TextStrokeTransparency = 0.3; l.TextStrokeColor3 = Color3.new(0,0,0)
+    end
+    if Selections.favourite then
+        local l = Instance.new("TextLabel", bb); l.LayoutOrder = 2
+        l.Size = UDim2.new(1,0,0,22); l.BackgroundTransparency = 1
+        l.Text = "⭐ "..Selections.favourite
+        l.Font = Enum.Font.GothamBold; l.TextSize = 14
+        l.TextColor3 = C.gold; l.TextXAlignment = Enum.TextXAlignment.Center
+        l.TextStrokeTransparency = 0.3; l.TextStrokeColor3 = Color3.new(0,0,0)
+    end
+    if Selections.allergy then
+        local allergyColors = {
+            Dairy=Color3.fromRGB(180,220,255),Gluten=Color3.fromRGB(230,190,120),
+            Produce=Color3.fromRGB(100,210,80),Meat=Color3.fromRGB(220,100,80),
+            Seafood=Color3.fromRGB(80,160,230),Nuts=Color3.fromRGB(180,130,70),
+            Spicy=Color3.fromRGB(240,90,50),Soy=Color3.fromRGB(210,185,120),
+        }
+        local l = Instance.new("TextLabel", bb); l.LayoutOrder = 3
+        l.Size = UDim2.new(1,0,0,22); l.BackgroundTransparency = 1
+        l.Text = "⚠ "..Selections.allergy
+        l.Font = Enum.Font.GothamBold; l.TextSize = 14
+        l.TextColor3 = allergyColors[Selections.allergy] or C.warn
+        l.TextXAlignment = Enum.TextXAlignment.Center
+        l.TextStrokeTransparency = 0.3; l.TextStrokeColor3 = Color3.new(0,0,0)
+    end
 end
 
-player.CharacterAdded:Connect(function()
-	task.wait(1); updateBillboard()
-end)
+player.CharacterAdded:Connect(function() task.wait(1); updateBillboard() end)
 if player.Character then task.delay(1, updateBillboard) end
 
 -- ============================================================
 -- MAIN OVERLAY + PANEL
 -- ============================================================
 
-local PANEL_TOP = 50
-local PANEL_BTM = 80
-local HDR_H     = 58
-local TAB_H     = 46
+local PANEL_TOP = 50; local PANEL_BTM = 80
+local HDR_H = 58;     local TAB_H = 44
 
 local Overlay = Instance.new("Frame", PrelobbyGui)
-Overlay.Name="StoreGuideOverlay"
-Overlay.Size=UDim2.new(1,0,1,0)
-Overlay.BackgroundColor3=Color3.fromRGB(8,6,16)
-Overlay.BackgroundTransparency=0.25
-Overlay.BorderSizePixel=0; Overlay.Visible=false; Overlay.ZIndex=8
+Overlay.Name = "StoreGuideOverlay"
+Overlay.Size = UDim2.new(1,0,1,0)
+Overlay.BackgroundColor3 = Color3.fromRGB(8,6,16)
+Overlay.BackgroundTransparency = 0.25
+Overlay.BorderSizePixel = 0; Overlay.Visible = false; Overlay.ZIndex = 8
 
 local Panel = Instance.new("Frame", Overlay)
-Panel.Name="Panel"
-Panel.Size=UDim2.new(0.86,0,1,-(PANEL_TOP+PANEL_BTM))
-Panel.AnchorPoint=Vector2.new(0.5,0)
-Panel.Position=UDim2.new(0.5,0,0,PANEL_TOP)
-Panel.BackgroundColor3=Color3.fromRGB(18,16,28)
-Panel.BorderSizePixel=0; Panel.ZIndex=9; corner(Panel,16)
+Panel.Name = "Panel"
+Panel.Size = UDim2.new(0.88,0,1,-(PANEL_TOP+PANEL_BTM))
+Panel.AnchorPoint = Vector2.new(0.5,0)
+Panel.Position = UDim2.new(0.5,0,0,PANEL_TOP)
+Panel.BackgroundColor3 = C.bg
+Panel.BorderSizePixel = 0; Panel.ZIndex = 9; corner(Panel, 16)
 
--- Header (red band)
-local HeaderBar = Instance.new("Frame", Panel)
-HeaderBar.Size=UDim2.new(1,0,0,HDR_H)
-HeaderBar.BackgroundColor3=C.red
-HeaderBar.BorderSizePixel=0; HeaderBar.ZIndex=10; corner(HeaderBar,16)
-local hf=Instance.new("Frame",HeaderBar)
-hf.Size=UDim2.new(1,0,0,16); hf.Position=UDim2.new(0,0,1,-16)
-hf.BackgroundColor3=C.red; hf.BorderSizePixel=0; hf.ZIndex=10
+-- Header
+local Hdr = Instance.new("Frame", Panel)
+Hdr.Size = UDim2.new(1,0,0,HDR_H); Hdr.BackgroundColor3 = C.red
+Hdr.BorderSizePixel = 0; Hdr.ZIndex = 10; corner(Hdr, 16)
+local hfill = Instance.new("Frame", Hdr)   -- square off bottom corners
+hfill.Size = UDim2.new(1,0,0,16); hfill.Position = UDim2.new(0,0,1,-16)
+hfill.BackgroundColor3 = C.red; hfill.BorderSizePixel = 0; hfill.ZIndex = 10
 
-mkLabel(HeaderBar,"Chompers' Store Guide",
-	Enum.Font.GothamBlack,28,Color3.fromRGB(253,248,240),
-	Enum.TextXAlignment.Left,
-	UDim2.new(0,16,0,0),UDim2.new(0.44,0,1,0))
-mkLabel(HeaderBar,"gather · cook · food fight!",
-	Enum.Font.GothamBold,16,Color3.fromRGB(255,225,100),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0.44,0,0,0),UDim2.new(0.38,0,1,0))
+mkLabel(Hdr,"Chompers' Store Guide",Enum.Font.GothamBlack,26,
+    Color3.fromRGB(253,248,240),Enum.TextXAlignment.Left,
+    UDim2.new(0,16,0,0),UDim2.new(0.46,0,1,0)).ZIndex=11
+mkLabel(Hdr,"gather · cook · food fight!",Enum.Font.GothamBold,15,
+    Color3.fromRGB(255,225,100),Enum.TextXAlignment.Center,
+    UDim2.new(0.46,0,0,0),UDim2.new(0.36,0,1,0)).ZIndex=11
 
-local CloseBtn=Instance.new("TextButton",HeaderBar)
-CloseBtn.Size=UDim2.new(0,90,0,40)
-CloseBtn.Position=UDim2.new(1,-100,0.5,-20)
-CloseBtn.BackgroundColor3=Color3.fromRGB(175,30,30)
-CloseBtn.BorderSizePixel=0; CloseBtn.AutoButtonColor=false
-CloseBtn.Font=Enum.Font.GothamBold; CloseBtn.TextSize=15
-CloseBtn.TextColor3=C.white; CloseBtn.Text="Close"; CloseBtn.ZIndex=11
+local CloseBtn = Instance.new("TextButton", Hdr)
+CloseBtn.Size = UDim2.new(0,90,0,38); CloseBtn.Position = UDim2.new(1,-100,0.5,-19)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(175,30,30)
+CloseBtn.BorderSizePixel = 0; CloseBtn.AutoButtonColor = false
+CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 15
+CloseBtn.TextColor3 = C.white; CloseBtn.Text = "Close"; CloseBtn.ZIndex = 12
 corner(CloseBtn,10)
-CloseBtn.MouseEnter:Connect(function()
-	TweenService:Create(CloseBtn,TweenInfo.new(0.1),
-		{BackgroundColor3=Color3.fromRGB(220,45,45)}):Play()
-end)
-CloseBtn.MouseLeave:Connect(function()
-	TweenService:Create(CloseBtn,TweenInfo.new(0.1),
-		{BackgroundColor3=Color3.fromRGB(175,30,30)}):Play()
-end)
 
 -- Tab bar
-local TabBar=Instance.new("Frame",Panel)
-TabBar.Name="TabBar"; TabBar.Size=UDim2.new(1,0,0,TAB_H)
-TabBar.Position=UDim2.new(0,0,0,HDR_H)
-TabBar.BackgroundColor3=Color3.fromRGB(22,20,34)
-TabBar.BorderSizePixel=0; TabBar.ZIndex=10
-local tabLL=Instance.new("UIListLayout",TabBar)
-tabLL.FillDirection=Enum.FillDirection.Horizontal
-tabLL.HorizontalAlignment=Enum.HorizontalAlignment.Left
-tabLL.VerticalAlignment=Enum.VerticalAlignment.Center
-tabLL.Padding=UDim.new(0,2)
+local TabBar = Instance.new("Frame", Panel)
+TabBar.Size = UDim2.new(1,0,0,TAB_H); TabBar.Position = UDim2.new(0,0,0,HDR_H)
+TabBar.BackgroundColor3 = Color3.fromRGB(20,18,32); TabBar.BorderSizePixel = 0; TabBar.ZIndex = 10
+local tabLL = Instance.new("UIListLayout", TabBar)
+tabLL.FillDirection = Enum.FillDirection.Horizontal
+tabLL.HorizontalAlignment = Enum.HorizontalAlignment.Left
+tabLL.VerticalAlignment   = Enum.VerticalAlignment.Center
+tabLL.Padding = UDim.new(0,2)
 
--- ContentArea — CookbookBuilder looks for this by name
-local ContentArea=Instance.new("Frame",Panel)
-ContentArea.Name="ContentArea"
-ContentArea.Size=UDim2.new(1,0,1,-(HDR_H+TAB_H))
-ContentArea.Position=UDim2.new(0,0,0,HDR_H+TAB_H)
-ContentArea.BackgroundTransparency=1; ContentArea.ZIndex=9
+-- ContentArea
+local ContentArea = Instance.new("Frame", Panel)
+ContentArea.Name = "ContentArea"
+ContentArea.Size = UDim2.new(1,0,1,-(HDR_H+TAB_H))
+ContentArea.Position = UDim2.new(0,0,0,HDR_H+TAB_H)
+ContentArea.BackgroundTransparency = 1; ContentArea.ZIndex = 9
 
--- tabPanels — CookbookBuilder writes COOKBOOK and ACCOLADES into this
+-- ── Tab system ────────────────────────────────────────────────
 local tabPanels  = {}
 local tabButtons = {}
 
 local TABS = {
-	{id="RULES",       label="📜 Rules",       color=C.red,                        order=1},
-	{id="COOKBOOK",    label="📖 Cookbook",     color=Color3.fromRGB(65,48,128),    order=2},
-	{id="PREFERENCES", label="😋 Preferences",  color=Color3.fromRGB(46,140,60),    order=3},
-	{id="ACCOLADES",   label="🏅 Accolades",    color=Color3.fromRGB(180,140,50),   order=4},
-	{id="MATCH",       label="📋 Match",        color=Color3.fromRGB(50,70,100),    order=5},
-	{id="TITLES",      label="🏆 Titles",       color=Color3.fromRGB(130,60,200),   order=6},
+    {id="RULES",       label="📜 Rules",      color=C.red,                       order=1},
+    {id="COOKBOOK",    label="📖 Cookbook",    color=Color3.fromRGB(65,48,128),   order=2},
+    {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=3},
+    {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=4},
+    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=5},
 }
 
-local function switchTab(tabId)
-	activeTab = tabId
-	-- Track which frames are registered to avoid wrong shows
-	local registered = {}
-	for _, p in pairs(tabPanels) do registered[p] = true end
-
-	for _, child in ipairs(ContentArea:GetChildren()) do
-		if child:IsA("Frame") then
-			if registered[child] then
-				child.Visible = (child == tabPanels[tabId])
-			else
-				-- Unknown frame from CookbookBuilder — only show if
-				-- tabPanels has already been updated to reference it,
-				-- otherwise hide to prevent overlay
-				child.Visible = false
-			end
-		end
-	end
-	-- Show the registered panel for this tab (may now point to
-	-- CookbookBuilder's frame if it updated _G.Chompers.tabPanels)
-	local pnl = tabPanels[tabId]
-	if pnl then pnl.Visible = true end
-
-	for _, t in ipairs(TABS) do
-		local btn=tabButtons[t.id]; if not btn then continue end
-		if t.id==tabId then
-			btn.BackgroundColor3=t.color
-			btn.TextColor3=Color3.fromRGB(253,248,240)
-		else
-			btn.BackgroundColor3=Color3.fromRGB(30,28,44)
-			btn.TextColor3=Color3.fromRGB(105,100,135)
-		end
-	end
+local function switchTab(id)
+    activeTab = id
+    for _, c in ipairs(ContentArea:GetChildren()) do
+        if c:IsA("Frame") then c.Visible = false end
+    end
+    if tabPanels[id] then tabPanels[id].Visible = true end
+    for _, tb in ipairs(TABS) do
+        local btn = tabButtons[tb.id]; if not btn then continue end
+        local active = tb.id == id
+        btn.BackgroundColor3 = active and tb.color or Color3.fromRGB(28,26,42)
+        btn.TextColor3       = active and Color3.fromRGB(253,248,240) or C.dim
+    end
 end
 
--- After CookbookBuilder loads, scan ContentArea for any new frames
--- it created and assign them to tabPanels so switchTab can find them
-task.delay(2, function()
-	local registered = {}
-	for _, p in pairs(tabPanels) do registered[p] = true end
-	local unknowns = {}
-	for _, child in ipairs(ContentArea:GetChildren()) do
-		if child:IsA("Frame") and not registered[child] then
-			table.insert(unknowns, child)
-			child.Visible = false
-		end
-	end
-	-- First unknown → COOKBOOK, second → ACCOLADES (CookbookBuilder's order)
-	if unknowns[1] then tabPanels["COOKBOOK"]  = unknowns[1] end
-	if unknowns[2] then tabPanels["ACCOLADES"] = unknowns[2] end
-	-- Re-apply correct visibility for current tab
-	switchTab(activeTab)
+for _, tb in ipairs(TABS) do
+    local btn = Instance.new("TextButton", TabBar)
+    btn.Name = tb.id.."Tab"; btn.LayoutOrder = tb.order
+    btn.Size = UDim2.new(0.2,-2,0,TAB_H-4)
+    btn.BackgroundColor3 = Color3.fromRGB(28,26,42); btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = 12
+    btn.TextColor3 = C.dim; btn.Text = tb.label
+    btn.AutoButtonColor = false; btn.ZIndex = 11; corner(btn,6)
+    tabButtons[tb.id] = btn
+    local tId = tb.id
+    btn.MouseButton1Click:Connect(function() switchTab(tId) end)
+end
+
+-- helper: make a tab panel frame
+local function makePanel(name, tabId)
+    local f = Instance.new("Frame", ContentArea)
+    f.Name = name; f.Size = UDim2.new(1,0,1,0)
+    f.BackgroundTransparency = 1; f.Visible = false; f.ZIndex = 9
+    tabPanels[tabId] = f; return f
+end
+
+-- helper: sub-tab bar inside a panel
+local function mkSubBar(parent, h, tabs, onSwitch)
+    local bar = Instance.new("Frame", parent)
+    bar.Size = UDim2.new(1,0,0,h); bar.BackgroundColor3 = Color3.fromRGB(16,14,26)
+    bar.BorderSizePixel = 0; bar.ZIndex = 10
+    local ll = Instance.new("UIListLayout", bar)
+    ll.FillDirection = Enum.FillDirection.Horizontal
+    ll.HorizontalAlignment = Enum.HorizontalAlignment.Left
+    ll.VerticalAlignment = Enum.VerticalAlignment.Center; ll.Padding = UDim.new(0,2)
+    local btns = {}
+    for i, st in ipairs(tabs) do
+        local b = Instance.new("TextButton", bar)
+        b.Size = UDim2.new(1/#tabs,-2,0,h-4)
+        b.BackgroundColor3 = i==1 and st.color or Color3.fromRGB(24,22,38)
+        b.BorderSizePixel = 0; b.AutoButtonColor = false
+        b.Font = Enum.Font.GothamBold; b.TextSize = 12
+        b.TextColor3 = i==1 and Color3.fromRGB(253,248,240) or C.dim
+        b.Text = st.label; b.ZIndex = 11; corner(b,6)
+        btns[st.id] = b; local sid=st.id; local sc=st.color
+        b.MouseButton1Click:Connect(function()
+            for id2, b2 in pairs(btns) do
+                local a = id2==sid
+                b2.BackgroundColor3 = a and sc or Color3.fromRGB(24,22,38)
+                b2.TextColor3 = a and Color3.fromRGB(253,248,240) or C.dim
+            end
+            onSwitch(sid)
+        end)
+    end
+    return bar, btns
+end
+
+-- ============================================================
+-- RULES TAB
+-- ============================================================
+
+local RulesPanel = makePanel("RulesPanel","RULES")
+local rScroll = mkScroll(RulesPanel,UDim2.new(1,-16,1,-10),
+    UDim2.new(0,8,0,5),C.red)
+
+local function addRuleSection(title, col, rules)
+    local hdr = Instance.new("TextLabel", rScroll)
+    hdr.Size = UDim2.new(1,0,0,34); hdr.BackgroundTransparency = 1
+    hdr.Text = title; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 20
+    hdr.TextColor3 = col; hdr.TextXAlignment = Enum.TextXAlignment.Left; hdr.ZIndex = 11
+    for _, rule in ipairs(rules) do
+        local rf = Instance.new("Frame", rScroll)
+        rf.Size = UDim2.new(1,0,0,0); rf.AutomaticSize = Enum.AutomaticSize.Y
+        rf.BackgroundColor3 = C.bgLight; rf.BorderSizePixel = 0; rf.ZIndex = 11; corner(rf,8)
+        local rfp = Instance.new("UIPadding",rf)
+        rfp.PaddingTop=UDim.new(0,10);rfp.PaddingBottom=UDim.new(0,10)
+        rfp.PaddingLeft=UDim.new(0,14);rfp.PaddingRight=UDim.new(0,12)
+        local rl = Instance.new("TextLabel", rf)
+        rl.Size = UDim2.new(1,0,0,0); rl.AutomaticSize = Enum.AutomaticSize.Y
+        rl.BackgroundTransparency = 1; rl.Text = rule
+        rl.Font = Enum.Font.Gotham; rl.TextSize = 16
+        rl.TextColor3 = Color3.fromRGB(210,208,228)
+        rl.TextXAlignment = Enum.TextXAlignment.Left
+        rl.TextYAlignment = Enum.TextYAlignment.Top
+        rl.TextWrapped = true; rl.LineHeight = 1.35; rl.ZIndex = 12
+    end
+end
+
+addRuleSection("📋 The Match — Overview", Color3.fromRGB(160,155,200), {
+    "Prelobby → Gathering (3 min) → Cooking (3 min + 10s grace) → Food Fight (up to 6 min) → End Game.",
+    "Minimum 8 players to start. Lobby max: 40 players. Total active play: ~12–13 minutes.",
+    "Win condition: MOST total Cleanliness (CL) damage dealt. Last player alive = +15 medal tiebreaker.",
+    "Match ends early the moment one player or allied team remains — 6 min is a hard cap only.",
+})
+addRuleSection("💰 Economy & Checkout", C.gold, {
+    "You start every match with $15 and 1 napkin.",
+    "Ingredients must be PAID at a Checkout register before they can be cooked or thrown.",
+    "Unpaid items show an orange price tag in your hotbar slots.",
+    "Self-checkout registers are faster but require scanning each item. Staffed registers are slower and handle payment automatically.",
+    "💡 Cash ($1–$25 stacks) and napkins spawn OUTSIDE ONLY — car park, back alleys, side alleys. Nothing spawns in the prelobby.",
+    "Gathering, checkout, and cooking all remain open during Food Fight — it never fully locks down.",
+})
+addRuleSection("⚖️ Weight & Containers", Color3.fromRGB(200,160,80), {
+    "🧺 Basket: 35wt · +5% speed · normal detection radius.",
+    "🛒 Cart: 70wt · −15% speed · +15% detection radius on the minimap.",
+    "You can switch containers at the cart/basket racks on the main floor during Food Fight (unlimited supply).",
+    "Every +10wt OVER your limit adds −10% speed penalty. Overloading is legal but punishing.",
+    "Speed floor: you can never drop below 35% of base speed regardless of stacking penalties.",
+    "Stacking: Common ×3 per slot · Uncommon ×2 · Rare / Ultra-Rare / Legendary ×1.",
+    "10 hotbar slots always. Weight cap is the only pickup restriction — not slot count.",
+})
+addRuleSection("🧼 Cleanliness (CL) — Your HP", Color3.fromRGB(65,185,235), {
+    "CL = your HP, 0–100%. Rises from enemy food hits only. NEVER decays on its own.",
+    "Non-allergen hits: ×0.75 CL.  Allergen hits: ×1.75 CL.  Oil+fire recipe: ×1.6 CL.",
+    "80%+ CL: bathroom access unlocked.  ~95%: 0.75s warning slow + screen edge effect.",
+    "100% CL: INSTANT consequence — no grace period at 100%. Item drop + −30% speed.",
+    "Sub-100% grace: any single hit of 40+ CL below 100% gives you 1.5s before consequences resolve — protects against rapid multi-hit combos.",
+    "Both bars at 100% simultaneously: stacked visual + −60% speed penalty.",
+    "🧻 Napkin: heals −25 CL · 2s use time (interruptible!) · 20s cooldown · recharges to ×1 after cooldown. FREE — no break cost.",
+})
+addRuleSection("🍔 Fullness (FL) — Control & Risk", Color3.fromRGB(235,155,35), {
+    "FL is a CONTROL and PENALTY resource — not a win condition. It decays slowly over time on its own.",
+    "Cooked recipe hit: +2 FL.  Raw / cold hit: +1 FL.  Trash can loot: +5 FL.",
+    "10–30% FL: gradual size increases and speed decreases.  80%+: bathroom access unlocked.",
+    "100% FL: FORCED bathroom visit (costs 1 break). 0.5s slow cue before it triggers.",
+    "Getting hit by your OWN favourite food (thrown by an enemy): ×2 FL spike on top of normal damage.",
+    "💡 FL creates pressure to use the bathroom — timing your breaks is a core skill.",
+})
+addRuleSection("🚽 Bathroom Breaks — 3 Per Match", Color3.fromRGB(100,180,255), {
+    "Each player has exactly 3 bathroom breaks for the entire match. Watch the toilet icons in the bottom-left.",
+    "🚿 Sink (left stall): resets CL to 0% — costs 1 break.",
+    "🚽 Toilet (right stall): resets FL to 0% — costs 1 break.",
+    "Using BOTH in the same visit = 2 breaks consumed. Bathrooms are a FULL IMMUNE ZONE while inside.",
+    "Max 10 seconds per visit — then you're automatically ejected.",
+    "0 breaks remaining = ELIMINATED → spectator mode only.",
+    "💡 The napkin is free −25 CL healing. Use it early and often so you're not wasting breaks on low CL.",
+})
+addRuleSection("⚠️ Allergy & ⭐ Favourite", Color3.fromRGB(226,75,74), {
+    "Set in Preferences BEFORE Gathering starts — locked for the rest of the match.",
+    "⚠️ ALLERGY: any allergen hit → ×1.75 CL received. Everything else → ×0.75. Egg counts as Dairy.",
+    "⭐ FAVOURITE: throwing your favourite food at ANYONE deals +min(Base CL × 50%, 30) bonus CL.",
+    "   Examples: Tomato (6 CL) → +3.  Mapo Tofu (38 CL) → +19.  Million Dollar Steak (70 CL) → +30 (cap).",
+    "   Self-consume your favourite recipe → ×1.5 buff duration on that recipe.",
+    "   Enemy hits you with your own favourite → ×2 FL spike on top of normal damage.",
+    "Your allergy AND favourite display above your head — visible to every player on the server.",
+})
+addRuleSection("🍳 Cooking", Color3.fromRGB(85,210,130), {
+    "Paid ingredients → Prep Table to assemble → Stovetop if the recipe requires heat.",
+    "Cook depth bonus: 2 ingredients +5% CL · 3 ingredients +10% · 4+ ingredients +15%.",
+    "Cook time by rarity: Common 2s · Uncommon 4s · Rare 7s · Ultra-Rare 12s · Legendary 20s.",
+    "Servings: Common ×3 · Uncommon ×2 · Rare / Ultra-Rare / Legendary ×1.",
+    "Burned dish: −20% CL but +30% status effect strength — debuffer build path.",
+    "Perfect cook (hit the heat window): +10% CL bonus.",
+    "Any single hit of 25+ CL while actively at a station DROPS the cook — you lose those ingredients.",
+    "Cooking emits sound and increases your detection radius on the minimap. The Kitchen is a risk zone.",
+    "🍳 Portable Cooker (Legendary loot): deploy anywhere on the map, 4 uses, lockable.",
+})
+addRuleSection("🎯 Mark, Elemental & CC", Color3.fromRGB(175,95,220), {
+    "🔴 MARK — tags a target so your NEXT hit deals bonus CL. One active mark per target at a time.",
+    "   Tomato: +15% CL on next hit.  Soy Sauce / Black Garlic: +20%.  Highest mark wins if overwritten.",
+    "⚡ ELEMENTAL — Oil hit → follow with a fire recipe within the window = ×1.6 CL.",
+    "🎮 CONTROL — Banana: knockdown.  2× Cheese Block: root 1.5s.  Honey: root + sticky floor zone 5s.",
+    "   Blue Cheese: next slow or root applied to that target has +50% duration.",
+    "CC diminishing returns: same control effect within 8s loses 50% potency each application.",
+    "Total freeze from any combination is capped at 2.5s. Throw cooldown: 0.8s between throws.",
+})
+addRuleSection("🤝 Alliance System", C.ally, {
+    "Friendship Bracelets cost $12 at the Trade Hub kiosk. Available during Gathering AND Cooking.",
+    "Press E near any player to offer. They have 10 seconds to accept or decline.",
+    "Bracelet is CONSUMED regardless of the answer — no refunds. Declining is announced publicly.",
+    "On accept: matching name colours appear above both heads — visible to ALL players.",
+    "Team size caps: 1–19 players = 1 ally · 20–29 = 2 · 30–40 = 3.",
+    "💡 Friendship Bracelets also appear as Ultra-Rare outdoor loot. Max 2 per match, never respawn.",
+    "Food Fight start: alliances grey out. Both must reconfirm within 15s or it breaks publicly.",
+    "Friendly fire is ALWAYS ON. Hitting your ally does full damage — it doesn't mechanically break the alliance.",
+})
+addRuleSection("🏁 End-Game: The Final Decision", C.gold, {
+    "When only allied players remain, a 30-second timer appears.",
+    "🤝 'Leave With a Friend': shared win. Both earn 70% of solo medal value.",
+    "⚔️ 'Food Fight to the Finish': alliances break, pure FFA until one stands.",
+    "Timer expires = Fight starts automatically. Any single Fight vote in a 3-person alliance breaks it for all three.",
+    "Hesitation is a choice.",
+})
+addRuleSection("✨ Legendaries", C.gold, {
+    "Three Legendary items spawn once per match at random locations — they NEVER respawn.",
+    "🥩 Million Dollar Steak (Wagyu + Truffle + Caviar): CL 70. Server announces every throw.",
+    "🛒 Golden Cart: +40% speed, ×2 throw range, unlimited weight for 20 seconds. Server announces pickup.",
+    "🍳 Portable Cooker: 4 uses, deploy anywhere, 1.5s slower than kitchen, lockable.",
+    "💡 Check every bin, shelf, and crate — Legendaries can appear on any ingredient surface.",
+})
+addRuleSection("🗺️ The Store — Zone Map", Color3.fromRGB(200,160,80), {
+    "🥦 PRODUCE (left wall): Fruit, veg, eggs, potato, basil, truffle. Best combo setup zone.",
+    "🥐 BAKERY (right wall): Bread, dough, chocolate, honey, croissant, fondant. Control zone.",
+    "🥛 DAIRY (centre-left freezer rows): Cheese, butter, cream, mayo, blue cheese. Anti-mobility.",
+    "❄️ FREEZER / MEAT (centre freezer rows): Chicken, beef, pork, tuna, crab, lobster, wagyu. High damage.",
+    "🏪 AISLES (centre-right shelves): Rice, pasta, spices, oil, soy, miso, saffron. Combo engine.",
+    "📦 STOCKROOM (back area): EVERY ingredient at higher density. Caviar only here. High risk, high reward.",
+    "🍳 KITCHEN (back of main floor): Prep Tables + Stovetops. Larger detection radius while cooking.",
+    "🛒 CHECKOUT (front): Pay here. Prime ambush location — players must stand still briefly.",
+    "🚽 BATHROOMS (all 4 corners): Full immune zone inside. Sink = CL reset. Toilet = FL reset.",
+    "🤝 TRADE HUB (centre): Safe zone. Friendship Bracelet kiosk during Gathering + Cooking.",
+    "💡 Rare respawn: 50s · Ultra-Rare: 90s · Legendaries: never.",
+})
+addRuleSection("🏅 Medals & Scoring", Color3.fromRGB(239,159,39), {
+    "Medals are earned after every match and spent on Titles and Cosmetics.",
+    "Top 5 per-match accolades: Last One Standing (60) · Chomper Champion (50) · Chaos Agent (40) · Master Chef (35) · Super Shopper (25).",
+    "Bonus accolades: Squeaky Clean (25) · Executioner (25) · Sous-Chef Supreme (25) · Resource Raider (15).",
+    "Base medals: Participation (5) · Alive at end (+15) · Together Victory (42 each).",
+    "Assist score: apply a mark or CC → your ally hits within 4s → you earn 35% of that damage as assist score.",
+    "Ties on any accolade: both players receive the full medal value.",
+})
+
+-- ============================================================
+-- COOKBOOK TAB — two-panel: left list + right detail + search bar
+-- ============================================================
+
+local CookPanel = makePanel("CookPanel","COOKBOOK")
+local cookSubPanels = {}
+
+-- Build cross-reference: ingredient name → list of recipe objects
+local ingToRecipes = {}
+for _, recipe in ipairs(Data.Recipes) do
+    for _, ingName in ipairs(recipe.ingredients or {}) do
+        if not ingToRecipes[ingName] then ingToRecipes[ingName] = {} end
+        table.insert(ingToRecipes[ingName], recipe)
+    end
+end
+
+local COOK_HEADER_H = 40
+local SEARCH_H      = 36
+local DIVIDER_X     = 0.36   -- left panel width fraction
+local CONTENT_TOP   = COOK_HEADER_H + SEARCH_H
+
+mkSubBar(CookPanel, COOK_HEADER_H, {
+    {id="INGREDIENTS", label="🥦 Ingredients", color=Color3.fromRGB(46,140,60)},
+    {id="RECIPES",     label="📖 Recipes",     color=Color3.fromRGB(65,48,128)},
+}, function(id)
+    for sid, pnl in pairs(cookSubPanels) do pnl.Visible=(sid==id) end
 end)
 
-for _, t in ipairs(TABS) do
-	local btn=Instance.new("TextButton",TabBar)
-	btn.Name=t.id.."Tab"; btn.LayoutOrder=t.order
-	btn.Size=UDim2.new(1/6,-2,0,TAB_H-4)
-	btn.BackgroundColor3=Color3.fromRGB(30,28,44)
-	btn.BorderSizePixel=0; btn.Font=Enum.Font.GothamBold
-	btn.TextSize=11; btn.TextColor3=Color3.fromRGB(105,100,135)
-	btn.Text=t.label; btn.AutoButtonColor=false; btn.ZIndex=11
-	corner(btn,8); tabButtons[t.id]=btn
-	local tId=t.id
-	btn.MouseButton1Click:Connect(function() switchTab(tId) end)
+-- ── Shared search bar ────────────────────────────────────────
+local searchBar = Instance.new("Frame", CookPanel)
+searchBar.Size = UDim2.new(1,0,0,SEARCH_H)
+searchBar.Position = UDim2.new(0,0,0,COOK_HEADER_H)
+searchBar.BackgroundColor3 = Color3.fromRGB(14,12,24); searchBar.BorderSizePixel=0
+
+local searchInput = Instance.new("TextBox", searchBar)
+searchInput.Size = UDim2.new(1,-24,0,26); searchInput.Position = UDim2.new(0,12,0.5,-13)
+searchInput.BackgroundColor3 = Color3.fromRGB(28,26,42); searchInput.BorderSizePixel=0
+searchInput.Font = Enum.Font.Gotham; searchInput.TextSize = 14
+searchInput.TextColor3 = C.white; searchInput.PlaceholderColor3 = C.dim
+searchInput.PlaceholderText = "🔍  Search ingredients and recipes..."
+searchInput.Text = ""; corner(searchInput,8)
+mkStroke(searchInput,1.5,C.stroke)
+
+-- ── Helper: build the two-panel container for a sub-tab ──────
+local function makeCookSub(subId, accentCol)
+    local container = Instance.new("Frame", CookPanel)
+    container.Name = subId.."Container"
+    container.Size = UDim2.new(1,0,1,-CONTENT_TOP)
+    container.Position = UDim2.new(0,0,0,CONTENT_TOP)
+    container.BackgroundTransparency = 1
+    container.Visible = (subId=="INGREDIENTS")
+    cookSubPanels[subId] = container
+
+    -- Vertical divider
+    local divider = Instance.new("Frame", container)
+    divider.Size = UDim2.new(0,1,1,0); divider.Position = UDim2.new(DIVIDER_X,0,0,0)
+    divider.BackgroundColor3 = C.stroke; divider.BorderSizePixel=0
+
+    -- Left: scrollable compact list
+    local leftScroll = Instance.new("ScrollingFrame", container)
+    leftScroll.Name = "LeftScroll"
+    leftScroll.Size = UDim2.new(DIVIDER_X,-1,1,0)
+    leftScroll.BackgroundTransparency=1; leftScroll.BorderSizePixel=0
+    leftScroll.ScrollBarThickness=5; leftScroll.ScrollBarImageColor3=accentCol
+    leftScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    leftScroll.CanvasSize=UDim2.new(0,0,0,0)
+    local ll=Instance.new("UIListLayout",leftScroll)
+    ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,3)
+    local lpad=Instance.new("UIPadding",leftScroll)
+    lpad.PaddingTop=UDim.new(0,4); lpad.PaddingBottom=UDim.new(0,4)
+    lpad.PaddingLeft=UDim.new(0,6); lpad.PaddingRight=UDim.new(0,4)
+
+    -- Right: detail panel (dynamically built on selection)
+    local rightPanel = Instance.new("ScrollingFrame", container)
+    rightPanel.Name = "RightPanel"
+    rightPanel.Size = UDim2.new(1-DIVIDER_X,-1,1,0)
+    rightPanel.Position = UDim2.new(DIVIDER_X,1,0,0)
+    rightPanel.BackgroundTransparency=1; rightPanel.BorderSizePixel=0
+    rightPanel.ScrollBarThickness=5; rightPanel.ScrollBarImageColor3=accentCol
+    rightPanel.AutomaticCanvasSize=Enum.AutomaticSize.Y
+    rightPanel.CanvasSize=UDim2.new(0,0,0,0)
+    local rl=Instance.new("UIListLayout",rightPanel)
+    rl.SortOrder=Enum.SortOrder.LayoutOrder; rl.Padding=UDim.new(0,6)
+    local rpad=Instance.new("UIPadding",rightPanel)
+    rpad.PaddingTop=UDim.new(0,10); rpad.PaddingBottom=UDim.new(0,10)
+    rpad.PaddingLeft=UDim.new(0,10); rpad.PaddingRight=UDim.new(0,10)
+
+    -- Placeholder
+    local placeholder = mkLabel(rightPanel,
+        "← Select an item to see full details.",
+        Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
+        UDim2.new(0,0,0,0),UDim2.new(1,0,0,80))
+    placeholder.Name="Placeholder"
+
+    return container, leftScroll, rightPanel
 end
 
--- CookbookBuilder placeholder panels
-local function makePlaceholder(name,tabId)
-	local f=Instance.new("Frame",ContentArea)
-	f.Name=name; f.Size=UDim2.new(1,0,1,0)
-	f.BackgroundTransparency=1; f.Visible=false; f.ZIndex=9
-	tabPanels[tabId]=f; return f
+-- ── Right panel builder helpers ──────────────────────────────
+local function clearRight(rightPanel)
+    for _, c in ipairs(rightPanel:GetChildren()) do
+        if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then c:Destroy() end
+    end
+    rightPanel.CanvasPosition = Vector2.zero
 end
-makePlaceholder("CookPanel","COOKBOOK")
-makePlaceholder("AccoladesPanel","ACCOLADES")
+
+local function rightBigLabel(parent, text, font, size, color, order, h)
+    local l=Instance.new("TextLabel",parent); l.LayoutOrder=order
+    l.Size=UDim2.new(1,0,0,h or 0); l.AutomaticSize=h and Enum.AutomaticSize.None or Enum.AutomaticSize.Y
+    l.BackgroundTransparency=1; l.Text=text
+    l.Font=font or Enum.Font.GothamBold; l.TextSize=size or 14
+    l.TextColor3=color or C.white; l.TextXAlignment=Enum.TextXAlignment.Left
+    l.TextYAlignment=Enum.TextYAlignment.Top; l.TextWrapped=true; l.ZIndex=12
+    return l
+end
+
+local function rightDivider(parent, order)
+    local d=Instance.new("Frame",parent); d.LayoutOrder=order
+    d.Size=UDim2.new(1,0,0,1); d.BackgroundColor3=C.stroke; d.BorderSizePixel=0
+end
+
+local function rightChip(parent, text, bg, col, order)
+    local f=Instance.new("Frame",parent); f.LayoutOrder=order
+    f.Size=UDim2.new(1,0,0,28); f.BackgroundColor3=bg or C.bgLight
+    f.BorderSizePixel=0; f.ZIndex=12; corner(f,6)
+    local l=Instance.new("TextLabel",f)
+    l.Size=UDim2.new(1,-16,1,0); l.Position=UDim2.new(0,8,0,0)
+    l.BackgroundTransparency=1; l.Text=text
+    l.Font=Enum.Font.Gotham; l.TextSize=13
+    l.TextColor3=col or C.white; l.TextXAlignment=Enum.TextXAlignment.Left; l.ZIndex=13
+    return f
+end
+
+-- ── Build INGREDIENTS sub-tab ────────────────────────────────
+local _, ingLeft, ingRight = makeCookSub("INGREDIENTS", Color3.fromRGB(46,140,60))
+local sortedIng = rSort(Data.Ingredients)
+local ingRows   = {}
+
+local function showIngredientDetail(item)
+    clearRight(ingRight)
+    local r   = nRarity(item.rarity)
+    local col = RARITY_COL[r] or C.stroke
+    local ic  = emj(item.name, item.zone)
+
+    -- Hero row
+    local hero=Instance.new("Frame",ingRight); hero.LayoutOrder=1
+    hero.Size=UDim2.new(1,0,0,80); hero.BackgroundColor3=RARITY_BG[r] or C.bgCard
+    hero.BorderSizePixel=0; hero.ZIndex=12; corner(hero,12); mkStroke(hero,2,col)
+    mkLabel(hero,ic,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
+        UDim2.new(0,0,0,0),UDim2.new(0,80,1,0)).ZIndex=13
+    mkLabel(hero,item.name,Enum.Font.GothamBlack,18,C.white,Enum.TextXAlignment.Left,
+        UDim2.new(0,84,0,8),UDim2.new(1,-90,0,24)).ZIndex=13
+    mkLabel(hero,(item.zone or "?").."  ·  "..r,Enum.Font.GothamBold,12,col,
+        Enum.TextXAlignment.Left,UDim2.new(0,84,0,34),UDim2.new(1,-90,0,16)).ZIndex=13
+    mkLabel(hero,"⚖ "..(item.wt or"?").."wt   💲"..(item.cost or"?").."   🧼 +"..
+        (item.cl or"0").." CL",Enum.Font.Gotham,12,Color3.fromRGB(155,150,188),
+        Enum.TextXAlignment.Left,UDim2.new(0,84,0,52),UDim2.new(1,-90,0,16)).ZIndex=13
+
+    if item.allergy and item.allergy~="None" then
+        rightChip(ingRight,"⚠ Allergy: "..item.allergy,Color3.fromRGB(50,14,14),
+            Color3.fromRGB(230,120,120),2)
+    end
+    if item.effect then
+        rightBigLabel(ingRight,"💥 "..item.effect,Enum.Font.Gotham,14,
+            Color3.fromRGB(200,198,218),3)
+    end
+
+    rightDivider(ingRight,4)
+
+    -- Recipes that use this ingredient
+    local used = ingToRecipes[item.name] or {}
+    if #used > 0 then
+        rightBigLabel(ingRight,"Used in "..#used.." recipe"..(#used==1 and "" or "s")
+            ..":",Enum.Font.GothamBold,14,C.dim,5,20)
+        for j, rec in ipairs(used) do
+            local rc  = nRarity(rec.rarity)
+            local rcol= RARITY_COL[rc] or C.stroke
+            local chip=rightChip(ingRight,
+                emj(rec.name).."  "..rec.name.."   ("..rc..")",
+                RARITY_BG[rc] or C.bgCard,C.white,5+j)
+            mkStroke(chip,1.5,rcol)
+            chip.Size=UDim2.new(1,0,0,34)
+        end
+    else
+        rightBigLabel(ingRight,"Used in recipes: none listed",Enum.Font.Gotham,13,C.dim,5,20)
+    end
+end
+
+for i, item in ipairs(sortedIng) do
+    local r   = nRarity(item.rarity)
+    local col = RARITY_COL[r] or C.stroke
+    local row = Instance.new("TextButton", ingLeft)
+    row.Name = "Ing_"..i; row.LayoutOrder = i
+    row.Size = UDim2.new(1,0,0,44)
+    row.BackgroundColor3 = Color3.fromRGB(22,20,36)
+    row.BorderSizePixel=0; row.AutoButtonColor=false; row.ZIndex=11
+    corner(row,8); mkStroke(row,1.5,Color3.fromRGB(38,36,54))
+
+    mkLabel(row,emj(item.name,item.zone),Enum.Font.GothamBold,22,C.white,
+        Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,40,1,0)).ZIndex=12
+    mkLabel(row,item.name,Enum.Font.GothamBold,13,C.white,Enum.TextXAlignment.Left,
+        UDim2.new(0,44,0,4),UDim2.new(1,-48,0,18)).ZIndex=12
+    mkLabel(row,r,Enum.Font.GothamBold,10,col,Enum.TextXAlignment.Left,
+        UDim2.new(0,44,0,24),UDim2.new(1,-48,0,14)).ZIndex=12
+
+    local capItem=item
+    row.MouseButton1Click:Connect(function()
+        for _, rd in ipairs(ingRows) do
+            rd.BackgroundColor3=Color3.fromRGB(22,20,36)
+            local s=rd:FindFirstChildWhichIsA("UIStroke")
+            if s then s.Color=Color3.fromRGB(38,36,54) end
+        end
+        row.BackgroundColor3=Color3.fromRGB(26,14,48)
+        local s=row:FindFirstChildWhichIsA("UIStroke")
+        if s then s.Color=Color3.fromRGB(46,140,60) end
+        showIngredientDetail(capItem)
+    end)
+    table.insert(ingRows, row)
+end
+
+-- ── Build RECIPES sub-tab ────────────────────────────────────
+local _, recLeft, recRight = makeCookSub("RECIPES", Color3.fromRGB(65,48,128))
+local sortedRec = rSort(Data.Recipes)
+local recRows   = {}
+
+local function showRecipeDetail(item)
+    clearRight(recRight)
+    local r   = nRarity(item.rarity)
+    local col = RARITY_COL[r] or C.stroke
+    local ic  = emj(item.name)
+
+    -- Hero
+    local hero=Instance.new("Frame",recRight); hero.LayoutOrder=1
+    hero.Size=UDim2.new(1,0,0,80); hero.BackgroundColor3=RARITY_BG[r] or C.bgCard
+    hero.BorderSizePixel=0; hero.ZIndex=12; corner(hero,12); mkStroke(hero,2,col)
+    mkLabel(hero,ic,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
+        UDim2.new(0,0,0,0),UDim2.new(0,80,1,0)).ZIndex=13
+    mkLabel(hero,item.name,Enum.Font.GothamBlack,18,C.white,Enum.TextXAlignment.Left,
+        UDim2.new(0,84,0,8),UDim2.new(1,-90,0,24)).ZIndex=13
+    mkLabel(hero,r,Enum.Font.GothamBold,12,col,Enum.TextXAlignment.Left,
+        UDim2.new(0,84,0,34),UDim2.new(1,-90,0,16)).ZIndex=13
+    local statStr={}
+    if item.cl and item.cl>0 then table.insert(statStr,"🧼 +"..item.cl.." CL") end
+    if item.wt then table.insert(statStr,"⚖ "..item.wt.."wt") end
+    mkLabel(hero,table.concat(statStr,"   "),Enum.Font.Gotham,12,
+        Color3.fromRGB(155,150,188),Enum.TextXAlignment.Left,
+        UDim2.new(0,84,0,52),UDim2.new(1,-90,0,16)).ZIndex=13
+
+    -- Station + servings
+    local servings=r=="Common" and "3" or (r=="Uncommon" and "2" or "1")
+    rightChip(recRight,"🍳 Station: "..(item.station or "?").."   · Servings: ×"..servings,
+        C.bgLight,Color3.fromRGB(155,150,188),2)
+
+    if item.notes then
+        rightChip(recRight,"📝 "..item.notes,Color3.fromRGB(40,28,12),C.gold,3)
+    end
+
+    rightDivider(recRight,4)
+
+    -- Ingredients breakdown
+    if item.ingredients and #item.ingredients>0 then
+        rightBigLabel(recRight,"Requires "..#item.ingredients.." ingredient"..
+            (#item.ingredients==1 and "" or "s")..":",
+            Enum.Font.GothamBold,14,C.dim,5,20)
+        for j, ingName in ipairs(item.ingredients) do
+            -- Find ingredient data
+            local ingData = nil
+            for _, d in ipairs(Data.Ingredients) do
+                if d.name==ingName then ingData=d; break end
+            end
+            local bg=Color3.fromRGB(24,22,38)
+            local lc=C.white
+            if ingData then
+                local ir=nRarity(ingData.rarity)
+                bg=RARITY_BG[ir] or bg
+                lc=RARITY_COL[ir] or lc
+            end
+            local chip=Instance.new("Frame",recRight); chip.LayoutOrder=5+j
+            chip.Size=UDim2.new(1,0,0,38); chip.BackgroundColor3=bg
+            chip.BorderSizePixel=0; chip.ZIndex=12; corner(chip,8)
+            if ingData then mkStroke(chip,1.5,RARITY_COL[nRarity(ingData.rarity)] or C.stroke) end
+            mkLabel(chip,emj(ingName,ingData and ingData.zone),Enum.Font.GothamBold,22,C.white,
+                Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,40,1,0)).ZIndex=13
+            mkLabel(chip,ingName,Enum.Font.GothamBold,13,C.white,
+                Enum.TextXAlignment.Left,UDim2.new(0,44,0,4),UDim2.new(0.55,0,0,18)).ZIndex=13
+            if ingData then
+                mkLabel(chip,(ingData.zone or"?").."  ·  "..(ingData.allergy~="None" and "⚠ "..ingData.allergy or ""),
+                    Enum.Font.Gotham,11,C.dim,Enum.TextXAlignment.Left,
+                    UDim2.new(0,44,0,22),UDim2.new(0.55,0,0,14)).ZIndex=13
+                mkLabel(chip,"⚖ "..(ingData.wt or"?").."wt  💲"..(ingData.cost or"?"),
+                    Enum.Font.Gotham,11,lc,Enum.TextXAlignment.Right,
+                    UDim2.new(0.55,0,0,0),UDim2.new(0.45,-8,1,0)).ZIndex=13
+            end
+        end
+    end
+end
+
+for i, item in ipairs(sortedRec) do
+    local r   = nRarity(item.rarity)
+    local col = RARITY_COL[r] or C.stroke
+    local row = Instance.new("TextButton", recLeft)
+    row.Name="Rec_"..i; row.LayoutOrder=i
+    row.Size=UDim2.new(1,0,0,44)
+    row.BackgroundColor3=Color3.fromRGB(22,20,36)
+    row.BorderSizePixel=0; row.AutoButtonColor=false; row.ZIndex=11
+    corner(row,8); mkStroke(row,1.5,Color3.fromRGB(38,36,54))
+
+    mkLabel(row,emj(item.name),Enum.Font.GothamBold,22,C.white,
+        Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,40,1,0)).ZIndex=12
+    mkLabel(row,item.name,Enum.Font.GothamBold,12,C.white,Enum.TextXAlignment.Left,
+        UDim2.new(0,44,0,4),UDim2.new(1,-48,0,18)).ZIndex=12
+    mkLabel(row,r,Enum.Font.GothamBold,10,col,Enum.TextXAlignment.Left,
+        UDim2.new(0,44,0,24),UDim2.new(1,-48,0,14)).ZIndex=12
+
+    local capItem=item
+    row.MouseButton1Click:Connect(function()
+        for _, rd in ipairs(recRows) do
+            rd.BackgroundColor3=Color3.fromRGB(22,20,36)
+            local s=rd:FindFirstChildWhichIsA("UIStroke")
+            if s then s.Color=Color3.fromRGB(38,36,54) end
+        end
+        row.BackgroundColor3=Color3.fromRGB(18,12,46)
+        local s=row:FindFirstChildWhichIsA("UIStroke")
+        if s then s.Color=Color3.fromRGB(65,48,128) end
+        showRecipeDetail(capItem)
+    end)
+    table.insert(recRows, row)
+end
+
+-- ── Search filter ────────────────────────────────────────────
+local activeSubId = "INGREDIENTS"
+cookSubPanels._activeId = "INGREDIENTS"
+-- patch mkSubBar so search knows which sub is active
+local _, _ = nil, nil   -- already wired above via cookSubPanels visibility
+
+searchInput:GetPropertyChangedSignal("Text"):Connect(function()
+    local q = searchInput.Text:lower()
+    -- Filter ingredients
+    for _, row in ipairs(ingRows) do
+        local lbl = row:FindFirstChildWhichIsA("TextLabel")
+        row.Visible = q=="" or (lbl and lbl.Text:lower():find(q,1,true)~=nil)
+    end
+    -- Filter recipes
+    for _, row in ipairs(recRows) do
+        local lbl = row:FindFirstChildWhichIsA("TextLabel")
+        row.Visible = q=="" or (lbl and lbl.Text:lower():find(q,1,true)~=nil)
+    end
+end)
+
+-- ============================================================
+-- PREFERENCES TAB
+-- Favourite on LEFT · Allergy on RIGHT
+-- ============================================================
+
+local PrefPanel = makePanel("PrefPanel","PREFERENCES")
+local PAD = 14
+
+-- Lock overlay (visible during Gathering / Cooking / FoodFight)
+local PrefLock = Instance.new("Frame", PrefPanel)
+PrefLock.Name = "PrefLock"
+PrefLock.Size = UDim2.new(1,0,1,0)
+PrefLock.BackgroundColor3 = Color3.fromRGB(8,6,16)
+PrefLock.BackgroundTransparency = 0.35
+PrefLock.BorderSizePixel = 0; PrefLock.ZIndex = 50; PrefLock.Visible = false
+corner(PrefLock,12)
+local lockL = mkLabel(PrefLock,
+    "🔒  Preferences Locked — Match in Progress\n\nYou can view your selections\nbut cannot change them until the match ends.",
+    Enum.Font.GothamBold,18,C.white,Enum.TextXAlignment.Center,
+    UDim2.new(0.1,0,0.15,0),UDim2.new(0.8,0,0.5,0))
+lockL.TextWrapped=true; lockL.LineHeight=1.4
+
+-- Container selection
+mkLabel(PrefPanel,"Choose your container",Enum.Font.GothamMedium,16,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,8),UDim2.new(1,-PAD*2,0,20))
+
+local function mkCartBtn(lbl,xPos,active)
+    local b=Instance.new("TextButton",PrefPanel)
+    b.Size=UDim2.new(0.485,0,0,52); b.Position=UDim2.new(xPos,xPos==0 and PAD or 0,0,30)
+    b.BackgroundColor3=active and C.red or Color3.fromRGB(28,26,44)
+    b.BorderSizePixel=0; b.AutoButtonColor=false
+    b.Font=Enum.Font.GothamBold; b.TextSize=15
+    b.TextColor3=active and Color3.fromRGB(253,248,240) or C.dim
+    b.Text=lbl; b.ZIndex=10; corner(b,10); return b
+end
+local BasketBtn = mkCartBtn("🧺  Basket — 35wt · +5% spd",0,true)
+local CartBtn   = mkCartBtn("🛒  Cart — 70wt · −15% spd",0.515,false)
+
+local function selectCart(choice)
+    if prefsLocked then return end
+    Selections.cart = choice
+    local bActive = choice=="basket"
+    BasketBtn.BackgroundColor3 = bActive and C.red or Color3.fromRGB(28,26,44)
+    BasketBtn.TextColor3       = bActive and Color3.fromRGB(253,248,240) or C.dim
+    CartBtn.BackgroundColor3   = bActive and Color3.fromRGB(28,26,44) or C.red
+    CartBtn.TextColor3         = bActive and C.dim or Color3.fromRGB(253,248,240)
+    _G.Chompers.SetContainerType(choice=="basket" and "Basket" or "Cart")
+    local r = Remotes and Remotes:FindFirstChild("PlayerSelectCart")
+    if r then r:FireServer(choice) end
+end
+BasketBtn.MouseButton1Click:Connect(function() selectCart("basket") end)
+CartBtn.MouseButton1Click:Connect(function()   selectCart("cart") end)
+selectCart("basket")
+
+local divY = 90
+local div = Instance.new("Frame",PrefPanel)
+div.Size=UDim2.new(1,-PAD*2,0,1); div.Position=UDim2.new(0,PAD,0,divY)
+div.BackgroundColor3=Color3.fromRGB(38,36,52); div.BorderSizePixel=0
+
+-- Section headers
+local secY = divY+8
+mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBold,20,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,secY),UDim2.new(0.5,-PAD-4,0,26))
+local fDesc=mkLabel(PrefPanel,
+    "Throw your fav → +min(Base×50%, 30) bonus CL.\nSelf-consume → ×1.5 buff duration.",
+    Enum.Font.Gotham,13,Color3.fromRGB(210,190,155),Enum.TextXAlignment.Left,
+    UDim2.new(0,PAD,0,secY+28),UDim2.new(0.5,-PAD-4,0,32))
+fDesc.TextWrapped=true
+
+mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,20,Color3.fromRGB(226,75,74),
+    Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,secY),UDim2.new(0.5,-PAD-4,0,26))
+local aDesc=mkLabel(PrefPanel,
+    "Allergen hit → ×1.75 CL damage.\nEverything else → ×0.75. Egg = Dairy.",
+    Enum.Font.Gotham,13,Color3.fromRGB(215,175,175),Enum.TextXAlignment.Left,
+    UDim2.new(0.5,PAD/2,0,secY+28),UDim2.new(0.5,-PAD-4,0,32))
+aDesc.TextWrapped=true
+
+local selY = secY+62
+local FavLabel = mkLabel(PrefPanel,"None selected",Enum.Font.GothamMedium,13,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,18))
+FavLabel.Name = "FavSelected"  -- named for external reference
+
+local AllergyLabel = mkLabel(PrefPanel,"None selected",Enum.Font.GothamMedium,13,
+    Color3.fromRGB(210,78,78),Enum.TextXAlignment.Left,
+    UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,18))
+
+local scrollY = selY+20
+local scrollH = UDim2.new(0.5,-PAD-4,1,-(scrollY+62))
+
+-- Favourite scroll (LEFT) — all 69 recipes
+local FavScroll = mkScroll(PrefPanel,scrollH,UDim2.new(0,PAD,0,scrollY),C.gold)
+FavScroll.Name = "FavouriteScroll"
+
+local selFavBtn = nil
+for i, item in ipairs(rSort(Data.Recipes)) do
+    local r   = nRarity(item.rarity)
+    local col = RARITY_COL[r] or C.stroke
+    local ic  = emj(item.name)
+
+    local row = Instance.new("TextButton", FavScroll)
+    row.Size = UDim2.new(1,0,0,72); row.LayoutOrder = i
+    row.BackgroundColor3 = RARITY_BG[r] or Color3.fromRGB(22,20,36)
+    row.BorderSizePixel = 0; row.AutoButtonColor = false; row.ZIndex = 10
+    corner(row,10); mkStroke(row,2,col)
+
+    -- Large emoji
+    mkLabel(row,ic,Enum.Font.GothamBold,36,C.white,Enum.TextXAlignment.Center,
+        UDim2.new(0,0,0,0),UDim2.new(0,70,1,0)).ZIndex=11
+    -- Name — big
+    mkLabel(row,item.name,Enum.Font.GothamBlack,16,C.white,Enum.TextXAlignment.Left,
+        UDim2.new(0,74,0,12),UDim2.new(1,-80,0,24)).ZIndex=11
+    -- Rarity colour tag only
+    mkLabel(row,r,Enum.Font.GothamBold,12,col,Enum.TextXAlignment.Left,
+        UDim2.new(0,74,0,38),UDim2.new(1,-80,0,18)).ZIndex=11
+
+    local capItem = item
+    row.MouseButton1Click:Connect(function()
+        if prefsLocked then return end
+        if selFavBtn then
+            selFavBtn.BackgroundColor3 = Color3.fromRGB(22,20,36)
+            local ss = selFavBtn:FindFirstChildWhichIsA("UIStroke")
+            if ss then ss.Color = RARITY_COL[nRarity(capItem.rarity)] or C.stroke end
+        end
+        row.BackgroundColor3 = Color3.fromRGB(34,18,52)
+        local ss = row:FindFirstChildWhichIsA("UIStroke")
+        if ss then ss.Color = C.purple end
+        selFavBtn = row
+        Selections.favourite = capItem.name
+        FavLabel.Text = "✓ "..capItem.name
+        updateBillboard()
+        local rv = Remotes and Remotes:FindFirstChild("PlayerSelectFavourite")
+        if rv then rv:FireServer(capItem.name) end
+    end)
+end
+
+-- Allergy scroll (RIGHT)
+local ALLERGY_TYPES = {
+    {name="Dairy",   color=Color3.fromRGB(180,220,255), icon="🥛"},
+    {name="Gluten",  color=Color3.fromRGB(230,190,120), icon="🌾"},
+    {name="Produce", color=Color3.fromRGB(100,210,80),  icon="🥦"},
+    {name="Meat",    color=Color3.fromRGB(220,100,80),  icon="🥩"},
+    {name="Seafood", color=Color3.fromRGB(80,160,230),  icon="🦐"},
+    {name="Nuts",    color=Color3.fromRGB(180,130,70),  icon="🥜"},
+    {name="Spicy",   color=Color3.fromRGB(240,90,50),   icon="🌶️"},
+    {name="Soy",     color=Color3.fromRGB(210,185,120), icon="🧃"},
+}
+
+local AllergyScroll = mkScroll(PrefPanel,scrollH,UDim2.new(0.5,PAD/2,0,scrollY),C.warn)
+AllergyScroll.Name = "AllergyScroll"
+
+local selAllergyBtn = nil
+for _, atype in ipairs(ALLERGY_TYPES) do
+    local btn = Instance.new("TextButton", AllergyScroll)
+    btn.Size = UDim2.new(1,0,0,72); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
+    btn.BorderSizePixel = 0; btn.AutoButtonColor = false; btn.ZIndex = 10; corner(btn,10)
+    local accent = Instance.new("Frame",btn)
+    accent.Size=UDim2.new(0,5,1,-12); accent.Position=UDim2.new(0,5,0,6)
+    accent.BackgroundColor3=atype.color; accent.BorderSizePixel=0; corner(accent,2)
+    mkLabel(btn,atype.icon.."  "..atype.name,Enum.Font.GothamBold,20,atype.color,
+        Enum.TextXAlignment.Left,UDim2.new(0,16,0,0),UDim2.new(1,-20,1,0)).ZIndex=11
+    local capA = atype
+    btn.MouseButton1Click:Connect(function()
+        if prefsLocked then return end
+        if Selections.allergy == capA.name then
+            Selections.allergy = nil
+            AllergyLabel.Text = "None selected"
+            btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
+            selAllergyBtn = nil
+        else
+            if selAllergyBtn then selAllergyBtn.BackgroundColor3=Color3.fromRGB(24,22,38) end
+            Selections.allergy = capA.name
+            AllergyLabel.Text = "✓ "..capA.name
+            btn.BackgroundColor3 = Color3.fromRGB(52,16,16); selAllergyBtn = btn
+        end
+        local rv = Remotes and Remotes:FindFirstChild("PlayerSelectAllergy")
+        if rv then rv:FireServer(Selections.allergy) end
+        updateBillboard()
+    end)
+end
+
+-- Confirm button
+local ConfirmBtn = Instance.new("TextButton", PrefPanel)
+ConfirmBtn.Name = "ConfirmButton"
+ConfirmBtn.Size = UDim2.new(1,-PAD*2,0,46); ConfirmBtn.Position = UDim2.new(0,PAD,1,-54)
+ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66); ConfirmBtn.BorderSizePixel = 0
+ConfirmBtn.AutoButtonColor = false; ConfirmBtn.Font = Enum.Font.GothamBold
+ConfirmBtn.TextSize = 18; ConfirmBtn.TextColor3 = Color3.fromRGB(215,255,220)
+ConfirmBtn.Text = "✓  Ready to Shop!"; ConfirmBtn.ZIndex = 10; corner(ConfirmBtn,10)
+
+ConfirmBtn.MouseButton1Click:Connect(function()
+    if prefsLocked then return end
+    Selections.confirmed = not Selections.confirmed
+    if Selections.confirmed then
+        ConfirmBtn.Text = "Locked In!"; ConfirmBtn.BackgroundColor3=Color3.fromRGB(28,110,44)
+        _G.Chompers.HideDot(); task.wait(0.5); closeGuide()
+    else
+        ConfirmBtn.Text = "✓  Ready to Shop!"; ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66)
+    end
+end)
+
+-- ============================================================
+-- ACCOLADES TAB — Awards | Titles | Cosmetics
+-- ============================================================
+
+local AccPanel = makePanel("AccPanel","ACCOLADES")
+local accSubPanels = {}
+
+mkSubBar(AccPanel, 40, {
+    {id="AWARDS",     label="🏅 Awards",     color=Color3.fromRGB(180,140,50)},
+    {id="TITLES",     label="🏆 Titles",     color=C.purple},
+    {id="COSMETICS",  label="🎨 Cosmetics",  color=Color3.fromRGB(200,60,130)},
+}, function(id)
+    for sid, pnl in pairs(accSubPanels) do pnl.Visible=(sid==id) end
+end)
+
+-- ── Awards sub-panel ─────────────────────────────────────────
+local awardsContent = Instance.new("Frame", AccPanel)
+awardsContent.Size=UDim2.new(1,0,1,-40); awardsContent.Position=UDim2.new(0,0,0,40)
+awardsContent.BackgroundTransparency=1; awardsContent.Visible=true
+accSubPanels["AWARDS"] = awardsContent
+
+local accScroll = mkScroll(awardsContent,UDim2.new(1,0,1,0),
+    UDim2.new(0,0,0,0),Color3.fromRGB(180,140,50))
+
+local function accSection(title, col, rows)
+    local hdr=Instance.new("TextLabel",accScroll)
+    hdr.Size=UDim2.new(1,0,0,28); hdr.BackgroundTransparency=1
+    hdr.Text=title; hdr.Font=Enum.Font.GothamBold; hdr.TextSize=17
+    hdr.TextColor3=col; hdr.TextXAlignment=Enum.TextXAlignment.Left; hdr.ZIndex=11
+    for _, row in ipairs(rows) do
+        local rf=Instance.new("Frame",accScroll)
+        rf.Size=UDim2.new(1,0,0,48); rf.BackgroundColor3=C.bgLight
+        rf.BorderSizePixel=0; rf.ZIndex=11; corner(rf,8)
+        mkLabel(rf,row.icon.."  "..row.name,Enum.Font.GothamBlack,14,C.white,
+            Enum.TextXAlignment.Left,UDim2.new(0,12,0,4),UDim2.new(0.72,0,0,20)).ZIndex=12
+        mkLabel(rf,row.desc,Enum.Font.Gotham,11,C.dim,
+            Enum.TextXAlignment.Left,UDim2.new(0,12,0,26),UDim2.new(0.72,0,0,16)).ZIndex=12
+        mkLabel(rf,"🏅 "..row.medals,Enum.Font.GothamBlack,16,C.gold,
+            Enum.TextXAlignment.Right,UDim2.new(0.72,0,0,0),UDim2.new(0.28,-12,1,0)).ZIndex=12
+    end
+end
+
+accSection("🏆 Top 5 Per-Match Awards", C.gold, {
+    {icon="🏅",name="Last One Standing",  medals="60", desc="Final survivor or Together winners"},
+    {icon="🏆",name="Chomper Champion",   medals="50", desc="Most total Points scored"},
+    {icon="💥",name="Chaos Agent",        medals="40", desc="Most total CL + FL damage dealt"},
+    {icon="👨‍🍳",name="Master Chef",        medals="35", desc="Most unique recipes cooked this match"},
+    {icon="🛒",name="Super Shopper",      medals="25", desc="Most ingredients purchased at checkout"},
+})
+accSection("⭐ Bonus Awards", Color3.fromRGB(200,165,70), {
+    {icon="🧼",name="Squeaky Clean",      medals="25", desc="Reached Food Fight with 0 breaks used"},
+    {icon="🗡️",name="Executioner",        medals="25", desc="Most 100% CL triggers caused"},
+    {icon="🧑‍🍳",name="Sous-Chef Supreme",  medals="25", desc="Most sous-chef contributions this match"},
+    {icon="🛒",name="Resource Raider",    medals="15", desc="Most total items gathered"},
+})
+accSection("📦 Base Medals", C.dim, {
+    {icon="✅",name="Participation",      medals="5",   desc="Complete any match"},
+    {icon="💪",name="Still Standing",     medals="+15", desc="Alive when the match ends"},
+    {icon="🤝",name="Together Victory",   medals="42",  desc="70% of Last One Standing (per player)"},
+})
+
+-- ── Titles sub-panel — premium vanity purchases only ─────────
+-- Titles are pure medal cosmetics. No achievement gating.
+-- They sit ABOVE Awards in prestige because you spend medals for them.
+
+local titlesContent = Instance.new("Frame", AccPanel)
+titlesContent.Size=UDim2.new(1,0,1,-40); titlesContent.Position=UDim2.new(0,0,0,40)
+titlesContent.BackgroundTransparency=1; titlesContent.Visible=false
+accSubPanels["TITLES"] = titlesContent
+
+-- Header bar
+local titleHdr=Instance.new("Frame",titlesContent)
+titleHdr.Size=UDim2.new(1,0,0,38); titleHdr.BackgroundColor3=Color3.fromRGB(16,10,30)
+titleHdr.BorderSizePixel=0
+mkLabel(titleHdr,"Purchase titles with medals — purely cosmetic, purely flex.",
+    Enum.Font.GothamBold,12,C.dim,Enum.TextXAlignment.Center,
+    UDim2.new(0,12,0,0),UDim2.new(0.7,-4,1,0))
+
+local equippedDisplay = mkLabel(titleHdr,"Equipped: (none)",
+    Enum.Font.GothamBlack,13,C.title,Enum.TextXAlignment.Right,
+    UDim2.new(0.7,0,0,0),UDim2.new(0.3,-10,1,0))
+
+local titlesScroll = mkScroll(titlesContent,
+    UDim2.new(1,0,1,-40),UDim2.new(0,0,0,38),C.purple)
+
+local HONORIFICS = {
+    -- Starter (25–100)
+    {n=1,  i="📦",name='"Expired Goods"',           flavor="For the player who keeps coming back.",              cost=25,   tc=Color3.fromRGB(90,190,90)},
+    {n=2,  i="🧺",name='"Paper or Plastic?"',        flavor="Both, actually.",                                   cost=50,   tc=Color3.fromRGB(90,190,90)},
+    {n=3,  i="🚫",name='"The Negotiator"',            flavor="Your answer is no.",                                cost=75,   tc=Color3.fromRGB(90,190,90)},
+    {n=4,  i="📋",name='"The Regular"',               flavor="You know where everything is.",                     cost=100,  tc=Color3.fromRGB(90,190,90)},
+    -- Common (125–200)
+    {n=5,  i="🤝",name='"Loyalty Card"',              flavor="Buy ten, get one in the face.",                     cost=125,  tc=Color3.fromRGB(80,130,220)},
+    {n=6,  i="🏎️",name='"Cart Racer"',               flavor="Beep beep.",                                        cost=150,  tc=Color3.fromRGB(80,130,220)},
+    {n=7,  i="🕊️",name='"The Diplomat"',             flavor="Together is better. Usually.",                      cost=175,  tc=Color3.fromRGB(80,130,220)},
+    {n=8,  i="🛒",name='"Checkout Champion"',          flavor="First. Every time.",                                cost=175,  tc=Color3.fromRGB(80,130,220)},
+    {n=9,  i="🛡️",name='"Aisle Survivor"',           flavor="Nothing touched you. Impressive.",                  cost=200,  tc=Color3.fromRGB(80,130,220)},
+    {n=10, i="🧻",name='"Napkin Hoarder"',            flavor="You pick them up. All of them.",                    cost=200,  tc=Color3.fromRGB(80,130,220)},
+    -- Uncommon (250–350)
+    {n=11, i="🧼",name='"Clean Sweep"',               flavor="Not a spot on you.",                                cost=250,  tc=C.purple},
+    {n=12, i="🧾",name='"Five-Star Shopper"',         flavor="The loyalty program paid off.",                     cost=250,  tc=C.purple},
+    {n=13, i="🍽️",name='"Sous-Chef Royale"',         flavor="You did the prep. Someone else ate the glory.",     cost=300,  tc=C.purple},
+    {n=14, i="👨‍🍳",name='"Master Chef"',              flavor="Every station. Every dish.",                        cost=325,  tc=C.purple},
+    {n=15, i="💥",name='"Notorious"',                 flavor="Known. Feared. Messy.",                             cost=350,  tc=C.purple},
+    -- Rare (400–600)
+    {n=16, i="🔁",name='"Brand Loyalty"',             flavor="Same order. Every time.",                           cost=400,  tc=C.red},
+    {n=17, i="🚽",name='"The Spillage"',              flavor="You send people there. Frequently.",                cost=450,  tc=C.red},
+    {n=18, i="🔪",name='"The Butcher"',               flavor="Fifty. And counting.",                              cost=500,  tc=C.red},
+    {n=19, i="💰",name='"Golden Shopper"',            flavor="You spent it all in one match.",                    cost=600,  tc=C.red},
+    -- Elite (750–1000)
+    {n=20, i="🪙",name='"Last Receipt"',              flavor="One dollar. One win.",                              cost=750,  tc=C.gold},
+    {n=21, i="☠️",name='"Food Poisoning"',            flavor="Three down. Match over.",                           cost=800,  tc=C.gold},
+    {n=22, i="🎯",name='"Smooth Criminal"',           flavor="The last one standing. By design.",                 cost=1000, tc=C.gold},
+    -- Legendary (1500–2500)
+    {n=23, i="⚡",name='"Freshest in the Store"',     flavor="Three in a row. Nobody does that.",                 cost=1500, tc=Color3.fromRGB(220,200,40)},
+    {n=24, i="💣",name='"Market Mayhem"',             flavor="Five hundred. You didn't hold back.",               cost=2500, tc=Color3.fromRGB(220,200,40)},
+}
+
+local TIER_RANGES = {
+    {min=0,    max=100,  label="Starter",   bg=Color3.fromRGB(18,32,18)},
+    {min=101,  max=200,  label="Common",    bg=Color3.fromRGB(14,20,42)},
+    {min=201,  max=400,  label="Uncommon",  bg=Color3.fromRGB(22,10,40)},
+    {min=401,  max=700,  label="Rare",      bg=Color3.fromRGB(38,10,10)},
+    {min=701,  max=1100, label="Elite",     bg=Color3.fromRGB(40,30,4)},
+    {min=1101, max=9999, label="Legendary", bg=Color3.fromRGB(34,28,4)},
+}
+local function tierFor(cost)
+    for _, t in ipairs(TIER_RANGES) do
+        if cost >= t.min and cost <= t.max then return t end
+    end
+    return {label="?", bg=C.bgCard}
+end
+
+local titleEquipBtns = {}
+local function refreshTitleBtns(equipped)
+    for _, d in ipairs(titleEquipBtns) do
+        local isEq = d.fullName == equipped
+        d.btn.Text = isEq and "✓ Equipped" or "Equip"
+        d.btn.BackgroundColor3 = isEq and Color3.fromRGB(28,110,44) or Color3.fromRGB(50,14,80)
+        d.btn.TextColor3 = isEq and Color3.fromRGB(200,255,215) or Color3.fromRGB(210,170,255)
+    end
+end
+
+for _, h in ipairs(HONORIFICS) do
+    local fullName = h.i.." "..h.name
+    local tier = tierFor(h.cost)
+    local costFmt = h.cost>=1000
+        and (tostring(math.floor(h.cost/100)/10):gsub("%.0","").."k")
+        or tostring(h.cost)
+
+    local card = Instance.new("Frame", titlesScroll)
+    card.Size = UDim2.new(1,0,0,78); card.LayoutOrder = h.n
+    card.BackgroundColor3 = tier.bg; card.BorderSizePixel=0; card.ZIndex=11
+    corner(card,12); mkStroke(card,2,h.tc)
+
+    -- Tier accent stripe
+    local stripe=Instance.new("Frame",card)
+    stripe.Size=UDim2.new(1,0,0,3); stripe.Position=UDim2.new(0,0,0,0)
+    stripe.BackgroundColor3=h.tc; stripe.BorderSizePixel=0; corner(stripe,2)
+
+    -- Title name — large and prominent
+    mkLabel(card,fullName,Enum.Font.GothamBlack,17,C.title,Enum.TextXAlignment.Left,
+        UDim2.new(0,14,0,8),UDim2.new(1,-180,0,24)).ZIndex=12
+
+    -- Tier badge
+    local tierBg=Instance.new("Frame",card)
+    tierBg.Size=UDim2.new(0,70,0,18); tierBg.Position=UDim2.new(0,14,0,34)
+    tierBg.BackgroundColor3=h.tc; tierBg.BorderSizePixel=0; tierBg.ZIndex=12; corner(tierBg,4)
+    local tierL=mkLabel(tierBg,tier.label,Enum.Font.GothamBlack,10,Color3.new(0,0,0))
+    tierL.ZIndex=13
+
+    -- Flavor text
+    mkLabel(card,'"'..h.flavor..'"',Enum.Font.GothamItalic,12,
+        Color3.fromRGB(155,148,185),Enum.TextXAlignment.Left,
+        UDim2.new(0,90,0,33),UDim2.new(1,-180,0,18)).ZIndex=12
+
+    -- Cost badge (prominent, right side)
+    local costBg=Instance.new("Frame",card)
+    costBg.Size=UDim2.new(0,88,0,30); costBg.AnchorPoint=Vector2.new(1,0)
+    costBg.Position=UDim2.new(1,-96,0,8)
+    costBg.BackgroundColor3=Color3.fromRGB(38,28,4); costBg.BorderSizePixel=0; corner(costBg,8)
+    mkStroke(costBg,1.5,C.gold)
+    mkLabel(costBg,"🏅 "..costFmt,Enum.Font.GothamBlack,14,C.gold).ZIndex=13
+
+    -- Equip button
+    local eBtn=Instance.new("TextButton",card)
+    eBtn.Size=UDim2.new(0,84,0,30); eBtn.AnchorPoint=Vector2.new(1,1)
+    eBtn.Position=UDim2.new(1,-8,1,-8)
+    eBtn.BackgroundColor3=Color3.fromRGB(50,14,80); eBtn.BorderSizePixel=0
+    eBtn.AutoButtonColor=false; eBtn.Font=Enum.Font.GothamBold; eBtn.TextSize=13
+    eBtn.TextColor3=Color3.fromRGB(210,170,255); eBtn.Text="Equip"; corner(eBtn,8)
+    mkStroke(eBtn,1.5,C.purple)
+
+    table.insert(titleEquipBtns,{btn=eBtn,fullName=fullName})
+    local capFull=fullName
+    eBtn.MouseButton1Click:Connect(function()
+        Selections.equippedTitle=capFull
+        equippedDisplay.Text="Equipped: "..capFull
+        refreshTitleBtns(capFull)
+        updateBillboard()
+    end)
+end
+
+-- ── Cosmetics sub-panel ──────────────────────────────────────
+local cosmeticsContent = Instance.new("Frame", AccPanel)
+cosmeticsContent.Size=UDim2.new(1,0,1,-40); cosmeticsContent.Position=UDim2.new(0,0,0,40)
+cosmeticsContent.BackgroundTransparency=1; cosmeticsContent.Visible=false
+accSubPanels["COSMETICS"] = cosmeticsContent
+
+local cosScroll = mkScroll(cosmeticsContent,UDim2.new(1,0,1,0),UDim2.new(0,0,0,0),
+    Color3.fromRGB(200,60,130))
+
+local function cosSection(sectionTitle, items)
+    local hdr=Instance.new("TextLabel",cosScroll)
+    hdr.Size=UDim2.new(1,0,0,28); hdr.BackgroundTransparency=1
+    hdr.Text=sectionTitle; hdr.Font=Enum.Font.GothamBold; hdr.TextSize=17
+    hdr.TextColor3=Color3.fromRGB(200,100,160); hdr.TextXAlignment=Enum.TextXAlignment.Left
+    for _, item in ipairs(items) do
+        local card=Instance.new("Frame",cosScroll)
+        card.Size=UDim2.new(1,0,0,60); card.BackgroundColor3=C.bgLight
+        card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
+        mkStroke(card,1.5,item.locked and C.stroke or Color3.fromRGB(200,60,130))
+        mkLabel(card,item.icon,Enum.Font.GothamBold,32,C.white,Enum.TextXAlignment.Center,
+            UDim2.new(0,0,0,0),UDim2.new(0,60,1,0)).ZIndex=12
+        mkLabel(card,item.name,Enum.Font.GothamBlack,15,C.white,Enum.TextXAlignment.Left,
+            UDim2.new(0,64,0,8),UDim2.new(1,-160,0,22)).ZIndex=12
+        mkLabel(card,item.desc,Enum.Font.Gotham,11,C.dim,Enum.TextXAlignment.Left,
+            UDim2.new(0,64,0,32),UDim2.new(1,-160,0,16)).ZIndex=12
+        local costStr=item.locked and "🔒 Coming Soon" or ("🏅 "..item.cost)
+        local cBg=Instance.new("Frame",card)
+        cBg.Size=UDim2.new(0,100,0,28); cBg.AnchorPoint=Vector2.new(1,0.5)
+        cBg.Position=UDim2.new(1,-8,0.5,0)
+        cBg.BackgroundColor3=item.locked and Color3.fromRGB(30,28,44) or Color3.fromRGB(40,6,20)
+        cBg.BorderSizePixel=0; corner(cBg,6)
+        mkLabel(cBg,costStr,Enum.Font.GothamBlack,12,item.locked and C.dim or Color3.fromRGB(255,140,200)).ZIndex=13
+    end
+end
+
+cosSection("🧺 Basket Skins", {
+    {icon="🧺",name="Classic Wicker",  desc="The original.",                      cost=0,    locked=false},
+    {icon="🌸",name="Spring Basket",   desc="Floral weave. Limited edition.",     cost=200,  locked=true},
+    {icon="🔥",name="Inferno Basket",  desc="For the chaos player.",              cost=500,  locked=true},
+    {icon="⭐",name="Golden Basket",   desc="You've earned it.",                  cost=1000, locked=true},
+})
+cosSection("🛒 Cart Skins", {
+    {icon="🛒",name="Standard Cart",   desc="The classic.",                       cost=0,    locked=false},
+    {icon="🌊",name="Ocean Cart",      desc="Smooth ride.",                       cost=250,  locked=true},
+    {icon="🎃",name="Haunted Cart",    desc="Seasonal. Very spooky.",             cost=400,  locked=true},
+    {icon="👑",name="Royal Cart",      desc="For the Chomper Champion.",          cost=1500, locked=true},
+})
+
+-- ============================================================
+-- MATCH TAB — Scoreboard | Keybindings | Teams | Settings
+-- ============================================================
+
+local MatchPanel = makePanel("MatchPanel","MATCH")
+tabPanels["SETTINGS"] = MatchPanel  -- legacy alias
+local matchSubPanels  = {}
+
+mkSubBar(MatchPanel, 38, {
+    {id="SCOREBOARD",  label="📊 Scoreboard",  color=Color3.fromRGB(50,70,100)},
+    {id="KEYBINDINGS", label="⌨️ Keys",         color=Color3.fromRGB(50,70,100)},
+    {id="TEAMS",       label="👥 Teams",        color=Color3.fromRGB(50,70,100)},
+    {id="SETTINGS",    label="⚙️ Settings",     color=Color3.fromRGB(50,70,100)},
+}, function(id)
+    for sid, pnl in pairs(matchSubPanels) do pnl.Visible=(sid==id) end
+end)
+
+local function matchSub(name, id, visible)
+    local f=Instance.new("Frame",MatchPanel)
+    f.Size=UDim2.new(1,0,1,-38); f.Position=UDim2.new(0,0,0,38)
+    f.BackgroundTransparency=1; f.Visible=visible; f.Name=name
+    matchSubPanels[id]=f; return f
+end
+
+-- Scoreboard
+local sbPanel = matchSub("ScoreboardPanel","SCOREBOARD",true)
+mkLabel(sbPanel,"📊  Ranked by total CL damage dealt",
+    Enum.Font.GothamBold,13,C.dim,Enum.TextXAlignment.Center,
+    UDim2.new(0,0,0,4),UDim2.new(1,0,0,20)).ZIndex=10
+
+local sbScroll=mkScroll(sbPanel,UDim2.new(1,-20,1,-28),UDim2.new(0,10,0,26),C.stroke)
+local sbPlaceholder=mkLabel(sbScroll,
+    "Scores appear from Gathering phase onwards.\nHold Tab in-game for the scoreboard overlay.",
+    Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
+    UDim2.new(0,0,0,0),UDim2.new(1,0,0,80))
+sbPlaceholder.TextWrapped=true
+
+local scoreData={}
+local function refreshScoreboard()
+    for _,c in ipairs(sbScroll:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    sbPlaceholder.Visible=#scoreData==0
+    for rank,d in ipairs(scoreData) do
+        local row=Instance.new("Frame",sbScroll)
+        row.Size=UDim2.new(1,0,0,36); row.LayoutOrder=rank
+        row.BackgroundColor3=rank==1 and Color3.fromRGB(48,38,12) or C.bgLight
+        row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
+        local rc=rank==1 and C.gold or rank==2 and Color3.fromRGB(185,185,195)
+            or rank==3 and Color3.fromRGB(165,105,65) or C.dim
+        mkLabel(row,rank.."  "..(d.name or "Player"),Enum.Font.GothamBold,14,rc,
+            Enum.TextXAlignment.Left,UDim2.new(0,8,0,0),UDim2.new(0.42,0,1,0)).ZIndex=12
+        mkLabel(row,"🧼 "..tostring(d.clDealt or 0),Enum.Font.Gotham,13,C.white,
+            Enum.TextXAlignment.Center,UDim2.new(0.42,0,0,0),UDim2.new(0.2,0,1,0)).ZIndex=12
+        mkLabel(row,"🍔 "..tostring(d.flDealt or 0),Enum.Font.Gotham,13,C.white,
+            Enum.TextXAlignment.Center,UDim2.new(0.62,0,0,0),UDim2.new(0.2,0,1,0)).ZIndex=12
+        mkLabel(row,"🍳 "..tostring(d.recipes or 0),Enum.Font.Gotham,13,C.white,
+            Enum.TextXAlignment.Center,UDim2.new(0.82,0,0,0),UDim2.new(0.18,0,1,0)).ZIndex=12
+    end
+end
+refreshScoreboard()
+_G.Chompers.UpdateScoreboard=function(data)
+    scoreData=data or {}
+    if isOpen and activeTab=="MATCH" then refreshScoreboard() end
+end
+
+-- Keybindings
+local kbPanel=matchSub("KeybindingsPanel","KEYBINDINGS",false)
+local kbScroll=mkScroll(kbPanel,UDim2.new(1,-20,1,-6),UDim2.new(0,10,0,4),C.stroke)
+local KEYS={
+    {"1 – 9, 0","Select hotbar slots 1–10"},
+    {"I","Toggle Inventory HUD"},
+    {"G","Toggle Store Guide"},
+    {"E  (hold)","Pick up ingredient"},
+    {"E","Interact — checkout, bathroom, alliance"},
+    {"Q","Drop selected item"},
+    {"Click","Throw quick  (min 0.3s, 40% power)"},
+    {"Hold + Release","Throw charged  (up to 1.5s, 100%)"},
+    {"Tab  (hold)","In-game Scoreboard overlay"},
+    {"Escape","Close any open HUD"},
+}
+for i,kb in ipairs(KEYS) do
+    local row=Instance.new("Frame",kbScroll)
+    row.Size=UDim2.new(1,0,0,36); row.LayoutOrder=i
+    row.BackgroundColor3=i%2==0 and Color3.fromRGB(24,22,36) or Color3.fromRGB(20,18,32)
+    row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
+    mkLabel(row,kb[1],Enum.Font.GothamBlack,13,C.white,
+        Enum.TextXAlignment.Left,UDim2.new(0,10,0,0),UDim2.new(0.3,0,1,0)).ZIndex=12
+    mkLabel(row,kb[2],Enum.Font.Gotham,13,C.dim,
+        Enum.TextXAlignment.Left,UDim2.new(0.3,0,0,0),UDim2.new(0.7,-10,1,0)).ZIndex=12
+end
+
+-- Teams
+local teamsPanel=matchSub("TeamsPanel","TEAMS",false)
+mkLabel(teamsPanel,
+    "👥 Current alliances appear here during the match.\nAvailable from Gathering phase onwards.",
+    Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
+    UDim2.new(0.1,0,0.2,0),UDim2.new(0.8,0,0.4,0)).TextWrapped=true
+
+-- Settings (volume sliders)
+local settingsPanel=matchSub("SettingsPanel","SETTINGS",false)
+local function mkVolSlider(parent,label,yOff,def)
+    local row=Instance.new("Frame",parent)
+    row.Size=UDim2.new(1,-28,0,46); row.Position=UDim2.new(0,14,0,yOff)
+    row.BackgroundColor3=C.bgLight; row.BorderSizePixel=0; row.ZIndex=10; corner(row,8)
+    mkLabel(row,label,Enum.Font.GothamBold,14,C.white,
+        Enum.TextXAlignment.Left,UDim2.new(0,12,0,0),UDim2.new(0.38,0,1,0)).ZIndex=11
+    local track=Instance.new("Frame",row)
+    track.Size=UDim2.new(0.48,-8,0,10); track.Position=UDim2.new(0.4,0,0.5,-5)
+    track.BackgroundColor3=Color3.fromRGB(32,30,50); track.BorderSizePixel=0; track.ZIndex=11
+    corner(track,5)
+    local fill=Instance.new("Frame",track)
+    fill.Size=UDim2.new(def,0,1,0); fill.BackgroundColor3=C.red
+    fill.BorderSizePixel=0; fill.ZIndex=12; corner(fill,5)
+    local valL=mkLabel(row,math.floor(def*100).."%",Enum.Font.GothamBlack,13,C.dim,
+        Enum.TextXAlignment.Right,UDim2.new(0.9,0,0,0),UDim2.new(0.1,0,1,0))
+    valL.ZIndex=11
+    local hit=Instance.new("TextButton",track)
+    hit.Size=UDim2.new(1,0,4,0); hit.Position=UDim2.new(0,0,-1.5,0)
+    hit.BackgroundTransparency=1; hit.Text=""; hit.ZIndex=13
+    local drag=false
+    hit.MouseButton1Down:Connect(function() drag=true end)
+    hit.MouseButton1Up:Connect(function()   drag=false end)
+    hit.MouseMoved:Connect(function(x)
+        if not drag then return end
+        local pct=math.clamp((x-track.AbsolutePosition.X)/track.AbsoluteSize.X,0,1)
+        fill.Size=UDim2.new(pct,0,1,0); valL.Text=math.floor(pct*100).."%"
+    end)
+end
+mkLabel(settingsPanel,"🔊 Volume",Enum.Font.GothamBlack,20,C.white,
+    Enum.TextXAlignment.Left,UDim2.new(0,14,0,8),UDim2.new(1,0,0,28)).ZIndex=10
+mkVolSlider(settingsPanel,"Master Volume",42,0.80)
+mkVolSlider(settingsPanel,"SFX Volume",   96,0.90)
+mkVolSlider(settingsPanel,"Music Volume", 150,0.50)
+mkVolSlider(settingsPanel,"Ambient",      204,0.70)
 
 -- ============================================================
 -- OPEN / CLOSE
 -- ============================================================
 
 local function closeGuide()
-	isOpen=false
-	TweenService:Create(Overlay,TweenInfo.new(0.18),
-		{BackgroundTransparency=1}):Play()
-	TweenService:Create(Panel,
-		TweenInfo.new(0.22,Enum.EasingStyle.Back,Enum.EasingDirection.In),
-		{Position=UDim2.new(0.5,0,0,PANEL_TOP+10)}):Play()
-	task.wait(0.24)
-	if not isOpen then Overlay.Visible=false end
+    isOpen=false
+    TweenService:Create(Overlay,TweenInfo.new(0.18),{BackgroundTransparency=1}):Play()
+    TweenService:Create(Panel,
+        TweenInfo.new(0.22,Enum.EasingStyle.Back,Enum.EasingDirection.In),
+        {Position=UDim2.new(0.5,0,0,PANEL_TOP+12)}):Play()
+    task.wait(0.24)
+    if not isOpen then Overlay.Visible=false end
 end
 
 local function openGuide(tabId)
-	isOpen=true; Overlay.Visible=true
-	Overlay.BackgroundTransparency=0.6
-	Panel.Position=UDim2.new(0.5,0,0,PANEL_TOP+10)
-	TweenService:Create(Overlay,TweenInfo.new(0.18),
-		{BackgroundTransparency=0.25}):Play()
-	TweenService:Create(Panel,
-		TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
-		{Position=UDim2.new(0.5,0,0,PANEL_TOP)}):Play()
-	switchTab(tabId or activeTab or "RULES")
+    isOpen=true; Overlay.Visible=true
+    Panel.Position=UDim2.new(0.5,0,0,PANEL_TOP+12)
+    Overlay.BackgroundTransparency=0.6
+    TweenService:Create(Overlay,TweenInfo.new(0.18),{BackgroundTransparency=0.25}):Play()
+    TweenService:Create(Panel,
+        TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
+        {Position=UDim2.new(0.5,0,0,PANEL_TOP)}):Play()
+    switchTab(tabId or activeTab or "PREFERENCES")
 end
 
 CloseBtn.MouseButton1Click:Connect(closeGuide)
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode==Enum.KeyCode.Escape and isOpen then closeGuide() end
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode==Enum.KeyCode.Escape and isOpen then closeGuide() end
+    if input.KeyCode==Enum.KeyCode.G then
+        if isOpen then closeGuide() else openGuide() end
+    end
 end)
+
+-- ============================================================
+-- PHASE-BASED ROUTING + PREFERENCES LOCKING
+-- ============================================================
+
+local prefBufferTimer = nil
+
+local function defaultTab(phase)
+    if phase=="Prelobby"                               then return "PREFERENCES" end
+    if phase=="Gathering" or phase=="Cooking"
+    or phase=="CookingGrace"                           then return "COOKBOOK" end
+    if phase=="FoodFight"                              then return "MATCH" end
+    if phase=="EndGame" or phase=="Accolades"          then return "ACCOLADES" end
+    return activeTab
+end
+
+local function lockPrefs()
+    prefsLocked=true; PrefLock.Visible=true
+    if isOpen and activeTab=="PREFERENCES" then switchTab(defaultTab(currentPhase)) end
+end
+local function unlockPrefs()
+    prefsLocked=false; PrefLock.Visible=false
+end
+
+local PhaseRemote = Remotes and Remotes:FindFirstChild("PhaseChanged")
+if PhaseRemote then
+    PhaseRemote.OnClientEvent:Connect(function(phase)
+        currentPhase=phase
+        if phase=="Gathering" then
+            if not Selections.confirmed then
+                openGuide("PREFERENCES")
+                if prefBufferTimer then pcall(task.cancel,prefBufferTimer) end
+                prefBufferTimer=task.delay(10,lockPrefs)
+            else
+                lockPrefs()
+            end
+        elseif phase=="Cooking" or phase=="CookingGrace" or phase=="FoodFight" then
+            lockPrefs()
+        elseif phase=="Prelobby" then
+            unlockPrefs()
+            Selections.confirmed=false
+            ConfirmBtn.Text="✓  Ready to Shop!"
+            ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66)
+            task.wait(1)
+            if not isOpen then openGuide("PREFERENCES") end
+        elseif phase=="EndGame" or phase=="Accolades" then
+            unlockPrefs()
+            task.wait(0.5); openGuide("ACCOLADES")
+        end
+    end)
+end
+
+-- ============================================================
+-- _G.Chompers API
+-- ============================================================
 
 _G.Chompers.OpenStoreGuide   = openGuide
 _G.Chompers.CloseStoreGuide  = closeGuide
 _G.Chompers.IsStoreGuideOpen = function() return isOpen end
 _G.Chompers.RefreshBillboard = updateBillboard
--- CookbookBuilder hookpoints via _G.Chompers
+_G.Chompers.EquipTitle       = function(t)
+    Selections.equippedTitle=t; updateBillboard()
+end
 _G.Chompers.tabPanels        = tabPanels
 _G.Chompers.switchTab        = switchTab
 _G.Chompers.ContentArea      = ContentArea
-
--- ============================================================
--- RULES TAB — fully fleshed out per Bible
--- ============================================================
-
-local RulesPanel=Instance.new("Frame",ContentArea)
-RulesPanel.Name="RulesPanel"; RulesPanel.Size=UDim2.new(1,0,1,0)
-RulesPanel.BackgroundTransparency=1; RulesPanel.Visible=false; RulesPanel.ZIndex=9
-tabPanels["RULES"]=RulesPanel
-
-local rScroll=Instance.new("ScrollingFrame",RulesPanel)
-rScroll.Size=UDim2.new(1,-24,1,-12); rScroll.Position=UDim2.new(0,12,0,6)
-rScroll.BackgroundTransparency=1; rScroll.BorderSizePixel=0
-rScroll.ScrollBarThickness=7; rScroll.ScrollBarImageColor3=C.red
-rScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; rScroll.CanvasSize=UDim2.new(0,0,0,0)
-rScroll.ZIndex=10
-local rLL=Instance.new("UIListLayout",rScroll)
-rLL.SortOrder=Enum.SortOrder.LayoutOrder; rLL.Padding=UDim.new(0,10)
-local rPad=Instance.new("UIPadding",rScroll)
-rPad.PaddingTop=UDim.new(0,10);rPad.PaddingBottom=UDim.new(0,10)
-rPad.PaddingLeft=UDim.new(0,4);rPad.PaddingRight=UDim.new(0,4)
-
-local function addSection(title, color, rules)
-	local hdr=Instance.new("TextLabel",rScroll)
-	hdr.Size=UDim2.new(1,0,0,36); hdr.BackgroundTransparency=1
-	hdr.Text=title; hdr.Font=Enum.Font.GothamBold; hdr.TextSize=22
-	hdr.TextColor3=color; hdr.TextXAlignment=Enum.TextXAlignment.Left; hdr.ZIndex=11
-	for _, rule in ipairs(rules) do
-		local rf=Instance.new("Frame",rScroll)
-		rf.Size=UDim2.new(1,0,0,0); rf.AutomaticSize=Enum.AutomaticSize.Y
-		rf.BackgroundColor3=Color3.fromRGB(26,24,40); rf.BorderSizePixel=0; rf.ZIndex=11
-		corner(rf,10)
-		local rfp=Instance.new("UIPadding",rf)
-		rfp.PaddingTop=UDim.new(0,12);rfp.PaddingBottom=UDim.new(0,12)
-		rfp.PaddingLeft=UDim.new(0,16);rfp.PaddingRight=UDim.new(0,16)
-		local dot=Instance.new("Frame",rf)
-		dot.Size=UDim2.new(0,6,0,6);dot.Position=UDim2.new(0,-10,0,12)
-		dot.BackgroundColor3=color;dot.BorderSizePixel=0;dot.ZIndex=12;corner(dot,99)
-		local rl=Instance.new("TextLabel",rf)
-		rl.Size=UDim2.new(1,0,0,0);rl.AutomaticSize=Enum.AutomaticSize.Y
-		rl.BackgroundTransparency=1;rl.Text=rule
-		rl.Font=Enum.Font.Gotham;rl.TextSize=18
-		rl.TextColor3=Color3.fromRGB(215,212,230)
-		rl.TextXAlignment=Enum.TextXAlignment.Left
-		rl.TextYAlignment=Enum.TextYAlignment.Top
-		rl.TextWrapped=true;rl.LineHeight=1.4;rl.ZIndex=12
-	end
-end
-
-addSection("💰 Starting Economy",C.gold,{
-	"You start every match with $15 and 1 napkin. That's it. Spend wisely!",
-	"Ingredients must be PAID at Checkout before you can cook or throw them. Unpaid items show an orange price tag in your hotbar.",
-	"💡 Cash ($1–$25 stacks) and napkins (🧻) spawn OUTSIDE ONLY — car park, back alleys, side alleys. Nothing spawns in the prelobby area.",
-	"💡 A napkin is worth more than most ingredients. Grab one if you see it.",
-})
-addSection("⚖️ Weight System",Color3.fromRGB(200,160,80),{
-	"🧺 Basket: 35wt limit, +5% speed. 🛒 Cart: 70wt limit, −15% speed, +15% detection radius.",
-	"Every +10wt over your limit: −10% speed penalty. Overloading is possible but punishing.",
-	"Common ingredients stack ×3, Uncommon ×2, Rare/UR/Legendary ×1. Weight counts per item in the stack.",
-})
-addSection("🧼 Cleanliness (CL) — Your HP",Color3.fromRGB(65,185,235),{
-	"CL = your HP, measured 0–100%. Rises ONLY from enemy food hits. Does NOT decay naturally.",
-	"Non-allergen hits: ×0.75 CL. Allergen hits: ×1.75 CL. Oil+fire recipes: ×1.6 CL.",
-	"At 80%+: bathroom access unlocked. At ~95%: 0.75s warning slow + screen edge effect.",
-	"At 100%: you're forced to the bathroom (costs 1 break, drops ALL items). No grace at 100%.",
-	"Sub-100% grace window: after any single hit of 40+ CL below 100%, you have 1.5s before consequences resolve — protection against rapid combos.",
-	"🧻 NAPKIN: heals −25 CL. 2s use time (can be interrupted!). 20s cooldown. Recharges to ×1 after cooldown. FREE — no break cost.",
-})
-addSection("🍔 Fullness (FL) — Control & Risk",Color3.fromRGB(235,155,35),{
-	"FL is a control/penalty resource — NOT a win condition. Rises from food hits and decays over time on its own.",
-	"Cooked recipe hit: +2 FL. Raw/cold hit: +1 FL. Trash can loot: +5 FL. Eating buff recipe yourself: variable.",
-	"10–30% FL: size increases, speed decreases gradually. 80%+: bathroom access unlocked.",
-	"At 100% FL: FORCED bathroom (1 break). 0.5s visual cue before it triggers.",
-	"💡 Getting hit by your favourite food thrown by an enemy: ×2 FL spike on top of normal damage.",
-})
-addSection("🚽 Bathroom Breaks — 3 Per Match",Color3.fromRGB(100,180,255),{
-	"Each player has exactly 3 bathroom breaks per match. Watch the toilet icons in the bottom left!",
-	"🚿 SINK (left stall): resets Cleanliness to 0% = costs 1 break. 🚽 TOILET (right stall): resets Fullness to 0% = costs 1 break.",
-	"Using both in the same visit = 2 breaks consumed. Bathrooms are a FULL IMMUNE ZONE — no one can throw at you inside.",
-	"At 0 breaks remaining: ELIMINATED → spectator mode only.",
-	"💡 Every saved break is a second (or third) life. Your napkin is free healing — use it early and often.",
-	"Max 10 seconds in the bathroom per visit. Then you're ejected automatically.",
-})
-addSection("⚠️ Allergy & ⭐ Favourite",Color3.fromRGB(226,75,74),{
-	"Set your Allergy and Favourite in Preferences BEFORE the match starts — they lock when Gathering begins.",
-	"⚠️ ALLERGY: your kryptonite. Get hit by your allergen → ×1.75 CL damage. Everything else → ×0.75.",
-	"   Egg counts as DAIRY for allergy purposes — Dairy-allergic players take ×1.75 from raw Egg throws.",
-	"⭐ FAVOURITE: your signature weapon. Throwing your favourite food at anyone deals a bonus +min(Base CL × 50%, 30) CL.",
-	"   Examples: Tomato → +3 CL. Mapo Tofu → +19 CL. Million Dollar Steak → +30 CL (cap).",
-	"   Self-consume your favourite recipe → ×1.5 buff duration. Enemy hits you with yours → ×2 FL spike.",
-	"Your allergy and favourite show above your head — visible to EVERYONE. Own it.",
-})
-addSection("🍳 Cooking",Color3.fromRGB(85,210,130),{
-	"Bring PAID ingredients to a PREP TABLE in the Kitchen to assemble recipes.",
-	"Some recipes then go to the STOVETOP. Watch the heat bar: Perfect = +10% bonus. Burned = −20% CL but +30% status effect strength.",
-	"⏱ COOK DEPTH BONUS: 2 ingredients = +5% CL. 3 ingredients = +10% CL. 4+ ingredients = +15% CL.",
-	"Cook times: Common 2s · Uncommon 4s · Rare 7s · Ultra-Rare 12s · Legendary 20s.",
-	"Any single hit of 25+ CL while actively cooking DROPS the cook — you lose your ingredients.",
-	"⚠️ Cooking emits sound and increases your detection radius on the minimap.",
-	"Servings: Common=3 · Uncommon=2 · Rare=1 · Ultra-Rare=1 · Legendary=1 (server announces Legendary throws).",
-})
-addSection("🎯 Mark System",Color3.fromRGB(175,95,220),{
-	"⭐ MARK: tags a target so your NEXT hit deals bonus CL. Only ONE mark active per target at a time.",
-	"   Tomato: +15% CL on next hit. Soy Sauce: +20%. Black Garlic: +20%. Highest mark wins if overwritten.",
-	"   A small icon floats above marked targets. The mark lasts until consumed by a hit.",
-	"⚡ ELEMENTAL: Oil hit → follow with a fire recipe = ×1.6 CL.",
-	"🎮 CONTROL: Banana = knockdown. 2× Cheese = root 1.5s. Honey = root + floor zone. Blue Cheese = next slow/root +50% duration.",
-	"CC diminishing returns: same effect applied repeatedly within 8s loses potency by 50% each time.",
-	"Total freeze effects are capped at 2.5s regardless of combo. Throw cooldown: 0.4s between throws.",
-})
-addSection("🤝 Alliance System",Color3.fromRGB(100,210,255),{
-	"Friendship Bracelets ($12) sold at the Trade Hub kiosk during GATHERING and COOKING phases.",
-	"To ally: buy a Bracelet, press E near any player to offer. They have 10 seconds to accept or decline.",
-	"Bracelet is CONSUMED regardless of the answer — no refunds. Declining is announced publicly.",
-	"Team size limits: 1–19 players = 1 ally. 20–29 players = 2 allies. 30–40 players = 3 allies.",
-	"On acceptance: matching name colours appear above both heads — visible to EVERYONE.",
-	"💡 Friendship Bracelets can rarely spawn as Ultra-Rare world loot in the Stockroom and alleys. Max 2 per match, never respawn.",
-	"⚠️ At Food Fight start: alliances grey out. Both must press E near each other within 15s to reconfirm or it breaks publicly.",
-	"Friendly fire is ALWAYS ON. Hitting your ally does full damage — it doesn't break the alliance mechanically.",
-})
-addSection("🏁 End-Game: The Final Decision",C.gold,{
-	"When only allied players remain, a 30s timer appears: 'Food Fight to the Finish? Or Leave With a Friend?'",
-	"🤝 Leave With a Friend: shared victory, both earn 70% of solo medal value.",
-	"⚔️ Food Fight to the Finish: alliances break, pure FFA until one player stands.",
-	"Timer expires = Fight starts automatically. Hesitation IS a choice.",
-	"In a 3-person alliance, votes are PRIVATE. Any single Fight vote breaks the alliance for all three.",
-})
-addSection("✨ Legendary Items",C.gold,{
-	"Three Legendaries spawn ONCE each at random locations anywhere on the map — they never respawn.",
-	"⭐ MILLION DOLLAR STEAK: Wagyu Beef + Truffle + Caviar. CL 70. Server announces when thrown.",
-	"🛒 GOLDEN CART: +40% speed, ×2 throw range, unlimited weight for 20 seconds. Server announces pickup.",
-	"🍳 PORTABLE COOKER: 4 uses, deploy anywhere on the map, 1.5s slower than kitchen. Lockable.",
-	"💡 Check every bin, shelf, and crate — Legendaries can appear on any ingredient surface.",
-})
-addSection("🏆 Winning & Medals",Color3.fromRGB(85,185,95),{
-	"Most total Cleanliness (CL) damage dealt wins the match.",
-	"Last player standing is the tiebreaker — worth +15 bonus medals.",
-	"ASSIST SCORE: apply a Mark or control effect → your ally hits within 4 seconds → you earn 35% of the damage as assist score.",
-	"Alliances do NOT share scores. Each player wins or loses individually.",
-	"Medals are awarded after the match. Spend them in the Accolades tab on cosmetics.",
-})
-addSection("🗺️ The Store Map",Color3.fromRGB(255,180,80),{
-	"🥦 PRODUCE (left wall): Fruit, veg, eggs, potato, basil, truffle. Best zone for combo setup.",
-	"🍞 BAKERY (right wall): Bread, dough, chocolate, honey, croissant, fondant. The control zone.",
-	"🥛 DAIRY (centre-left freezer rows): Cheese, butter, cream, mayo, blue cheese. Anti-mobility.",
-	"❄️ FREEZER/MEAT (centre freezer rows): Chicken, beef, pork, tuna, crab, lobster, wagyu. Highest damage.",
-	"🏪 AISLES (centre-right shelves): Rice, pasta, spices, oil, soy sauce, miso, black garlic, saffron. Combo engine.",
-	"📦 STOCKROOM (back): EVERY ingredient at higher density. Caviar ONLY here. Extreme risk, extreme reward.",
-	"🍳 KITCHEN (back of main floor): Prep Tables and Stovetops. Detection radius increased while cooking.",
-	"🛒 CHECKOUT (front): Pay here before using items. Prime ambush location.",
-	"🚽 BATHROOMS (all 4 corners): Full immune zone while inside. Sink = CL reset. Toilet = FL reset.",
-	"🤝 TRADE HUB (centre of main floor): Safe zone. Friendship Bracelet kiosk during Gathering + Cooking.",
-	"💡 Rare ingredients respawn every 50s. Ultra-Rare every 90s. Legendaries NEVER respawn.",
-})
-
--- ============================================================
--- PREFERENCES TAB
--- ============================================================
-
-local PrefPanel=Instance.new("Frame",ContentArea)
-PrefPanel.Name="PrefPanel"; PrefPanel.Size=UDim2.new(1,0,1,0)
-PrefPanel.BackgroundTransparency=1; PrefPanel.Visible=false; PrefPanel.ZIndex=9
-tabPanels["PREFERENCES"]=PrefPanel
-
--- Lock overlay — visible ONLY during Gathering/Cooking/FoodFight
-local PrefLock=Instance.new("Frame",PrefPanel)
-PrefLock.Name="PrefLock"
-PrefLock.Size=UDim2.new(1,0,1,0)
-PrefLock.BackgroundColor3=Color3.fromRGB(8,6,16)
-PrefLock.BackgroundTransparency=0.35
-PrefLock.BorderSizePixel=0; PrefLock.ZIndex=50; PrefLock.Visible=false
-corner(PrefLock,12)
-local lockL=mkLabel(PrefLock,
-	"🔒  Preferences Locked\n\nYou can view your selections,\nbut cannot change allergy or\nfavourite during a match.",
-	Enum.Font.GothamBold,20,C.white,Enum.TextXAlignment.Center,
-	UDim2.new(0.1,0,0.2,0),UDim2.new(0.8,0,0.5,0))
-lockL.TextWrapped=true; lockL.LineHeight=1.4
-
-local PAD=16
-
--- Container selection
-mkLabel(PrefPanel,"Choose your container",
-	Enum.Font.GothamMedium,17,C.dim,Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,10),UDim2.new(1,-PAD*2,0,22))
-
-local CartRow=Instance.new("Frame",PrefPanel)
-CartRow.Size=UDim2.new(1,-PAD*2,0,64); CartRow.Position=UDim2.new(0,PAD,0,34)
-CartRow.BackgroundTransparency=1
-
-local function mkCartBtn(name,text,xPos,sel)
-	local b=Instance.new("TextButton",CartRow)
-	b.Name=name; b.Size=UDim2.new(0.485,0,1,0); b.Position=UDim2.new(xPos,0,0,0)
-	b.BackgroundColor3=sel and C.red or Color3.fromRGB(32,30,46)
-	b.BorderSizePixel=0; b.Font=Enum.Font.GothamBold; b.TextSize=17
-	b.TextColor3=sel and Color3.fromRGB(253,248,240) or Color3.fromRGB(82,80,105)
-	b.Text=text; b.AutoButtonColor=false; b.ZIndex=10; corner(b,10); return b
-end
-local BasketBtn=mkCartBtn("BasketBtn","🧺 Basket — 35wt · +5% speed",0,true)
-local CartBtn  =mkCartBtn("CartBtn",  "🛒 Cart   — 70wt · −15% speed",0.515,false)
-
-local function selectCart(choice)
-	if prefsLocked then return end
-	Selections.cart=choice
-	if choice=="basket" then
-		BasketBtn.BackgroundColor3=C.red; BasketBtn.TextColor3=Color3.fromRGB(253,248,240)
-		CartBtn.BackgroundColor3=Color3.fromRGB(32,30,46); CartBtn.TextColor3=Color3.fromRGB(82,80,105)
-	else
-		CartBtn.BackgroundColor3=C.red; CartBtn.TextColor3=Color3.fromRGB(253,248,240)
-		BasketBtn.BackgroundColor3=Color3.fromRGB(32,30,46); BasketBtn.TextColor3=Color3.fromRGB(82,80,105)
-	end
-	_G.Chompers.SetContainerType(choice=="basket" and "Basket" or "Cart")
-	if Remotes then
-		local r=Remotes:FindFirstChild("PlayerSelectCart")
-		if r then r:FireServer(choice) end
-	end
-end
-BasketBtn.MouseButton1Click:Connect(function() selectCart("basket") end)
-CartBtn.MouseButton1Click:Connect(function() selectCart("cart") end)
-selectCart("basket")
-
-local div=Instance.new("Frame",PrefPanel)
-div.Size=UDim2.new(1,-PAD*2,0,1); div.Position=UDim2.new(0,PAD,0,108)
-div.BackgroundColor3=Color3.fromRGB(40,38,54); div.BorderSizePixel=0
-
-local alHY=118; local descY=alHY+30; local selY=descY+56; local scrollY=selY+24
-
-mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBold,22,C.gold,
-	Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
-local fDesc=mkLabel(PrefPanel,
-	"Throw your fav → +min(Base×50%, 30) CL bonus. Self-consume → ×1.5 buff duration. Enemy hits you with it → ×2 FL spike.",
-	Enum.Font.Gotham,15,Color3.fromRGB(215,205,175),Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,descY),UDim2.new(0.5,-PAD-4,0,54))
-fDesc.TextWrapped=true; fDesc.LineHeight=1.4
-
-mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,22,Color3.fromRGB(226,75,74),
-	Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,alHY),UDim2.new(0.5,-PAD-4,0,28))
-local aDesc=mkLabel(PrefPanel,
-	"Your kryptonite. Get hit by your allergen → ×1.75 CL damage. Everything else → ×0.75. Egg counts as Dairy.",
-	Enum.Font.Gotham,15,Color3.fromRGB(215,185,185),Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,descY),UDim2.new(0.5,-PAD-4,0,54))
-aDesc.TextWrapped=true; aDesc.LineHeight=1.4
-
--- FavSelected on left, AllergySelected on right
-local FavSelected=mkLabel(PrefPanel,"None selected",
-	Enum.Font.GothamMedium,14,Color3.fromRGB(210,148,42),Enum.TextXAlignment.Left,
-	UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,20))
-FavSelected.Name="FavSelected"
-
--- When CookbookBuilder updates FavSelected, sync to Selections and refresh billboard
-FavSelected:GetPropertyChangedSignal("Text"):Connect(function()
-	local t = FavSelected.Text
-	if t ~= "" and t ~= "None selected" then
-		Selections.favourite = t:gsub("^✓%s*", "")
-	else
-		Selections.favourite = nil
-	end
-	updateBillboard()
-end)
-
-local AllergySelected=mkLabel(PrefPanel,"None selected",
-	Enum.Font.GothamMedium,14,Color3.fromRGB(210,78,78),Enum.TextXAlignment.Left,
-	UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,20))
-
--- FavouriteScroll on LEFT — CookbookBuilder populates this
-local FavouriteScroll=mkScroll(PrefPanel,"FavouriteScroll",
-	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0,PAD,0,scrollY),C.gold)
-
--- AllergyScroll on RIGHT
-local AllergyScroll=mkScroll(PrefPanel,"AllergyScroll",
-	UDim2.new(0.5,-PAD-4,1,-(scrollY+60)),UDim2.new(0.5,PAD/2,0,scrollY))
-
-local ConfirmBtn=Instance.new("TextButton",PrefPanel)
-ConfirmBtn.Name="ConfirmButton"
-ConfirmBtn.Size=UDim2.new(1,-PAD*2,0,50); ConfirmBtn.Position=UDim2.new(0,PAD,1,-58)
-ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66); ConfirmBtn.BorderSizePixel=0
-ConfirmBtn.Font=Enum.Font.GothamBold; ConfirmBtn.TextSize=19
-ConfirmBtn.TextColor3=Color3.fromRGB(220,255,224); ConfirmBtn.Text="✓ Ready to Shop!"
-ConfirmBtn.AutoButtonColor=false; ConfirmBtn.ZIndex=10; corner(ConfirmBtn,10)
-
--- Allergy buttons
-local selectedAllergyBtn=nil
-for _, atype in ipairs(ALLERGY_TYPES) do
-	local btn=Instance.new("TextButton",AllergyScroll)
-	btn.Name=atype.name; btn.Size=UDim2.new(1,0,0,70)
-	btn.BackgroundColor3=Color3.fromRGB(28,26,42); btn.BorderSizePixel=0
-	btn.AutoButtonColor=false; btn.ZIndex=10; corner(btn,10)
-	local accent=Instance.new("Frame",btn)
-	accent.Size=UDim2.new(0,5,1,-10); accent.Position=UDim2.new(0,5,0,5)
-	accent.BackgroundColor3=atype.color; accent.BorderSizePixel=0; corner(accent,2)
-	mkLabel(btn,atype.icon.." "..atype.name,
-		Enum.Font.GothamBold,22,atype.color,Enum.TextXAlignment.Left,
-		UDim2.new(0,16,0,0),UDim2.new(1,-20,1,0))
-	btn.MouseButton1Click:Connect(function()
-		if prefsLocked then return end
-		if Selections.allergy==atype.name then
-			Selections.allergy=nil; AllergySelected.Text="None selected"
-			btn.BackgroundColor3=Color3.fromRGB(28,26,42); selectedAllergyBtn=nil
-		else
-			if selectedAllergyBtn then selectedAllergyBtn.BackgroundColor3=Color3.fromRGB(28,26,42) end
-			Selections.allergy=atype.name; AllergySelected.Text="✓ "..atype.name
-			btn.BackgroundColor3=Color3.fromRGB(55,18,18); selectedAllergyBtn=btn
-		end
-		if Remotes then
-			local r=Remotes:FindFirstChild("PlayerSelectAllergy")
-			if r then r:FireServer(Selections.allergy) end
-		end
-		updateBillboard()
-	end)
-end
-
-ConfirmBtn.MouseButton1Click:Connect(function()
-	if prefsLocked then return end
-	if Selections.confirmed then
-		Selections.confirmed=false
-		ConfirmBtn.Text="✓ Ready to Shop!"; ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66)
-		return
-	end
-	Selections.confirmed=true; _G.Chompers.HideDot()
-	ConfirmBtn.Text="Locked In!"; ConfirmBtn.BackgroundColor3=Color3.fromRGB(30,110,46)
-	task.wait(0.6); closeGuide()
-end)
-
--- ============================================================
--- MATCH TAB — Scoreboard / Keybindings / Teams
--- ============================================================
-
-local MatchPanel=Instance.new("Frame",ContentArea)
-MatchPanel.Name="MatchPanel"; MatchPanel.Size=UDim2.new(1,0,1,0)
-MatchPanel.BackgroundTransparency=1; MatchPanel.Visible=false; MatchPanel.ZIndex=9
-tabPanels["MATCH"]=MatchPanel
-tabPanels["SETTINGS"]=MatchPanel  -- legacy alias for CookbookBuilder
-
-local MSB_H=38
-local mSubBar=Instance.new("Frame",MatchPanel)
-mSubBar.Size=UDim2.new(1,0,0,MSB_H); mSubBar.Position=UDim2.new(0,0,0,0)
-mSubBar.BackgroundColor3=Color3.fromRGB(20,18,32); mSubBar.BorderSizePixel=0; mSubBar.ZIndex=10
-local msLL=Instance.new("UIListLayout",mSubBar)
-msLL.FillDirection=Enum.FillDirection.Horizontal
-msLL.HorizontalAlignment=Enum.HorizontalAlignment.Left
-msLL.VerticalAlignment=Enum.VerticalAlignment.Center; msLL.Padding=UDim.new(0,2)
-
-local mContent=Instance.new("Frame",MatchPanel)
-mContent.Size=UDim2.new(1,0,1,-MSB_H); mContent.Position=UDim2.new(0,0,0,MSB_H)
-mContent.BackgroundTransparency=1; mContent.ZIndex=9
-
-local MATCH_SUBTABS={
-	{id="SCOREBOARD",  label="📊 Scoreboard",  order=1},
-	{id="KEYBINDINGS", label="⌨️ Keybindings", order=2},
-	{id="TEAMS",       label="👥 Teams",        order=3},
-	{id="SETTINGS",    label="⚙️ Settings",     order=4},
-}
-local mSubBtns={}; local mSubPanels={}
-local function switchMatchSub(subId)
-	for _,st in ipairs(MATCH_SUBTABS) do
-		local btn=mSubBtns[st.id]; local pnl=mSubPanels[st.id]
-		if st.id==subId then
-			btn.BackgroundColor3=Color3.fromRGB(50,70,100)
-			btn.TextColor3=Color3.fromRGB(160,190,230); if pnl then pnl.Visible=true end
-		else
-			btn.BackgroundColor3=Color3.fromRGB(26,24,40)
-			btn.TextColor3=Color3.fromRGB(105,100,135); if pnl then pnl.Visible=false end
-		end
-	end
-end
-for _,st in ipairs(MATCH_SUBTABS) do
-	local btn=Instance.new("TextButton",mSubBar)
-	btn.Name=st.id.."Sub"; btn.LayoutOrder=st.order
-	btn.Size=UDim2.new(0.25,-2,0,MSB_H-4)
-	btn.BackgroundColor3=Color3.fromRGB(26,24,40); btn.BorderSizePixel=0
-	btn.Font=Enum.Font.GothamBold; btn.TextSize=13
-	btn.TextColor3=Color3.fromRGB(105,100,135)
-	btn.Text=st.label; btn.AutoButtonColor=false; btn.ZIndex=11
-	corner(btn,6); mSubBtns[st.id]=btn
-	local sId=st.id
-	btn.MouseButton1Click:Connect(function() switchMatchSub(sId) end)
-end
-
--- Scoreboard sub-panel
-local SBPanel=Instance.new("Frame",mContent)
-SBPanel.Size=UDim2.new(1,0,1,0); SBPanel.BackgroundTransparency=1
-SBPanel.Visible=true; SBPanel.ZIndex=9; mSubPanels["SCOREBOARD"]=SBPanel
-
-mkLabel(SBPanel,"📊  Ranked by total CL damage dealt",
-	Enum.Font.GothamBold,14,C.dim,Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,4),UDim2.new(1,0,0,22)).ZIndex=10
-
-local sbScroll=Instance.new("ScrollingFrame",SBPanel)
-sbScroll.Size=UDim2.new(1,-24,1,-30); sbScroll.Position=UDim2.new(0,12,0,28)
-sbScroll.BackgroundTransparency=1; sbScroll.BorderSizePixel=0
-sbScroll.ScrollBarThickness=4; sbScroll.ScrollBarImageColor3=C.stroke
-sbScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; sbScroll.CanvasSize=UDim2.new(0,0,0,0)
-sbScroll.ZIndex=10; sbScroll.Parent=SBPanel
-local sbLL=Instance.new("UIListLayout",sbScroll)
-sbLL.SortOrder=Enum.SortOrder.LayoutOrder; sbLL.Padding=UDim.new(0,3)
-local sbPad=Instance.new("UIPadding",sbScroll)
-sbPad.PaddingTop=UDim.new(0,4);sbPad.PaddingBottom=UDim.new(0,4)
-
-local sbPlaceholder=mkLabel(sbScroll,
-	"Scores appear from Gathering phase onwards.\nHold Tab in-game to toggle the scoreboard overlay.",
-	Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,0),UDim2.new(1,0,0,80))
-sbPlaceholder.TextWrapped=true; sbPlaceholder.ZIndex=11
-
-local scoreData={}
-local function refreshScoreboard()
-	for _,c in ipairs(sbScroll:GetChildren()) do
-		if c:IsA("Frame") then c:Destroy() end
-	end
-	if #scoreData==0 then sbPlaceholder.Visible=true; return end
-	sbPlaceholder.Visible=false
-	for rank,data in ipairs(scoreData) do
-		local row=Instance.new("Frame",sbScroll)
-		row.Size=UDim2.new(1,0,0,36); row.LayoutOrder=rank
-		row.BackgroundColor3=rank==1 and Color3.fromRGB(50,40,15)
-			or Color3.fromRGB(24,22,36)
-		row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
-		local rankCol=rank==1 and C.gold or rank==2 and Color3.fromRGB(185,185,195)
-			or rank==3 and Color3.fromRGB(165,105,65) or C.dim
-		mkLabel(row,rank.."  "..(data.name or "Player"),
-			Enum.Font.GothamBold,14,rankCol,Enum.TextXAlignment.Left,
-			UDim2.new(0,8,0,0),UDim2.new(0.4,0,1,0)).ZIndex=12
-		mkLabel(row,"🧼 "..tostring(data.clDealt or 0),
-			Enum.Font.Gotham,13,C.white,Enum.TextXAlignment.Center,
-			UDim2.new(0.4,0,0,0),UDim2.new(0.2,0,1,0)).ZIndex=12
-		mkLabel(row,"🍔 "..tostring(data.flDealt or 0),
-			Enum.Font.Gotham,13,C.white,Enum.TextXAlignment.Center,
-			UDim2.new(0.6,0,0,0),UDim2.new(0.2,0,1,0)).ZIndex=12
-		mkLabel(row,"🍳 "..tostring(data.recipes or 0),
-			Enum.Font.Gotham,13,C.white,Enum.TextXAlignment.Center,
-			UDim2.new(0.8,0,0,0),UDim2.new(0.2,0,1,0)).ZIndex=12
-	end
-end
-refreshScoreboard()
-
-_G.Chompers.UpdateScoreboard = function(data)
-	scoreData = data or {}
-	if isOpen and activeTab=="MATCH" then refreshScoreboard() end
-end
-
--- Keybindings sub-panel
-local KbPanel=Instance.new("Frame",mContent)
-KbPanel.Size=UDim2.new(1,0,1,0); KbPanel.BackgroundTransparency=1
-KbPanel.Visible=false; KbPanel.ZIndex=9; mSubPanels["KEYBINDINGS"]=KbPanel
-
-local kbScroll=Instance.new("ScrollingFrame",KbPanel)
-kbScroll.Size=UDim2.new(1,-24,1,-8); kbScroll.Position=UDim2.new(0,12,0,4)
-kbScroll.BackgroundTransparency=1; kbScroll.BorderSizePixel=0
-kbScroll.ScrollBarThickness=5; kbScroll.ScrollBarImageColor3=C.stroke
-kbScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; kbScroll.CanvasSize=UDim2.new(0,0,0,0)
-kbScroll.ZIndex=10; kbScroll.Parent=KbPanel
-local kbLL=Instance.new("UIListLayout",kbScroll)
-kbLL.SortOrder=Enum.SortOrder.LayoutOrder; kbLL.Padding=UDim.new(0,3)
-local kbPad=Instance.new("UIPadding",kbScroll)
-kbPad.PaddingTop=UDim.new(0,6);kbPad.PaddingBottom=UDim.new(0,6)
-
-local KEYBINDS={
-	{"1 – 9, 0",    "Select hotbar slot 1–10"},
-	{"I",           "Toggle Inventory HUD"},
-	{"G",           "Toggle Store Guide"},
-	{"E  (hold)",   "Pick up ingredient (ProximityPrompt)"},
-	{"E",           "Interact — checkout, bathroom, alliance"},
-	{"Q",           "Drop selected item"},
-	{"Click",       "Throw quick  (min 0.3s charge, 40% power)"},
-	{"Hold + Release","Throw charged  (up to 1.5s, 100% power)"},
-	{"Tab  (hold)", "Show in-game Scoreboard overlay"},
-	{"Escape",      "Close any open HUD"},
-}
-for i,kb in ipairs(KEYBINDS) do
-	local row=Instance.new("Frame",kbScroll)
-	row.Size=UDim2.new(1,0,0,38); row.LayoutOrder=i
-	row.BackgroundColor3=i%2==0 and Color3.fromRGB(26,24,38) or Color3.fromRGB(22,20,34)
-	row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
-	mkLabel(row,kb[1],Enum.Font.GothamBlack,14,C.white,
-		Enum.TextXAlignment.Left,UDim2.new(0,12,0,0),UDim2.new(0.3,0,1,0)).ZIndex=12
-	mkLabel(row,kb[2],Enum.Font.Gotham,14,C.dim,
-		Enum.TextXAlignment.Left,UDim2.new(0.3,0,0,0),UDim2.new(0.7,-12,1,0)).ZIndex=12
-end
-
--- Teams sub-panel
-local TeamsPanel=Instance.new("Frame",mContent)
-TeamsPanel.Size=UDim2.new(1,0,1,0); TeamsPanel.BackgroundTransparency=1
-TeamsPanel.Visible=false; TeamsPanel.ZIndex=9; mSubPanels["TEAMS"]=TeamsPanel
-
-local teamsScroll=Instance.new("ScrollingFrame",TeamsPanel)
-teamsScroll.Size=UDim2.new(1,-24,1,-8); teamsScroll.Position=UDim2.new(0,12,0,4)
-teamsScroll.BackgroundTransparency=1; teamsScroll.BorderSizePixel=0
-teamsScroll.ScrollBarThickness=5; teamsScroll.ScrollBarImageColor3=C.ally
-teamsScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; teamsScroll.CanvasSize=UDim2.new(0,0,0,0)
-teamsScroll.ZIndex=10; teamsScroll.Parent=TeamsPanel
-local tLL=Instance.new("UIListLayout",teamsScroll)
-tLL.SortOrder=Enum.SortOrder.LayoutOrder; tLL.Padding=UDim.new(0,6)
-local tPad=Instance.new("UIPadding",teamsScroll)
-tPad.PaddingTop=UDim.new(0,6);tPad.PaddingBottom=UDim.new(0,6)
-
-mkLabel(teamsScroll,
-	"👥 Current alliances will appear here during the match.\nTeam information is available from Gathering phase onwards.",
-	Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,0),UDim2.new(1,0,0,80)).TextWrapped=true
-
--- Settings sub-panel (volume sliders)
-local SettingsSubPanel=Instance.new("Frame",mContent)
-SettingsSubPanel.Size=UDim2.new(1,0,1,0); SettingsSubPanel.BackgroundTransparency=1
-SettingsSubPanel.Visible=false; SettingsSubPanel.ZIndex=9; mSubPanels["SETTINGS"]=SettingsSubPanel
-
-local function makeVolumeRow(parent, labelText, yOffset, defaultVal)
-	local row=Instance.new("Frame",parent)
-	row.Size=UDim2.new(1,-40,0,50); row.Position=UDim2.new(0,20,0,yOffset)
-	row.BackgroundColor3=Color3.fromRGB(24,22,36); row.BorderSizePixel=0; row.ZIndex=10
-	corner(row,8)
-	mkLabel(row,labelText,Enum.Font.GothamBold,15,C.white,Enum.TextXAlignment.Left,
-		UDim2.new(0,14,0,0),UDim2.new(0.4,0,1,0)).ZIndex=11
-	-- Track
-	local track=Instance.new("Frame",row)
-	track.Size=UDim2.new(0.5,-20,0,10); track.Position=UDim2.new(0.42,0,0.5,-5)
-	track.BackgroundColor3=Color3.fromRGB(35,33,52); track.BorderSizePixel=0; track.ZIndex=11
-	corner(track,5)
-	local fill=Instance.new("Frame",track)
-	fill.Size=UDim2.new(defaultVal,0,1,0); fill.BackgroundColor3=C.red
-	fill.BorderSizePixel=0; fill.ZIndex=12; corner(fill,5)
-	local valL=mkLabel(row,math.floor(defaultVal*100).."%",Enum.Font.GothamBold,13,C.dim,
-		Enum.TextXAlignment.Right,UDim2.new(0.92,0,0,0),UDim2.new(0.08,0,1,0))
-	valL.ZIndex=11
-	-- Drag interaction (simplified click-to-set)
-	local dragBtn=Instance.new("TextButton",track)
-	dragBtn.Size=UDim2.new(1,0,3,0); dragBtn.Position=UDim2.new(0,0,-1,0)
-	dragBtn.BackgroundTransparency=1; dragBtn.Text=""; dragBtn.ZIndex=13
-	local isDragging=false
-	dragBtn.MouseButton1Down:Connect(function()
-		isDragging=true
-	end)
-	dragBtn.MouseButton1Up:Connect(function()
-		isDragging=false
-	end)
-	dragBtn.MouseMoved:Connect(function(x)
-		if not isDragging then return end
-		local abs=track.AbsolutePosition; local sz=track.AbsoluteSize
-		local pct=math.clamp((x-abs.X)/sz.X,0,1)
-		fill.Size=UDim2.new(pct,0,1,0)
-		valL.Text=math.floor(pct*100).."%"
-	end)
-	return fill, valL
-end
-
-mkLabel(SettingsSubPanel,"🔊 Volume",Enum.Font.GothamBlack,22,C.white,
-	Enum.TextXAlignment.Left,UDim2.new(0,20,0,10),UDim2.new(1,0,0,30)).ZIndex=10
-makeVolumeRow(SettingsSubPanel,"Master Volume",46,0.8)
-makeVolumeRow(SettingsSubPanel,"SFX Volume",106,0.9)
-makeVolumeRow(SettingsSubPanel,"Music Volume",166,0.5)
-makeVolumeRow(SettingsSubPanel,"Ambient Volume",226,0.7)
-
-switchMatchSub("SCOREBOARD")
-
--- ============================================================
--- PHASE LISTENER
--- Preferences lock ONLY during: Gathering, Cooking, FoodFight
--- Unlock during: Prelobby, EndGame, Accolades
--- ============================================================
-
--- ============================================================
--- TITLES TAB — 24 Honorifics (medal-purchasable titles)
--- ============================================================
-
-local TitlesPanel=Instance.new("Frame",ContentArea)
-TitlesPanel.Name="TitlesPanel"; TitlesPanel.Size=UDim2.new(1,0,1,0)
-TitlesPanel.BackgroundTransparency=1; TitlesPanel.Visible=false; TitlesPanel.ZIndex=9
-tabPanels["TITLES"]=TitlesPanel
-
--- Header
-mkLabel(TitlesPanel,
-	"🏆 Titles — equipped beneath your username. Unlock by meeting conditions, then purchase.",
-	Enum.Font.GothamBold,14,C.dim,Enum.TextXAlignment.Center,
-	UDim2.new(0,12,0,4),UDim2.new(1,-24,0,22)).TextWrapped=true
-
--- Currently equipped display
-local equippedLabel=mkLabel(TitlesPanel,"Equipped: (none)",
-	Enum.Font.GothamBlack,15,Color3.fromRGB(200,170,255),
-	Enum.TextXAlignment.Center,
-	UDim2.new(0,12,0,26),UDim2.new(1,-24,0,18))
-equippedLabel.Name="EquippedLabel"
-
-local titlesScroll=Instance.new("ScrollingFrame",TitlesPanel)
-titlesScroll.Size=UDim2.new(1,-24,1,-52); titlesScroll.Position=UDim2.new(0,12,0,50)
-titlesScroll.BackgroundTransparency=1; titlesScroll.BorderSizePixel=0
-titlesScroll.ScrollBarThickness=6
-titlesScroll.ScrollBarImageColor3=Color3.fromRGB(130,60,200)
-titlesScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
-titlesScroll.CanvasSize=UDim2.new(0,0,0,0); titlesScroll.ZIndex=10
-local tLL=Instance.new("UIListLayout",titlesScroll)
-tLL.SortOrder=Enum.SortOrder.LayoutOrder; tLL.Padding=UDim.new(0,5)
-local tPad=Instance.new("UIPadding",titlesScroll)
-tPad.PaddingTop=UDim.new(0,4);tPad.PaddingBottom=UDim.new(0,8)
-
-local HONORIFICS = {
-	{n=1,  title='👨‍🍳 "Master Chef"',      unlock="Cook 50 unique recipes lifetime",                      cost=100, locked=true},
-	{n=2,  title='🛡️ "Aisle Survivor"',    unlock="Survive 20 matches without elimination",               cost=80,  locked=true},
-	{n=3,  title='📋 "The Regular"',        unlock="Play 100 matches",                                     cost=75,  locked=true},
-	{n=4,  title='🧼 "Clean Sweep"',        unlock="Win Squeaky Clean accolade 10 times",                  cost=90,  locked=true},
-	{n=5,  title='🔪 "The Butcher"',        unlock="Cause 50 eliminations lifetime",                       cost=120, locked=true},
-	{n=6,  title='🤝 "Loyalty Card"',       unlock="Form 30 alliances lifetime",                           cost=70,  locked=true},
-	{n=7,  title='💰 "Golden Shopper"',     unlock="Purchase $500+ of ingredients in a single match",     cost=110, locked=true},
-	{n=8,  title='💥 "Notorious"',          unlock="Win Chaos Agent accolade 10 times",                    cost=100, locked=true},
-	{n=9,  title='🕊️ "The Diplomat"',      unlock="Win a Together victory 5 times",                       cost=80,  locked=true},
-	{n=10, title='🍽️ "Sous-Chef Royale"',  unlock="Contribute to 100 recipes as Sous-Chef lifetime",     cost=90,  locked=true},
-	{n=11, title='⚡ "Freshest in the Store"',unlock="Win 3 consecutive matches",                          cost=150, locked=true},
-	{n=12, title='📦 "Expired Goods"',      unlock="Be eliminated first in 10 matches",                   cost=40,  locked=true},
-	{n=13, title='🧾 "Five-Star Shopper"',  unlock="Complete 50 full checkouts lifetime",                 cost=85,  locked=true},
-	{n=14, title='🚽 "The Spillage"',       unlock="Cause 25 forced bathroom trips to others",            cost=100, locked=true},
-	{n=15, title='🧺 "Paper or Plastic?"',  unlock="Win 10 matches with basket AND 10 with cart",         cost=60,  locked=true},
-	{n=16, title='🏎️ "Cart Racer"',        unlock="Win 5 matches using the Cart",                        cost=95,  locked=true},
-	{n=17, title='🪙 "Last Receipt"',       unlock="Win a match with $1 or less remaining",               cost=110, locked=true},
-	{n=18, title='🧻 "Napkin Hoarder"',     unlock="Collect 20 napkins from outdoor loot lifetime",       cost=80,  locked=true},
-	{n=19, title='🚫 "The Negotiator"',     unlock="Decline 10 alliance offers lifetime",                 cost=70,  locked=true},
-	{n=20, title='☠️ "Food Poisoning"',     unlock="Eliminate 3 players in a single match",               cost=130, locked=true},
-	{n=21, title='🔁 "Brand Loyalty"',      unlock="Use the same favourite in 20 consecutive matches",    cost=120, locked=true},
-	{n=22, title='🛒 "Checkout Champion"',  unlock="Be first to checkout in 10 matches",                  cost=85,  locked=true},
-	{n=23, title='💣 "Market Mayhem"',      unlock="Deal 500 total CL damage in a single match",          cost=140, locked=true},
-	{n=24, title='🎯 "Smooth Criminal"',    unlock="Win 5 matches as the last alliance member standing",  cost=100, locked=true},
-}
-
-local function equipTitle(honorific)
-	Selections.equippedTitle = honorific.title
-	equippedLabel.Text = "Equipped: "..honorific.title
-	updateBillboard()
-	-- Rebuild list to update button states
-	for _, child in ipairs(titlesScroll:GetChildren()) do
-		if child:IsA("Frame") then
-			local lbl = child:FindFirstChild("TitleLabel")
-			local btn = child:FindFirstChild("EquipBtn")
-			if lbl and btn then
-				local isEquipped = lbl.Text == honorific.title
-				btn.Text = isEquipped and "✓ Equipped" or "Equip"
-				btn.BackgroundColor3 = isEquipped
-					and Color3.fromRGB(30,110,46)
-					or Color3.fromRGB(80,30,30)
-			end
-		end
-	end
-end
-
-for _, h in ipairs(HONORIFICS) do
-	local card=Instance.new("Frame",titlesScroll)
-	card.Size=UDim2.new(1,0,0,72); card.LayoutOrder=h.n
-	card.BackgroundColor3=h.locked
-		and Color3.fromRGB(22,20,34)
-		or Color3.fromRGB(28,26,44)
-	card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
-	local cs=mkStroke(card,1.5,h.locked
-		and Color3.fromRGB(40,38,55)
-		or Color3.fromRGB(130,60,200))
-
-	-- Title name
-	local titleL=mkLabel(card,h.title,
-		Enum.Font.GothamBlack,16,h.locked and C.dim or Color3.fromRGB(200,170,255),
-		Enum.TextXAlignment.Left,
-		UDim2.new(0,12,0,6),UDim2.new(0.7,-4,0,22))
-	titleL.Name="TitleLabel"; titleL.ZIndex=12
-
-	-- Medal cost badge
-	local costBg=Instance.new("Frame",card)
-	costBg.Size=UDim2.new(0,60,0,22); costBg.Position=UDim2.new(1,-72,0,6)
-	costBg.BackgroundColor3=Color3.fromRGB(50,38,10); costBg.BorderSizePixel=0; costBg.ZIndex=12
-	corner(costBg,5)
-	mkLabel(costBg,"🏅 "..h.cost,Enum.Font.GothamBlack,11,C.gold).ZIndex=13
-
-	-- Unlock condition
-	mkLabel(card,h.locked and "🔒 "..h.unlock or "✓ "..h.unlock,
-		Enum.Font.Gotham,12,h.locked and C.dim or C.green,
-		Enum.TextXAlignment.Left,
-		UDim2.new(0,12,0,30),UDim2.new(1,-80,0,16)).ZIndex=12
-
-	-- Equip button (placeholder — DataStore not wired yet)
-	local equipBtn=Instance.new("TextButton",card)
-	equipBtn.Name="EquipBtn"
-	equipBtn.Size=UDim2.new(0,72,0,24)
-	equipBtn.AnchorPoint=Vector2.new(1,1)
-	equipBtn.Position=UDim2.new(1,-8,1,-8)
-	equipBtn.BackgroundColor3=h.locked
-		and Color3.fromRGB(35,33,50)
-		or Color3.fromRGB(80,30,30)
-	equipBtn.BorderSizePixel=0; equipBtn.AutoButtonColor=false
-	equipBtn.Font=Enum.Font.GothamBold; equipBtn.TextSize=12
-	equipBtn.TextColor3=h.locked and C.dim or C.white
-	equipBtn.Text=h.locked and "Locked" or "Equip"
-	equipBtn.ZIndex=13; corner(equipBtn,6)
-
-	if not h.locked then
-		local capH=h
-		equipBtn.MouseButton1Click:Connect(function()
-			equipTitle(capH)
-		end)
-	end
-end
---
--- Prelobby   → auto-open to Preferences
--- Gathering  → 10s buffer for preferences, then lock → open to Cookbook
--- Cooking    → auto-open to Cookbook (if clicked)
--- FoodFight  → auto-open to Match → Scoreboard
--- EndGame /
--- Accolades  → auto-open to Accolades
--- ============================================================
-
-local currentPhase    = "Prelobby"
-local prefBufferTimer = nil   -- task handle for the 10s grace period
-
--- Which tab the guide defaults to based on phase
-local function defaultTabForPhase(phase)
-	if phase == "Prelobby"                           then return "PREFERENCES" end
-	if phase == "Gathering" or phase == "Cooking"
-	or phase == "CookingGrace"                       then return "COOKBOOK" end
-	if phase == "FoodFight"                          then return "MATCH" end
-	if phase == "EndGame" or phase == "Accolades"   then return "ACCOLADES" end
-	return activeTab
-end
-
--- Override openGuide so it always routes to the right tab for the current phase
-local _rawOpen = openGuide
-_G.Chompers.OpenStoreGuide = function(tabId)
-	_rawOpen(tabId or defaultTabForPhase(currentPhase))
-end
-openGuide = _G.Chompers.OpenStoreGuide   -- keep local reference in sync
-
-local PhaseRemote = Remotes and Remotes:FindFirstChild("PhaseChanged")
-if PhaseRemote then
-	PhaseRemote.OnClientEvent:Connect(function(phase)
-		currentPhase = phase
-
-		local lockPhases = {Gathering=true, Cooking=true, CookingGrace=true, FoodFight=true}
-
-		if phase == "Gathering" then
-			-- 10-second preferences buffer before locking
-			if not Selections.confirmed then
-				openGuide("PREFERENCES")
-				-- Cancel any prior buffer
-				if prefBufferTimer then pcall(task.cancel, prefBufferTimer); prefBufferTimer = nil end
-				prefBufferTimer = task.delay(10, function()
-					prefsLocked = true
-					PrefLock.Visible = true
-					if isOpen and activeTab == "PREFERENCES" then
-						switchTab("COOKBOOK")
-					end
-					-- If guide is open on Preferences, switch it
-					if not isOpen then return end
-				end)
-			else
-				prefsLocked = true
-				PrefLock.Visible = true
-			end
-
-		elseif lockPhases[phase] then
-			-- Other lock phases (Cooking, FoodFight) — lock immediately
-			prefsLocked = true
-			PrefLock.Visible = true
-			if isOpen and activeTab == "PREFERENCES" then
-				switchTab(defaultTabForPhase(phase))
-			end
-
-		else
-			-- Prelobby / EndGame / Accolades — unlock
-			prefsLocked = false
-			PrefLock.Visible = false
-			if phase == "Prelobby" then
-				Selections.confirmed = false
-				ConfirmBtn.Text = "✓ Ready to Shop!"
-				ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
-				task.wait(1)
-				if not isOpen then openGuide("PREFERENCES") end
-			elseif phase == "EndGame" or phase == "Accolades" then
-				task.wait(0.5)
-				openGuide("ACCOLADES")
-			end
-		end
-	end)
-end
-
--- Auto-open on initial spawn (before first phase fires)
-task.spawn(function()
-	task.wait(1.5)
-	if not isOpen then openGuide("PREFERENCES") end
-end)
 
 -- ============================================================
 -- INITIAL STATE
 -- ============================================================
 
 switchTab("PREFERENCES")
+task.spawn(function()
+    task.wait(1.5)
+    if not isOpen then openGuide("PREFERENCES") end
+end)
 
 print("StoreGuide loaded!")
