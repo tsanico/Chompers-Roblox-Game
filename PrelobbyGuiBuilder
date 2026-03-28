@@ -266,7 +266,23 @@ for _, t in ipairs(TABS) do
 	btn.Text=t.label; btn.AutoButtonColor=false; btn.ZIndex=11
 	corner(btn,8); tabButtons[t.id]=btn
 	local tId=t.id
-	btn.MouseButton1Click:Connect(function() switchTab(tId) end)
+	btn.MouseButton1Click:Connect(function()
+		if activeTab=="PREFERENCES" and tId~="PREFERENCES"
+		and not prefsLocked and not Selections.confirmed then
+			local missing={}
+			if not Selections.allergy then table.insert(missing,"allergy") end
+			if not Selections.favourite then table.insert(missing,"favourite food") end
+			if #missing>0 then
+				showWarnDialog(
+					"You haven't disclosed your "..table.concat(missing," or ").."!",
+					function() switchTab(tId) end,  -- Yes = switch anyway
+					nil                              -- No = stay on Preferences
+				)
+				return
+			end
+		end
+		switchTab(tId)
+	end)
 end
 
 -- CookbookBuilder placeholder panels
@@ -278,6 +294,67 @@ local function makePlaceholder(name,tabId)
 end
 makePlaceholder("CookPanel","COOKBOOK")
 makePlaceholder("AccoladesPanel","ACCOLADES")
+
+-- ============================================================
+-- WARNING DIALOG (incomplete preferences on close/tab switch)
+-- ============================================================
+
+local WarnDialog = Instance.new("Frame", Overlay)
+WarnDialog.Name="WarnDialog"
+WarnDialog.Size=UDim2.new(0,520,0,230)
+WarnDialog.AnchorPoint=Vector2.new(0.5,0.5)
+WarnDialog.Position=UDim2.new(0.5,0,0.5,0)
+WarnDialog.BackgroundColor3=Color3.fromRGB(24,22,36)
+WarnDialog.BorderSizePixel=0; WarnDialog.ZIndex=20; WarnDialog.Visible=false
+corner(WarnDialog,16)
+local wdStroke=mkStroke(WarnDialog,2,C.red)
+
+local warnIcon=mkLabel(WarnDialog,"⚠",Enum.Font.GothamBlack,42,C.gold,
+	Enum.TextXAlignment.Center,UDim2.new(0,0,0,14),UDim2.new(1,0,0,48))
+warnIcon.ZIndex=21
+
+local warnTitle=mkLabel(WarnDialog,"Hold on!",Enum.Font.GothamBlack,24,C.red,
+	Enum.TextXAlignment.Center,UDim2.new(0,0,0,16),UDim2.new(1,0,0,34))
+warnTitle.ZIndex=21
+
+local warnBody=mkLabel(WarnDialog,"",Enum.Font.Gotham,17,
+	Color3.fromRGB(210,208,225),Enum.TextXAlignment.Center,
+	UDim2.new(0,16,0,56),UDim2.new(1,-32,0,60))
+warnBody.TextWrapped=true; warnBody.ZIndex=21; warnBody.Name="WarnBody"
+
+local warnYes=Instance.new("TextButton",WarnDialog)
+warnYes.Size=UDim2.new(0.44,0,0,46); warnYes.Position=UDim2.new(0.04,0,1,-58)
+warnYes.BackgroundColor3=Color3.fromRGB(180,35,35); warnYes.BorderSizePixel=0
+warnYes.AutoButtonColor=false; warnYes.Font=Enum.Font.GothamBold; warnYes.TextSize=15
+warnYes.TextColor3=C.white; warnYes.Text="Close anyway"; warnYes.ZIndex=22
+corner(warnYes,10)
+
+local warnNo=Instance.new("TextButton",WarnDialog)
+warnNo.Size=UDim2.new(0.44,0,0,46); warnNo.Position=UDim2.new(0.52,0,1,-58)
+warnNo.BackgroundColor3=Color3.fromRGB(46,165,66); warnNo.BorderSizePixel=0
+warnNo.AutoButtonColor=false; warnNo.Font=Enum.Font.GothamBold; warnNo.TextSize=15
+warnNo.TextColor3=Color3.fromRGB(220,255,224); warnNo.Text="Set my preferences"; warnNo.ZIndex=22
+corner(warnNo,10)
+
+local warnOnConfirm = nil  -- callback for "close anyway"
+local warnOnCancel  = nil  -- callback for "set my preferences"
+
+local function showWarnDialog(message, onConfirm, onCancel)
+	warnBody.Text = message.."\n\nAre you sure?"
+	warnOnConfirm = onConfirm
+	warnOnCancel  = onCancel
+	WarnDialog.Visible = true
+end
+
+warnYes.MouseButton1Click:Connect(function()
+	WarnDialog.Visible=false
+	if warnOnConfirm then warnOnConfirm(); warnOnConfirm=nil end
+end)
+warnNo.MouseButton1Click:Connect(function()
+	WarnDialog.Visible=false
+	if warnOnCancel then warnOnCancel(); warnOnCancel=nil end
+	switchTab("PREFERENCES")
+end)
 
 -- ============================================================
 -- OPEN / CLOSE
@@ -306,7 +383,22 @@ local function openGuide(tabId)
 	switchTab(tabId or activeTab or "RULES")
 end
 
-CloseBtn.MouseButton1Click:Connect(closeGuide)
+CloseBtn.MouseButton1Click:Connect(function()
+	if not prefsLocked and not Selections.confirmed then
+		local missing = {}
+		if not Selections.allergy then table.insert(missing, "allergy") end
+		if not Selections.favourite then table.insert(missing, "favourite food") end
+		if #missing > 0 then
+			showWarnDialog(
+				"You haven't disclosed your "..table.concat(missing," or ").."!",
+				closeGuide,  -- Yes = close anyway
+				nil          -- No = go to Preferences (handled in warnNo)
+			)
+			return
+		end
+	end
+	closeGuide()
+end)
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.KeyCode==Enum.KeyCode.Escape and isOpen then closeGuide() end
@@ -316,6 +408,10 @@ _G.Chompers.OpenStoreGuide   = openGuide
 _G.Chompers.CloseStoreGuide  = closeGuide
 _G.Chompers.IsStoreGuideOpen = function() return isOpen end
 _G.Chompers.RefreshBillboard = updateBillboard
+-- CookbookBuilder hookpoints via _G.Chompers
+_G.Chompers.tabPanels        = tabPanels
+_G.Chompers.switchTab        = switchTab
+_G.Chompers.ContentArea      = ContentArea
 
 -- ============================================================
 -- RULES TAB — fully fleshed out per Bible
@@ -652,6 +748,7 @@ local MATCH_SUBTABS={
 	{id="SCOREBOARD",  label="📊 Scoreboard",  order=1},
 	{id="KEYBINDINGS", label="⌨️ Keybindings", order=2},
 	{id="TEAMS",       label="👥 Teams",        order=3},
+	{id="SETTINGS",    label="⚙️ Settings",     order=4},
 }
 local mSubBtns={}; local mSubPanels={}
 local function switchMatchSub(subId)
@@ -669,7 +766,7 @@ end
 for _,st in ipairs(MATCH_SUBTABS) do
 	local btn=Instance.new("TextButton",mSubBar)
 	btn.Name=st.id.."Sub"; btn.LayoutOrder=st.order
-	btn.Size=UDim2.new(0.33,-2,0,MSB_H-4)
+	btn.Size=UDim2.new(0.25,-2,0,MSB_H-4)
 	btn.BackgroundColor3=Color3.fromRGB(26,24,40); btn.BorderSizePixel=0
 	btn.Font=Enum.Font.GothamBold; btn.TextSize=13
 	btn.TextColor3=Color3.fromRGB(105,100,135)
@@ -801,6 +898,57 @@ mkLabel(teamsScroll,
 	Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
 	UDim2.new(0,0,0,0),UDim2.new(1,0,0,80)).TextWrapped=true
 
+-- Settings sub-panel (volume sliders)
+local SettingsSubPanel=Instance.new("Frame",mContent)
+SettingsSubPanel.Size=UDim2.new(1,0,1,0); SettingsSubPanel.BackgroundTransparency=1
+SettingsSubPanel.Visible=false; SettingsSubPanel.ZIndex=9; mSubPanels["SETTINGS"]=SettingsSubPanel
+
+local function makeVolumeRow(parent, labelText, yOffset, defaultVal)
+	local row=Instance.new("Frame",parent)
+	row.Size=UDim2.new(1,-40,0,50); row.Position=UDim2.new(0,20,0,yOffset)
+	row.BackgroundColor3=Color3.fromRGB(24,22,36); row.BorderSizePixel=0; row.ZIndex=10
+	corner(row,8)
+	mkLabel(row,labelText,Enum.Font.GothamBold,15,C.white,Enum.TextXAlignment.Left,
+		UDim2.new(0,14,0,0),UDim2.new(0.4,0,1,0)).ZIndex=11
+	-- Track
+	local track=Instance.new("Frame",row)
+	track.Size=UDim2.new(0.5,-20,0,10); track.Position=UDim2.new(0.42,0,0.5,-5)
+	track.BackgroundColor3=Color3.fromRGB(35,33,52); track.BorderSizePixel=0; track.ZIndex=11
+	corner(track,5)
+	local fill=Instance.new("Frame",track)
+	fill.Size=UDim2.new(defaultVal,0,1,0); fill.BackgroundColor3=C.red
+	fill.BorderSizePixel=0; fill.ZIndex=12; corner(fill,5)
+	local valL=mkLabel(row,math.floor(defaultVal*100).."%",Enum.Font.GothamBold,13,C.dim,
+		Enum.TextXAlignment.Right,UDim2.new(0.92,0,0,0),UDim2.new(0.08,0,1,0))
+	valL.ZIndex=11
+	-- Drag interaction (simplified click-to-set)
+	local dragBtn=Instance.new("TextButton",track)
+	dragBtn.Size=UDim2.new(1,0,3,0); dragBtn.Position=UDim2.new(0,0,-1,0)
+	dragBtn.BackgroundTransparency=1; dragBtn.Text=""; dragBtn.ZIndex=13
+	local isDragging=false
+	dragBtn.MouseButton1Down:Connect(function()
+		isDragging=true
+	end)
+	dragBtn.MouseButton1Up:Connect(function()
+		isDragging=false
+	end)
+	dragBtn.MouseMoved:Connect(function(x)
+		if not isDragging then return end
+		local abs=track.AbsolutePosition; local sz=track.AbsoluteSize
+		local pct=math.clamp((x-abs.X)/sz.X,0,1)
+		fill.Size=UDim2.new(pct,0,1,0)
+		valL.Text=math.floor(pct*100).."%"
+	end)
+	return fill, valL
+end
+
+mkLabel(SettingsSubPanel,"🔊 Volume",Enum.Font.GothamBlack,22,C.white,
+	Enum.TextXAlignment.Left,UDim2.new(0,20,0,10),UDim2.new(1,0,0,30)).ZIndex=10
+makeVolumeRow(SettingsSubPanel,"Master Volume",46,0.8)
+makeVolumeRow(SettingsSubPanel,"SFX Volume",106,0.9)
+makeVolumeRow(SettingsSubPanel,"Music Volume",166,0.5)
+makeVolumeRow(SettingsSubPanel,"Ambient Volume",226,0.7)
+
 switchMatchSub("SCOREBOARD")
 
 -- ============================================================
@@ -816,23 +964,29 @@ if PhaseRemote then
 		if lockPhases[phase] then
 			prefsLocked = true
 			PrefLock.Visible = true
-			-- Auto-switch away from Preferences if currently open
 			if isOpen and activeTab=="PREFERENCES" then
 				switchTab("RULES")
 			end
 		else
-			-- Prelobby, EndGame, Accolades — unlock
 			prefsLocked = false
 			PrefLock.Visible = false
 			if phase=="Prelobby" then
-				-- Full reset for new match
 				Selections.confirmed = false
 				ConfirmBtn.Text = "✓ Ready to Shop!"
 				ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
+				-- Auto-open Store Guide on Prelobby so players set preferences
+				task.wait(1)
+				if not isOpen then openGuide("PREFERENCES") end
 			end
 		end
 	end)
 end
+
+-- Auto-open on first spawn (before phase remote fires)
+task.spawn(function()
+	task.wait(1.5)
+	if not isOpen then openGuide("PREFERENCES") end
+end)
 
 -- ============================================================
 -- INITIAL STATE
