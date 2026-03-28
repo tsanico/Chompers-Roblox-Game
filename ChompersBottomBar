@@ -394,6 +394,10 @@ InventoryToggleEvent.Parent = player.PlayerGui
 local inventoryOpen = false
 local function toggleInventory()
 	inventoryOpen = not inventoryOpen
+	-- If Store Guide is open, close it first
+	if inventoryOpen and _G.Chompers and _G.Chompers.CloseStoreGuide then
+		_G.Chompers.CloseStoreGuide()
+	end
 	TweenService:Create(ContainerIcon, TweenInfo.new(0.1),
 		{BackgroundColor3 = inventoryOpen
 			and Color3.fromRGB(35, 32, 52) or C.bg}):Play()
@@ -406,6 +410,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
 	if input.KeyCode == Enum.KeyCode.I then toggleInventory() end
 end)
+
+_G.Chompers.GetInventoryOpen = function() return inventoryOpen end
 
 -- ============================================================
 -- NAPKIN SYSTEM
@@ -473,10 +479,45 @@ buffLL.Padding = UDim.new(0, 4)
 
 _G.Chompers = _G.Chompers or {}
 
--- Store Guide — PrelobbyGuiBuilder assigns this callback
--- Do NOT set to nil here — that would overwrite PrelobbyGuiBuilder's assignment
+-- Store Guide — PrelobbyGuiBuilder assigns _G.Chompers.OpenStoreGuide
+-- Always callable. Mutual minimize handled here.
 StoreGuideBtn.MouseButton1Click:Connect(function()
-	if _G.Chompers.OnStoreGuideClick then _G.Chompers.OnStoreGuideClick() end
+	-- If inventory is open, close it first
+	local invEvt = player.PlayerGui:FindFirstChild("InventoryToggle")
+	if invEvt and _G.Chompers and _G.Chompers.GetInventoryOpen
+	and _G.Chompers.GetInventoryOpen() then
+		inventoryOpen = false
+		TweenService:Create(ContainerIcon, TweenInfo.new(0.1),
+			{BackgroundColor3 = C.bg}):Play()
+		ciStroke.Color = C.stroke
+		invEvt:Fire(false)
+	end
+	-- Open Store Guide
+	if _G.Chompers and _G.Chompers.OpenStoreGuide then
+		_G.Chompers.OpenStoreGuide()
+	elseif _G.Chompers and _G.Chompers.OnStoreGuideClick then
+		_G.Chompers.OnStoreGuideClick()
+	end
+end)
+
+-- G hotkey opens Store Guide (closes inventory if open)
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.G then
+		StoreGuideBtn:GetPropertyChangedSignal("Text") -- no-op to avoid duplicate G handling
+		local invEvt = player.PlayerGui:FindFirstChild("InventoryToggle")
+		if invEvt and _G.Chompers and _G.Chompers.GetInventoryOpen
+		and _G.Chompers.GetInventoryOpen() then
+			inventoryOpen = false
+			TweenService:Create(ContainerIcon, TweenInfo.new(0.1),
+				{BackgroundColor3 = C.bg}):Play()
+			ciStroke.Color = C.stroke
+			invEvt:Fire(false)
+		end
+		if _G.Chompers and _G.Chompers.OpenStoreGuide then
+			_G.Chompers.OpenStoreGuide()
+		end
+	end
 end)
 
 _G.Chompers.HideDot = function() PrefDot.Visible = false end
