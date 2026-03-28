@@ -565,7 +565,7 @@ local function buildLeftList()
 
 		-- If this was the previously selected item, re-show its detail
 		if selectedItem and selectedItem.name == item.name
-		and selectedItem.emoji == item.emoji then
+			and selectedItem.emoji == item.emoji then
 			selectedListBtn = row
 			row.BackgroundColor3 = Color3.fromRGB(35, 33, 54)
 			rowStroke.Thickness = 2; rowStroke.Color = C.red
