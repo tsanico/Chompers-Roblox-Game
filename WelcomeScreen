@@ -1,0 +1,386 @@
+-- ============================================================
+-- WelcomeScreen — LocalScript · StarterPlayerScripts
+--
+-- Shows once per session on first character spawn.
+-- Controls the onboarding gate for shift-lock:
+--   _G.Chompers.WelcomeScreenActive = true  → StoreGuide auto-open blocked
+--   WelcomeScreen CONFIRM pressed           → StoreGuide opens to PREFERENCES
+--   StoreGuide closed by player             → _G.Chompers.ShiftLockReady = true
+--
+-- "Don't show again" is session-local (no DataStore yet).
+-- Persists within the session across respawns. Will be wired
+-- into DataService when persistence is built.
+-- ============================================================
+
+local Players          = game:GetService("Players")
+local TweenService     = game:GetService("TweenService")
+local ReplicatedStorage= game:GetService("ReplicatedStorage")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Block StoreGuide auto-open immediately — before its 1.5s timer fires
+-- CharacterController also reads this to defer shift-lock
+_G.Chompers = _G.Chompers or {}
+_G.Chompers.WelcomeScreenActive = true
+_G.Chompers.ShiftLockReady      = false
+
+-- ── Session state (persists across respawns this session) ──
+local dontShowAgain   = false
+local onboardingDone  = false   -- true once player has gone through the flow once
+
+-- ── Palette (matches HUD) ──────────────────────────────────
+local C = {
+	bg       = Color3.fromRGB(12, 10, 20),
+	panel    = Color3.fromRGB(22, 18, 38),
+	stroke   = Color3.fromRGB(70, 60, 110),
+	gold     = Color3.fromRGB(255, 200, 50),
+	white    = Color3.fromRGB(230, 225, 255),
+	muted    = Color3.fromRGB(130, 120, 165),
+	confirm  = Color3.fromRGB(65, 180, 90),
+	confirmH = Color3.fromRGB(85, 210, 110),
+	warn     = Color3.fromRGB(226, 75, 74),
+}
+
+-- ── UI helpers ─────────────────────────────────────────────
+local function corner(inst, r)
+	local c = Instance.new("UICorner", inst)
+	c.CornerRadius = UDim.new(0, r or 8)
+end
+local function stroke(inst, col, t)
+	local s = Instance.new("UIStroke", inst)
+	s.Color = col or C.stroke; s.Thickness = t or 1.5
+end
+local function label(parent, text, size, color, font, xa, pos, sz)
+	local l = Instance.new("TextLabel", parent)
+	l.BackgroundTransparency = 1
+	l.Text = text; l.TextSize = size
+	l.TextColor3 = color or C.white
+	l.Font = font or Enum.Font.Gotham
+	l.TextXAlignment = xa or Enum.TextXAlignment.Left
+	l.TextWrapped = true
+	l.Size = sz or UDim2.new(1, 0, 0, size + 6)
+	if pos then l.Position = pos end
+	return l
+end
+
+-- ── Build the UI ───────────────────────────────────────────
+local function buildWelcomeGui()
+	local sg = Instance.new("ScreenGui")
+	sg.Name            = "WelcomeScreen"
+	sg.ResetOnSpawn    = false
+	sg.IgnoreGuiInset  = true
+	sg.DisplayOrder    = 50     -- above HUD, below nothing
+	sg.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+	sg.Parent          = playerGui
+
+	-- Full-screen dim overlay
+	local overlay = Instance.new("Frame", sg)
+	overlay.Name             = "Overlay"
+	overlay.Size             = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	overlay.BackgroundTransparency = 0.45
+	overlay.BorderSizePixel  = 0
+	overlay.ZIndex           = 2
+
+	-- Centre panel
+	local panel = Instance.new("Frame", sg)
+	panel.Name              = "Panel"
+	panel.Size              = UDim2.new(0, 640, 0, 620)
+	panel.AnchorPoint       = Vector2.new(0.5, 0.5)
+	panel.Position          = UDim2.new(0.5, 0, 0.5, 0)
+	panel.BackgroundColor3  = C.panel
+	panel.BorderSizePixel   = 0
+	panel.ZIndex            = 3
+	corner(panel, 16)
+	stroke(panel, C.stroke, 1.5)
+
+	-- Title bar
+	local titleBar = Instance.new("Frame", panel)
+	titleBar.Size             = UDim2.new(1, 0, 0, 68)
+	titleBar.BackgroundColor3 = Color3.fromRGB(16, 12, 28)
+	titleBar.BorderSizePixel  = 0
+	titleBar.ZIndex           = 4
+	corner(titleBar, 16)
+	-- Cover the bottom corners of title bar
+	local titleFill = Instance.new("Frame", titleBar)
+	titleFill.Size             = UDim2.new(1, 0, 0, 20)
+	titleFill.Position         = UDim2.new(0, 0, 1, -20)
+	titleFill.BackgroundColor3 = Color3.fromRGB(16, 12, 28)
+	titleFill.BorderSizePixel  = 0
+	titleFill.ZIndex           = 4
+
+	local titleLabel = Instance.new("TextLabel", titleBar)
+	titleLabel.Size               = UDim2.new(1, -24, 1, 0)
+	titleLabel.Position           = UDim2.new(0, 12, 0, 0)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Text               = "🛒  CHOMPERS' FRESH MARKET"
+	titleLabel.Font               = Enum.Font.GothamBlack
+	titleLabel.TextSize           = 22
+	titleLabel.TextColor3         = C.gold
+	titleLabel.TextXAlignment     = Enum.TextXAlignment.Left
+	titleLabel.ZIndex             = 5
+
+	local subLabel = Instance.new("TextLabel", titleBar)
+	subLabel.Size               = UDim2.new(1, -24, 0, 18)
+	subLabel.Position           = UDim2.new(0, 12, 0, 44)
+	subLabel.BackgroundTransparency = 1
+	subLabel.Text               = "Official Briefing — read this before you throw anything."
+	subLabel.Font               = Enum.Font.GothamMedium
+	subLabel.TextSize           = 13
+	subLabel.TextColor3         = C.muted
+	subLabel.TextXAlignment     = Enum.TextXAlignment.Left
+	subLabel.ZIndex             = 5
+
+	-- Scrollable content
+	local scroll = Instance.new("ScrollingFrame", panel)
+	scroll.Name                  = "Content"
+	scroll.Size                  = UDim2.new(1, -24, 0, 444)
+	scroll.Position              = UDim2.new(0, 12, 0, 76)
+	scroll.BackgroundTransparency= 1
+	scroll.BorderSizePixel       = 0
+	scroll.ScrollBarThickness    = 4
+	scroll.ScrollBarImageColor3  = C.stroke
+	scroll.CanvasSize            = UDim2.new(0, 0, 0, 0)  -- auto-sized below
+	scroll.AutomaticCanvasSize   = Enum.AutomaticSize.Y
+	scroll.ZIndex                = 4
+
+	local layout = Instance.new("UIListLayout", scroll)
+	layout.SortOrder  = Enum.SortOrder.LayoutOrder
+	layout.Padding    = UDim.new(0, 10)
+
+	local pad = Instance.new("UIPadding", scroll)
+	pad.PaddingLeft   = UDim.new(0, 6)
+	pad.PaddingRight  = UDim.new(0, 6)
+	pad.PaddingTop    = UDim.new(0, 6)
+
+	-- Content builder
+	local lo = 0
+	local function section(title, body, accent)
+		lo = lo + 1
+		local card = Instance.new("Frame", scroll)
+		card.Size             = UDim2.new(1, 0, 0, 0)
+		card.AutomaticSize    = Enum.AutomaticSize.Y
+		card.BackgroundColor3 = Color3.fromRGB(18, 14, 30)
+		card.BorderSizePixel  = 0
+		card.LayoutOrder      = lo
+		card.ZIndex           = 5
+		corner(card, 10)
+
+		local accent_bar = Instance.new("Frame", card)
+		accent_bar.Size             = UDim2.new(0, 4, 1, -12)
+		accent_bar.Position         = UDim2.new(0, 6, 0, 6)
+		accent_bar.BackgroundColor3 = accent or C.gold
+		accent_bar.BorderSizePixel  = 0
+		accent_bar.ZIndex           = 6
+		corner(accent_bar, 2)
+
+		local cardPad = Instance.new("UIPadding", card)
+		cardPad.PaddingLeft   = UDim.new(0, 18)
+		cardPad.PaddingRight  = UDim.new(0, 10)
+		cardPad.PaddingTop    = UDim.new(0, 8)
+		cardPad.PaddingBottom = UDim.new(0, 10)
+
+		local inner = Instance.new("Frame", card)
+		inner.BackgroundTransparency = 1
+		inner.Size                   = UDim2.new(1, 0, 0, 0)
+		inner.AutomaticSize          = Enum.AutomaticSize.Y
+		inner.ZIndex                 = 6
+
+		local il = Instance.new("UIListLayout", inner)
+		il.SortOrder = Enum.SortOrder.LayoutOrder
+		il.Padding   = UDim.new(0, 4)
+
+		local t = Instance.new("TextLabel", inner)
+		t.BackgroundTransparency = 1
+		t.Size = UDim2.new(1, 0, 0, 22)
+		t.Text = title; t.Font = Enum.Font.GothamBlack
+		t.TextSize = 16; t.TextColor3 = accent or C.gold
+		t.TextXAlignment = Enum.TextXAlignment.Left
+		t.LayoutOrder = 1; t.ZIndex = 6
+
+		local b = Instance.new("TextLabel", inner)
+		b.BackgroundTransparency = 1
+		b.Size = UDim2.new(1, 0, 0, 0)
+		b.AutomaticSize = Enum.AutomaticSize.Y
+		b.Text = body; b.Font = Enum.Font.Gotham
+		b.TextSize = 14; b.TextColor3 = C.white
+		b.TextXAlignment = Enum.TextXAlignment.Left
+		b.TextWrapped = true; b.LineHeight = 1.35
+		b.LayoutOrder = 2; b.ZIndex = 6
+
+		return card
+	end
+
+	-- ── Content ──────────────────────────────────────────────
+	local green  = Color3.fromRGB(80, 200, 100)
+	local blue   = Color3.fromRGB(80, 160, 255)
+	local orange = Color3.fromRGB(255, 150, 50)
+	local purple = Color3.fromRGB(180, 100, 255)
+	local teal   = Color3.fromRGB(60, 200, 180)
+
+	section("1️⃣  GATHER", "Explore the store and grab ingredients from the shelves. Find extra cash outside in the car park. Nothing leaves the store unpaid — visit Checkout before cooking.", green)
+	section("2️⃣  COOK", "Take paid ingredients to the Prep Table, then finish them at the Stovetop. Perfect heat means more damage. Burned dishes hit softer but make status effects nastier.", orange)
+	section("3️⃣  FOOD FIGHT", "Throw food at other players to raise their Cleanliness. Last Chef Standing earns the Golden Apron. Cooked dishes hit much harder than raw ingredients.", C.warn)
+	section("🧼  CLEANLINESS", "Your health bar. Enemies raise it by hitting you with food. Hit 100% and you drop everything in a full-blown grocery disaster.", blue)
+	section("🍔  FULLNESS", "Your pressure bar. Gets heavier as food hits you. Too much Fullness makes you bigger and slower. Hit 100% — same humiliation as Cleanliness.", purple)
+	section("🚽  BATHROOMS", "Resets both bars. The sink clears Cleanliness. The stall clears Fullness. Each Chef gets 3 Potty Breaks per match. Spend them like they matter.", teal)
+	section("🤝  ALLIANCES", "Buy a Friendship Bracelet during Gathering to team up. At the end, alliances must decide — leave together or fight to the last Chef. Choose carefully.", C.gold)
+
+	-- Bottom bar
+	local bottom = Instance.new("Frame", panel)
+	bottom.Name             = "BottomBar"
+	bottom.Size             = UDim2.new(1, 0, 0, 60)
+	bottom.Position         = UDim2.new(0, 0, 1, -60)
+	bottom.BackgroundColor3 = Color3.fromRGB(14, 11, 24)
+	bottom.BorderSizePixel  = 0
+	bottom.ZIndex           = 4
+	corner(bottom, 16)
+	-- Cover top corners of bottom bar
+	local btFill = Instance.new("Frame", bottom)
+	btFill.Size             = UDim2.new(1, 0, 0, 20)
+	btFill.BackgroundColor3 = Color3.fromRGB(14, 11, 24)
+	btFill.BorderSizePixel  = 0
+	btFill.ZIndex           = 4
+
+	-- "Don't show again" checkbox
+	local dontBtn = Instance.new("TextButton", bottom)
+	dontBtn.Size               = UDim2.new(0, 200, 0, 28)
+	dontBtn.Position           = UDim2.new(0, 14, 0, 16)
+	dontBtn.BackgroundColor3   = Color3.fromRGB(28, 22, 45)
+	dontBtn.BorderSizePixel    = 0
+	dontBtn.Text               = "☐  Don't show again"
+	dontBtn.Font               = Enum.Font.GothamMedium
+	dontBtn.TextSize           = 13
+	dontBtn.TextColor3         = C.muted
+	dontBtn.AutoButtonColor    = false
+	dontBtn.ZIndex             = 5
+	corner(dontBtn, 6)
+
+	-- Confirm button
+	local confirmBtn = Instance.new("TextButton", bottom)
+	confirmBtn.Name            = "ConfirmBtn"
+	confirmBtn.Size            = UDim2.new(0, 180, 0, 36)
+	confirmBtn.AnchorPoint     = Vector2.new(1, 0.5)
+	confirmBtn.Position        = UDim2.new(1, -14, 0.5, 0)
+	confirmBtn.BackgroundColor3= C.confirm
+	confirmBtn.BorderSizePixel = 0
+	confirmBtn.Text            = "CHOOSE YOUR CONTAINER  →"
+	confirmBtn.Font            = Enum.Font.GothamBlack
+	confirmBtn.TextSize        = 14
+	confirmBtn.TextColor3      = Color3.fromRGB(255, 255, 255)
+	confirmBtn.AutoButtonColor = false
+	confirmBtn.ZIndex          = 5
+	corner(confirmBtn, 8)
+
+	-- Don't-show toggle behaviour
+	local dontChecked = false
+	dontBtn.MouseButton1Click:Connect(function()
+		dontChecked = not dontChecked
+		dontBtn.Text = dontChecked and "☑  Don't show again" or "☐  Don't show again"
+		dontBtn.TextColor3 = dontChecked and C.gold or C.muted
+	end)
+
+	-- Hover effect on confirm
+	confirmBtn.MouseEnter:Connect(function()
+		confirmBtn.BackgroundColor3 = C.confirmH
+	end)
+	confirmBtn.MouseLeave:Connect(function()
+		confirmBtn.BackgroundColor3 = C.confirm
+	end)
+
+	return sg, confirmBtn, dontChecked, function() return dontChecked end
+end
+
+-- ── Poll until StoreGuide closes, then activate shift-lock ─
+local function waitForGuideClose()
+	task.spawn(function()
+		task.wait(0.8)   -- give StoreGuide time to open
+		while true do
+			task.wait(0.25)
+			if _G.Chompers.IsStoreGuideOpen and not _G.Chompers.IsStoreGuideOpen() then
+				_G.Chompers.ShiftLockReady = true
+				break
+			end
+		end
+	end)
+end
+
+-- ── Main flow ──────────────────────────────────────────────
+local function runOnboarding()
+	if onboardingDone then
+		-- Player already went through onboarding this session
+		-- Shift-lock stays active — no need to re-show anything
+		return
+	end
+
+	if dontShowAgain then
+		-- Skip welcome, go straight to StoreGuide
+		_G.Chompers.WelcomeScreenActive = false
+		task.wait(0.5)
+		if _G.Chompers.OpenStoreGuide then
+			_G.Chompers.OpenStoreGuide("PREFERENCES")
+		end
+		waitForGuideClose()
+		return
+	end
+
+	-- Build and show the welcome screen
+	local sg, confirmBtn, _, getDontShow = buildWelcomeGui()
+
+	-- Tween in
+	local panel = sg:FindFirstChild("Panel")
+	if panel then
+		panel.Position = UDim2.new(0.5, 0, 0.6, 0)
+		TweenService:Create(panel,
+			TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
+	end
+
+	-- CONFIRM pressed
+	confirmBtn.MouseButton1Click:Connect(function()
+		dontShowAgain = getDontShow()
+		onboardingDone = true
+		_G.Chompers.WelcomeScreenActive = false
+
+		-- Tween out
+		if panel then
+			TweenService:Create(panel,
+				TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{Position = UDim2.new(0.5, 0, 0.4, 0)}):Play()
+		end
+		TweenService:Create(sg:FindFirstChild("Overlay"),
+			TweenInfo.new(0.2),
+			{BackgroundTransparency = 1}):Play()
+
+		task.delay(0.22, function()
+			sg:Destroy()
+			-- Open StoreGuide to Preferences
+			if _G.Chompers.OpenStoreGuide then
+				_G.Chompers.OpenStoreGuide("PREFERENCES")
+			end
+			-- When guide closes → shift-lock activates
+			waitForGuideClose()
+		end)
+	end)
+end
+
+-- ── Connect to character spawn ─────────────────────────────
+-- WelcomeScreen runs once per session. On respawn, shift-lock
+-- is already active so we don't re-gate it.
+player.CharacterAdded:Connect(function()
+	if not onboardingDone then
+		_G.Chompers.WelcomeScreenActive = true
+		_G.Chompers.ShiftLockReady      = false
+		task.wait(0.2)   -- let StoreGuide start loading
+		runOnboarding()
+	end
+end)
+
+-- Also run if character already exists when script loads
+if player.Character and not onboardingDone then
+	_G.Chompers.WelcomeScreenActive = true
+	_G.Chompers.ShiftLockReady      = false
+	task.wait(0.5)
+	runOnboarding()
+end
