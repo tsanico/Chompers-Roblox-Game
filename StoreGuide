@@ -1104,7 +1104,6 @@ local BasketBtn = mkCartBtn("🧺  Basket — 35 lb. capacity · +5% speed",0,tr
 local CartBtn   = mkCartBtn("🛒  Cart — 70 lb. capacity · −15% speed",0.515,false)
 
 local function selectCart(choice)
-    if prefsLocked then return end
     Selections.cart = choice
     local bActive = choice=="basket"
     BasketBtn.BackgroundColor3 = bActive and C.red or Color3.fromRGB(28,26,44)
@@ -1120,6 +1119,70 @@ end
 BasketBtn.MouseButton1Click:Connect(function() selectCart("basket") end)
 CartBtn.MouseButton1Click:Connect(function()   selectCart("cart") end)
 selectCart("basket")
+
+-- ── Container dispensary proximity ────────────────────────────
+-- Parts tagged IsBasketDispensary=true or IsCartDispensary=true
+-- in the map auto-switch the player's container when they walk up.
+-- Range: 10 studs. Checks every 0.3s (not every frame).
+-- Works during match too — container can be swapped anytime.
+do
+    local PROX_RANGE = 10
+    local dispensaries = {}
+    local lastProxChoice = nil
+
+    local function scanDispensaries()
+        dispensaries = {}
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                if desc:GetAttribute("IsBasketDispensary") == true then
+                    table.insert(dispensaries, {part=desc, choice="basket"})
+                elseif desc:GetAttribute("IsCartDispensary") == true then
+                    table.insert(dispensaries, {part=desc, choice="cart"})
+                end
+            end
+        end
+    end
+
+    -- Scan after workspace settles
+    task.delay(2, scanDispensaries)
+
+    -- Poll every 0.3s
+    task.spawn(function()
+        while true do
+            task.wait(0.3)
+            local char = player.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then lastProxChoice = nil; continue end
+
+            local nearest = nil
+            local nearestDist = PROX_RANGE + 1
+
+            for _, entry in ipairs(dispensaries) do
+                if entry.part and entry.part.Parent then
+                    local d = (hrp.Position - entry.part.Position).Magnitude
+                    if d <= PROX_RANGE and d < nearestDist then
+                        nearestDist = d
+                        nearest     = entry.choice
+                    end
+                end
+            end
+
+            if nearest and nearest ~= lastProxChoice then
+                lastProxChoice = nearest
+                selectCart(nearest)
+                -- Notify player with a small announce
+                if _G.Chompers and _G.Chompers.Announce then
+                    local label = nearest == "basket"
+                        and "🧺  Switched to Basket — faster movement"
+                        or  "🛒  Switched to Cart — carries more"
+                    _G.Chompers.Announce(label, Color3.fromRGB(100,200,130), 2)
+                end
+            elseif not nearest then
+                lastProxChoice = nil
+            end
+        end
+    end)
+end
 
 local divY = 90
 local div = Instance.new("Frame",PrefPanel)
