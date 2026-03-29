@@ -315,6 +315,22 @@ function PlayerState.RemoveItem(player, slotIndex)
 	return item
 end
 
+-- MoveItem: reorders inventory without creating holes.
+-- Removes item at fromSlot, re-inserts at toSlot.
+-- If toSlot > #inventory, item goes to the end.
+-- Shifts intervening items by one position (no nil gaps ever created).
+function PlayerState.MoveItem(player, fromSlot, toSlot)
+	local s = _state[player]
+	if not s then return end
+	local n = #s.inventory
+	if fromSlot < 1 or fromSlot > n then return end
+	if fromSlot == toSlot then return end
+	toSlot = math.clamp(toSlot, 1, n)   -- clamp to valid range
+	local item = table.remove(s.inventory, fromSlot)
+	table.insert(s.inventory, toSlot, item)
+	PlayerState.SyncInventory(player)
+end
+
 -- MarkItemPaid: marks a specific item as paid (by slot index)
 function PlayerState.MarkItemPaid(player, slotIndex)
 	local s = _state[player]
@@ -934,10 +950,15 @@ end)
 R("EquipTitle").OnServerEvent:Connect(function(player, titleStr)
 	if type(titleStr) ~= "string" or #titleStr > 80 then return end
 	PlayerState.SetEquippedTitle(player, titleStr)
-	-- Refresh that player's billboard for others (server-side billboard or
-	-- re-fire to client so StoreGuide can update its local billboard)
 	local r = R("BillboardRefresh")
 	if r then r:FireClient(player, titleStr) end
+end)
+
+-- ReorderInventory: client requests a slot-to-slot move (no holes ever created)
+R("ReorderInventory").OnServerEvent:Connect(function(player, fromSlot, toSlot)
+	if type(fromSlot) ~= "number" or type(toSlot) ~= "number" then return end
+	fromSlot = math.floor(fromSlot); toSlot = math.floor(toSlot)
+	PlayerState.MoveItem(player, fromSlot, toSlot)
 end)
 
 -- ============================================================
