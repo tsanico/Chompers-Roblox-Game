@@ -291,7 +291,7 @@ for _, tb in ipairs(TABS) do
     btn.Name = tb.id.."Tab"; btn.LayoutOrder = tb.order
     btn.Size = UDim2.new(1/#TABS,-2,0,TAB_H-4)
     btn.BackgroundColor3 = Color3.fromRGB(28,26,42); btn.BorderSizePixel = 0
-    btn.Font = Enum.Font.GothamBold; btn.TextSize = 18
+    btn.Font = Enum.Font.GothamBlack; btn.TextSize = 19
     btn.TextColor3 = C.dim; btn.Text = tb.label
     btn.AutoButtonColor = false; btn.ZIndex = 11; corner(btn,6)
     tabButtons[tb.id] = btn
@@ -322,7 +322,7 @@ local function mkSubBar(parent, h, tabs, onSwitch)
         b.Size = UDim2.new(1/#tabs,-2,0,h-4)
         b.BackgroundColor3 = i==1 and st.color or Color3.fromRGB(24,22,38)
         b.BorderSizePixel = 0; b.AutoButtonColor = false
-        b.Font = Enum.Font.GothamBold; b.TextSize = 18
+        b.Font = Enum.Font.GothamBlack; b.TextSize = 20
         b.TextColor3 = i==1 and Color3.fromRGB(253,248,240) or C.dim
         b.Text = st.label; b.ZIndex = 11; corner(b,6)
         btns[st.id] = b; local sid=st.id; local sc=st.color
@@ -474,24 +474,24 @@ local rScroll = mkScroll(RulesPanel,UDim2.new(1,-16,1,-10),
 
 local function addRuleSection(title, col, rules)
     local hdr = Instance.new("TextLabel", rScroll)
-    hdr.Size = UDim2.new(1,0,0,34); hdr.BackgroundTransparency = 1
-    hdr.Text = title; hdr.Font = Enum.Font.GothamBold; hdr.TextSize = 24
+    hdr.Size = UDim2.new(1,0,0,40); hdr.BackgroundTransparency = 1
+    hdr.Text = title; hdr.Font = Enum.Font.GothamBlack; hdr.TextSize = 26
     hdr.TextColor3 = col; hdr.TextXAlignment = Enum.TextXAlignment.Left; hdr.ZIndex = 11
     for _, rule in ipairs(rules) do
         local rf = Instance.new("Frame", rScroll)
         rf.Size = UDim2.new(1,0,0,0); rf.AutomaticSize = Enum.AutomaticSize.Y
         rf.BackgroundColor3 = C.bgLight; rf.BorderSizePixel = 0; rf.ZIndex = 11; corner(rf,8)
         local rfp = Instance.new("UIPadding",rf)
-        rfp.PaddingTop=UDim.new(0,10);rfp.PaddingBottom=UDim.new(0,10)
-        rfp.PaddingLeft=UDim.new(0,14);rfp.PaddingRight=UDim.new(0,12)
+        rfp.PaddingTop=UDim.new(0,12);rfp.PaddingBottom=UDim.new(0,12)
+        rfp.PaddingLeft=UDim.new(0,16);rfp.PaddingRight=UDim.new(0,14)
         local rl = Instance.new("TextLabel", rf)
         rl.Size = UDim2.new(1,0,0,0); rl.AutomaticSize = Enum.AutomaticSize.Y
         rl.BackgroundTransparency = 1; rl.Text = rule
-        rl.Font = Enum.Font.Gotham; rl.TextSize = 24
-        rl.TextColor3 = Color3.fromRGB(210,208,228)
+        rl.Font = Enum.Font.GothamBold; rl.TextSize = 20
+        rl.TextColor3 = Color3.fromRGB(225,220,245)
         rl.TextXAlignment = Enum.TextXAlignment.Left
         rl.TextYAlignment = Enum.TextYAlignment.Top
-        rl.TextWrapped = true; rl.LineHeight = 1.35; rl.ZIndex = 12
+        rl.TextWrapped = true; rl.LineHeight = 1.4; rl.ZIndex = 12
     end
 end
 
@@ -679,7 +679,7 @@ local function makeCookSub(subId, accentCol)
     -- Placeholder
     local placeholder = mkLabel(rightPanel,
         "← Select an item to see full details.",
-        Enum.Font.Gotham,14,C.dim,Enum.TextXAlignment.Center,
+        Enum.Font.GothamBold,18,C.dim,Enum.TextXAlignment.Center,
         UDim2.new(0,0,0,0),UDim2.new(1,0,0,80))
     placeholder.Name="Placeholder"
 
@@ -764,25 +764,25 @@ end
 -- Section header label
 local function detailSection(parent, text, order)
     local l = Instance.new("TextLabel", parent); l.LayoutOrder = order
-    l.Size = UDim2.new(1, 0, 0, 24); l.BackgroundTransparency = 1
-    l.Text = text; l.Font = Enum.Font.GothamBlack; l.TextSize = 15
-    l.TextColor3 = C.dim; l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Size = UDim2.new(1, 0, 0, 28); l.BackgroundTransparency = 1
+    l.Text = text; l.Font = Enum.Font.GothamBlack; l.TextSize = 18
+    l.TextColor3 = Color3.fromRGB(170,160,210); l.TextXAlignment = Enum.TextXAlignment.Left
     l.ZIndex = 12; return l
 end
 
 -- Ingredient/recipe chip for the "builds into / requires" section
 local function detailItemChip(parent, emoji, name, subText, rCol, rBg, order)
     local chip = Instance.new("Frame", parent); chip.LayoutOrder = order
-    chip.Size = UDim2.new(1, 0, 0, 48); chip.BackgroundColor3 = rBg or C.bgCard
+    chip.Size = UDim2.new(1, 0, 0, 56); chip.BackgroundColor3 = rBg or C.bgCard
     chip.BorderSizePixel = 0; chip.ZIndex = 12; corner(chip, 8)
     mkStroke(chip, 1.5, rCol or C.stroke)
-    mkLabel(chip, emoji, Enum.Font.GothamBold, 28, C.white,
-        Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,52,1,0)).ZIndex = 13
-    mkLabel(chip, name, Enum.Font.GothamBold, 17, C.white,
-        Enum.TextXAlignment.Left, UDim2.new(0,56,0,4), UDim2.new(1,-60,0,22)).ZIndex = 13
+    mkLabel(chip, emoji, Enum.Font.GothamBold, 34, C.white,
+        Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,60,1,0)).ZIndex = 13
+    mkLabel(chip, name, Enum.Font.GothamBlack, 20, C.white,
+        Enum.TextXAlignment.Left, UDim2.new(0,64,0,6), UDim2.new(1,-68,0,24)).ZIndex = 13
     if subText and subText ~= "" then
-        mkLabel(chip, subText, Enum.Font.Gotham, 13, C.dim,
-            Enum.TextXAlignment.Left, UDim2.new(0,56,0,26), UDim2.new(1,-60,0,16)).ZIndex = 13
+        mkLabel(chip, subText, Enum.Font.GothamBold, 15, C.dim,
+            Enum.TextXAlignment.Left, UDim2.new(0,64,0,32), UDim2.new(1,-68,0,18)).ZIndex = 13
     end
     return chip
 end
@@ -892,21 +892,21 @@ for i, item in ipairs(sortedIng) do
     local col = RARITY_COL[r] or C.stroke
     local row = Instance.new("TextButton", ingLeft)
     row.Name = "Ing_"..i; row.LayoutOrder = i
-    row.Size = UDim2.new(1,0,0,68)
+    row.Size = UDim2.new(1,0,0,80)
     row.BackgroundColor3 = Color3.fromRGB(22,20,36)
     row.BorderSizePixel = 0; row.AutoButtonColor = false
     row.Text = ""; row.ZIndex = 11
     corner(row,8); mkStroke(row,1.5,Color3.fromRGB(38,36,54))
-    mkLabel(row, emj(item.name,item.zone), Enum.Font.GothamBold, 30, C.white,
-        Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,54,1,0)).ZIndex = 12
-    local nameL = mkLabel(row, item.name, Enum.Font.GothamBold, 17, C.white,
-        Enum.TextXAlignment.Left, UDim2.new(0,58,0,6), UDim2.new(1,-62,0,22))
-    nameL.ZIndex = 12; nameL.Name = "RowName"  -- named so search can find it
+    mkLabel(row, emj(item.name,item.zone), Enum.Font.GothamBold, 38, C.white,
+        Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,64,1,0)).ZIndex = 12
+    local nameL = mkLabel(row, item.name, Enum.Font.GothamBlack, 20, C.white,
+        Enum.TextXAlignment.Left, UDim2.new(0,68,0,8), UDim2.new(1,-72,0,26))
+    nameL.ZIndex = 12; nameL.Name = "RowName"
     local rPill = Instance.new("Frame", row); rPill.ZIndex = 12
-    rPill.Size = UDim2.new(0,0,0,20); rPill.AutomaticSize = Enum.AutomaticSize.X
-    rPill.Position = UDim2.new(0,58,0,34); rPill.BackgroundColor3 = col
+    rPill.Size = UDim2.new(0,0,0,22); rPill.AutomaticSize = Enum.AutomaticSize.X
+    rPill.Position = UDim2.new(0,68,0,40); rPill.BackgroundColor3 = col
     rPill.BorderSizePixel = 0; corner(rPill,4)
-    local rPillL = mkLabel(rPill, r, Enum.Font.GothamBlack, 13, Color3.fromRGB(10,8,20))
+    local rPillL = mkLabel(rPill, r, Enum.Font.GothamBlack, 14, Color3.fromRGB(10,8,20))
     rPillL.ZIndex = 13
     local rPillPad = Instance.new("UIPadding", rPill)
     rPillPad.PaddingLeft = UDim.new(0,6); rPillPad.PaddingRight = UDim.new(0,6)
@@ -1017,21 +1017,21 @@ for i, item in ipairs(sortedRec) do
     local col = RARITY_COL[r] or C.stroke
     local row = Instance.new("TextButton", recLeft)
     row.Name = "Rec_"..i; row.LayoutOrder = i
-    row.Size = UDim2.new(1,0,0,68)
+    row.Size = UDim2.new(1,0,0,80)
     row.BackgroundColor3 = Color3.fromRGB(22,20,36)
     row.BorderSizePixel = 0; row.AutoButtonColor = false
     row.Text = ""; row.ZIndex = 11
     corner(row,8); mkStroke(row,1.5,Color3.fromRGB(38,36,54))
-    mkLabel(row, emj(item.name), Enum.Font.GothamBold, 30, C.white,
-        Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,54,1,0)).ZIndex = 12
-    local nameL = mkLabel(row, item.name, Enum.Font.GothamBold, 17, C.white,
-        Enum.TextXAlignment.Left, UDim2.new(0,58,0,6), UDim2.new(1,-62,0,22))
+    mkLabel(row, emj(item.name), Enum.Font.GothamBold, 38, C.white,
+        Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,64,1,0)).ZIndex = 12
+    local nameL = mkLabel(row, item.name, Enum.Font.GothamBlack, 20, C.white,
+        Enum.TextXAlignment.Left, UDim2.new(0,68,0,8), UDim2.new(1,-72,0,26))
     nameL.ZIndex = 12; nameL.Name = "RowName"
     local rPill = Instance.new("Frame", row); rPill.ZIndex = 12
-    rPill.Size = UDim2.new(0,0,0,20); rPill.AutomaticSize = Enum.AutomaticSize.X
-    rPill.Position = UDim2.new(0,58,0,34); rPill.BackgroundColor3 = col
+    rPill.Size = UDim2.new(0,0,0,22); rPill.AutomaticSize = Enum.AutomaticSize.X
+    rPill.Position = UDim2.new(0,68,0,40); rPill.BackgroundColor3 = col
     rPill.BorderSizePixel = 0; corner(rPill,4)
-    local rPillL = mkLabel(rPill, r, Enum.Font.GothamBlack, 13, Color3.fromRGB(10,8,20))
+    local rPillL = mkLabel(rPill, r, Enum.Font.GothamBlack, 14, Color3.fromRGB(10,8,20))
     rPillL.ZIndex = 13
     local rPillPad = Instance.new("UIPadding", rPill)
     rPillPad.PaddingLeft = UDim.new(0,6); rPillPad.PaddingRight = UDim.new(0,6)
@@ -1427,7 +1427,7 @@ for j, award in ipairs(AWARDS) do
         UDim2.new(0,84,0,10),UDim2.new(0.58,0,0,30)).ZIndex=12
 
     -- Description (match cosmetics size + colour)
-    mkLabel(card,award.desc,Enum.Font.Gotham,18,Color3.fromRGB(175,170,205),Enum.TextXAlignment.Left,
+    mkLabel(card,award.desc,Enum.Font.GothamBold,19,Color3.fromRGB(220,215,245),Enum.TextXAlignment.Left,
         UDim2.new(0,84,0,46),UDim2.new(0.55,0,0,22)).ZIndex=12
 
     -- Progress chip (goal/done, compact, right of desc)
@@ -1861,12 +1861,12 @@ local KEYS={
 }
 for i,kb in ipairs(KEYS) do
     local row=Instance.new("Frame",kbScroll)
-    row.Size=UDim2.new(1,0,0,56); row.LayoutOrder=i
+    row.Size=UDim2.new(1,0,0,62); row.LayoutOrder=i
     row.BackgroundColor3=i%2==0 and Color3.fromRGB(24,22,36) or Color3.fromRGB(20,18,32)
     row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
-    mkLabel(row,kb[1],Enum.Font.GothamBlack,18,C.white,
+    mkLabel(row,kb[1],Enum.Font.GothamBlack,20,C.white,
         Enum.TextXAlignment.Left,UDim2.new(0,14,0,0),UDim2.new(0.3,0,1,0)).ZIndex=12
-    mkLabel(row,kb[2],Enum.Font.Gotham,18,C.dim,
+    mkLabel(row,kb[2],Enum.Font.GothamBold,18,Color3.fromRGB(215,210,240),
         Enum.TextXAlignment.Left,UDim2.new(0.3,0,0,0),UDim2.new(0.7,-14,1,0)).ZIndex=12
 end
 
@@ -1930,22 +1930,6 @@ closeGuide = function()
     if not isOpen then Overlay.Visible=false end
 end
 
--- defaultTab: which main tab to show for the current phase
-local function defaultTab(phase)
-    if phase=="Prelobby"                         then return "PREFERENCES" end
-    if phase=="Gathering"                        then return "OVERVIEW"    end
-    if phase=="Cooking" or phase=="CookingGrace" then return "COOKBOOK"    end
-    if phase=="FoodFight"                        then return "MATCH"       end
-    if phase=="EndGame" or phase=="Accolades"    then return "ACCOLADES"   end
-    return "OVERVIEW"
-end
-
--- defaultCookSub: which Cookbook sub-tab for the current phase
-local function defaultCookSub(phase)
-    if phase=="Cooking" or phase=="CookingGrace" then return "RECIPES"     end
-    return "INGREDIENTS"
-end
-
 openGuide = function(tabId)
     isOpen = true; Overlay.Visible = true
     Panel.Position = UDim2.new(0.5,0,0,PANEL_TOP+12)
@@ -1954,18 +1938,9 @@ openGuide = function(tabId)
     TweenService:Create(Panel,
         TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
         {Position=UDim2.new(0.5,0,0,PANEL_TOP)}):Play()
-    -- Route: explicit tabId wins; otherwise phase default; otherwise keep current
-    local target = tabId or defaultTab(currentPhase) or activeTab or "PREFERENCES"
+    -- Route: explicit tabId (e.g. from WelcomeScreen) wins; otherwise stay on current tab
+    local target = tabId or activeTab or "OVERVIEW"
     switchTab(target)
-    -- Auto-route within Cookbook sub-tabs by phase (no tabId means player opened manually)
-    if target == "COOKBOOK" and not tabId then
-        local sub = defaultCookSub(currentPhase)
-        task.defer(function()
-            for sid, pnl in pairs(cookSubPanels) do
-                if typeof(pnl) == "Instance" then pnl.Visible = (sid == sub) end
-            end
-        end)
-    end
 end
 
 CloseBtn.MouseButton1Click:Connect(closeGuide)
@@ -1978,11 +1953,9 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 -- ============================================================
--- PHASE LISTENER — lock prefs, re-route if open; NEVER force-open
--- The guide only auto-opens ONCE on first join (see INITIAL STATE below).
--- After that, opening is always player-initiated. Phase changes only affect:
---   • Preferences lock/unlock
---   • Tab routing IF the guide is already open
+-- PHASE LISTENER — lock/unlock prefs only. No tab routing.
+-- Players stay on whatever tab they have open. Opening is
+-- always player-initiated after the initial WelcomeScreen flow.
 -- ============================================================
 
 local prefBufferTimer = nil
@@ -1991,10 +1964,6 @@ local function lockPrefs()
     prefsLocked = true
     FavScrollLock.Visible     = true
     AllergyScrollLock.Visible = true
-    -- If player has guide open on Preferences, redirect to phase-appropriate tab
-    if isOpen and activeTab == "PREFERENCES" then
-        switchTab(defaultTab(currentPhase))
-    end
 end
 local function unlockPrefs()
     prefsLocked = false
@@ -2009,40 +1978,25 @@ if PhaseRemote then
 
         if phase == "Gathering" then
             if not Selections.confirmed then
-                -- Give 10s to finish preferences before locking
+                -- Give 10s grace to finish preferences before locking
                 if prefBufferTimer then pcall(task.cancel, prefBufferTimer) end
                 prefBufferTimer = task.delay(10, lockPrefs)
             else
                 lockPrefs()
             end
-            -- If guide is already open, re-route to Ingredients
-            if isOpen then switchTab("COOKBOOK") end
 
-        elseif phase == "Cooking" or phase == "CookingGrace" then
+        elseif phase == "Cooking" or phase == "CookingGrace"
+            or phase == "FoodFight" then
             lockPrefs()
-            if isOpen then
-                switchTab("COOKBOOK")
-                task.defer(function()
-                    for sid, pnl in pairs(cookSubPanels) do
-                        if typeof(pnl) == "Instance" then pnl.Visible = (sid == "RECIPES") end
-                    end
-                end)
-            end
-
-        elseif phase == "FoodFight" then
-            lockPrefs()
-            if isOpen then _G.Chompers.OpenToScoreboard() end
 
         elseif phase == "Prelobby" then
             unlockPrefs()
             Selections.confirmed = false
             ConfirmBtn.Text = "✓  Ready to Shop!"
             ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
-            -- No forced open — player may be in the middle of something
 
         elseif phase == "EndGame" or phase == "Accolades" then
             unlockPrefs()
-            if isOpen then switchTab("ACCOLADES") end
         end
     end)
 end
