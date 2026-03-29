@@ -126,6 +126,10 @@ local isOpen      = false
 local prefsLocked = false
 local activeTab   = "PREFERENCES"
 local currentPhase = "Prelobby"
+local hasAutoOpened = false   -- only auto-open once on first join
+
+-- Forward declarations (functions defined later in the file)
+local openGuide, closeGuide
 
 -- ── Helpers ──────────────────────────────────────────────────
 local function corner(p, r)
@@ -1784,10 +1788,12 @@ mkVolSlider(settingsPanel,"Ambient",      204,0.70)
 
 -- ============================================================
 -- OPEN / CLOSE
+-- Assigned into forward-declared locals (declared near line 125) so any
+-- closure defined earlier in the file can already see these functions.
 -- ============================================================
 
-local function closeGuide()
-    isOpen=false
+closeGuide = function()
+    isOpen = false
     TweenService:Create(Overlay,TweenInfo.new(0.18),{BackgroundTransparency=1}):Play()
     TweenService:Create(Panel,
         TweenInfo.new(0.22,Enum.EasingStyle.Back,Enum.EasingDirection.In),
@@ -1796,15 +1802,42 @@ local function closeGuide()
     if not isOpen then Overlay.Visible=false end
 end
 
-local function openGuide(tabId)
-    isOpen=true; Overlay.Visible=true
-    Panel.Position=UDim2.new(0.5,0,0,PANEL_TOP+12)
-    Overlay.BackgroundTransparency=0.6
+-- defaultTab: which main tab to show for the current phase
+local function defaultTab(phase)
+    if phase=="Prelobby"                         then return "PREFERENCES" end
+    if phase=="Gathering"                        then return "COOKBOOK"    end
+    if phase=="Cooking" or phase=="CookingGrace" then return "COOKBOOK"    end
+    if phase=="FoodFight"                        then return "MATCH"       end
+    if phase=="EndGame" or phase=="Accolades"    then return "ACCOLADES"   end
+    return activeTab
+end
+
+-- defaultCookSub: which Cookbook sub-tab for the current phase
+local function defaultCookSub(phase)
+    if phase=="Cooking" or phase=="CookingGrace" then return "RECIPES"     end
+    return "INGREDIENTS"
+end
+
+openGuide = function(tabId)
+    isOpen = true; Overlay.Visible = true
+    Panel.Position = UDim2.new(0.5,0,0,PANEL_TOP+12)
+    Overlay.BackgroundTransparency = 0.6
     TweenService:Create(Overlay,TweenInfo.new(0.18),{BackgroundTransparency=0.25}):Play()
     TweenService:Create(Panel,
         TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
         {Position=UDim2.new(0.5,0,0,PANEL_TOP)}):Play()
-    switchTab(tabId or activeTab or "PREFERENCES")
+    -- Route: explicit tabId wins; otherwise phase default; otherwise keep current
+    local target = tabId or defaultTab(currentPhase) or activeTab or "PREFERENCES"
+    switchTab(target)
+    -- Auto-route within Cookbook sub-tabs by phase (no tabId means player opened manually)
+    if target == "COOKBOOK" and not tabId then
+        local sub = defaultCookSub(currentPhase)
+        task.defer(function()
+            for sid, pnl in pairs(cookSubPanels) do
+                if typeof(pnl) == "Instance" then pnl.Visible = (sid == sub) end
+            end
+        end)
+    end
 end
 
 CloseBtn.MouseButton1Click:Connect(closeGuide)
@@ -1817,52 +1850,67 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 -- ============================================================
--- PHASE-BASED ROUTING + PREFERENCES LOCKING
+-- PHASE LISTENER — lock prefs, re-route if open; NEVER force-open
+-- The guide only auto-opens ONCE on first join (see INITIAL STATE below).
+-- After that, opening is always player-initiated. Phase changes only affect:
+--   • Preferences lock/unlock
+--   • Tab routing IF the guide is already open
 -- ============================================================
 
 local prefBufferTimer = nil
 
-local function defaultTab(phase)
-    if phase=="Prelobby"                               then return "PREFERENCES" end
-    if phase=="Gathering" or phase=="Cooking"
-    or phase=="CookingGrace"                           then return "COOKBOOK" end
-    if phase=="FoodFight"                              then return "MATCH" end
-    if phase=="EndGame" or phase=="Accolades"          then return "ACCOLADES" end
-    return activeTab
-end
-
 local function lockPrefs()
-    prefsLocked=true; PrefLock.Visible=true
-    if isOpen and activeTab=="PREFERENCES" then switchTab(defaultTab(currentPhase)) end
+    prefsLocked = true; PrefLock.Visible = true
+    -- If player has the guide open on Preferences, redirect to the phase-appropriate tab
+    if isOpen and activeTab == "PREFERENCES" then
+        switchTab(defaultTab(currentPhase))
+    end
 end
 local function unlockPrefs()
-    prefsLocked=false; PrefLock.Visible=false
+    prefsLocked = false; PrefLock.Visible = false
 end
 
 local PhaseRemote = Remotes and Remotes:FindFirstChild("PhaseChanged")
 if PhaseRemote then
     PhaseRemote.OnClientEvent:Connect(function(phase)
-        currentPhase=phase
-        if phase=="Gathering" then
+        currentPhase = phase
+
+        if phase == "Gathering" then
             if not Selections.confirmed then
-                openGuide("PREFERENCES")
-                if prefBufferTimer then pcall(task.cancel,prefBufferTimer) end
-                prefBufferTimer=task.delay(10,lockPrefs)
+                -- Give 10s to finish preferences before locking
+                if prefBufferTimer then pcall(task.cancel, prefBufferTimer) end
+                prefBufferTimer = task.delay(10, lockPrefs)
             else
                 lockPrefs()
             end
-        elseif phase=="Cooking" or phase=="CookingGrace" or phase=="FoodFight" then
+            -- If guide is already open, re-route to Ingredients
+            if isOpen then switchTab("COOKBOOK") end
+
+        elseif phase == "Cooking" or phase == "CookingGrace" then
             lockPrefs()
-        elseif phase=="Prelobby" then
+            if isOpen then
+                switchTab("COOKBOOK")
+                task.defer(function()
+                    for sid, pnl in pairs(cookSubPanels) do
+                        if typeof(pnl) == "Instance" then pnl.Visible = (sid == "RECIPES") end
+                    end
+                end)
+            end
+
+        elseif phase == "FoodFight" then
+            lockPrefs()
+            if isOpen then _G.Chompers.OpenToScoreboard() end
+
+        elseif phase == "Prelobby" then
             unlockPrefs()
-            Selections.confirmed=false
-            ConfirmBtn.Text="✓  Ready to Shop!"
-            ConfirmBtn.BackgroundColor3=Color3.fromRGB(46,165,66)
-            task.wait(1)
-            if not isOpen then openGuide("PREFERENCES") end
-        elseif phase=="EndGame" or phase=="Accolades" then
+            Selections.confirmed = false
+            ConfirmBtn.Text = "✓  Ready to Shop!"
+            ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
+            -- No forced open — player may be in the middle of something
+
+        elseif phase == "EndGame" or phase == "Accolades" then
             unlockPrefs()
-            task.wait(0.5); openGuide("ACCOLADES")
+            if isOpen then switchTab("ACCOLADES") end
         end
     end)
 end
@@ -1876,20 +1924,24 @@ _G.Chompers.CloseStoreGuide  = closeGuide
 _G.Chompers.IsStoreGuideOpen = function() return isOpen end
 _G.Chompers.RefreshBillboard = updateBillboard
 _G.Chompers.EquipTitle       = function(t)
-    Selections.equippedTitle=t; updateBillboard()
+    Selections.equippedTitle = t; updateBillboard()
 end
-_G.Chompers.tabPanels        = tabPanels
-_G.Chompers.switchTab        = switchTab
-_G.Chompers.ContentArea      = ContentArea
+_G.Chompers.tabPanels  = tabPanels
+_G.Chompers.switchTab  = switchTab
+_G.Chompers.ContentArea = ContentArea
 
 -- ============================================================
--- INITIAL STATE
+-- INITIAL STATE — one-time auto-open on first join only
 -- ============================================================
 
 switchTab("PREFERENCES")
 task.spawn(function()
     task.wait(1.5)
-    if not isOpen then openGuide("PREFERENCES") end
+    -- Only open if this is the player's first time in (hasAutoOpened guard)
+    if not hasAutoOpened and not isOpen then
+        hasAutoOpened = true
+        openGuide("PREFERENCES")
+    end
 end)
 
 print("StoreGuide loaded!")
