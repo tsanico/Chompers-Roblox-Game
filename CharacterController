@@ -42,15 +42,13 @@ local function setupCharacter(character)
 	local humanoid = character:WaitForChild("Humanoid")
 	local hrp      = character:WaitForChild("HumanoidRootPart")
 
-	-- Apply base stats
+	-- Base stats — AutoRotate starts true (normal mode during onboarding UI)
+	-- Shift-lock (AutoRotate=false, mouse lock, camera offset) activates
+	-- only after _G.Chompers.ShiftLockReady = true (set by WelcomeScreen flow)
 	humanoid.JumpPower    = JUMP_POWER
 	humanoid.WalkSpeed    = BASE_WALK_SPEED * currentSpeedMult
-	humanoid.AutoRotate   = false   -- we rotate manually to match camera look
-	humanoid.CameraOffset = CAMERA_OFFSET   -- shift-lock style right-side offset
-
-	-- Lock mouse to screen centre immediately on spawn
-	-- Re-applied every frame in RenderStepped to survive focus loss
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	humanoid.AutoRotate   = true
+	humanoid.CameraOffset = Vector3.new(0, 0, 0)
 
 	-- ── Air control: dampen direction input while airborne ──
 	local stateConn
@@ -69,8 +67,9 @@ local function setupCharacter(character)
 		end
 	end)
 
-	-- ── RenderStepped: speed + rotation + mouse lock ───────────
-	local camera     = workspace.CurrentCamera
+	-- ── RenderStepped: speed + conditional shift-lock ──────────
+	local camera        = workspace.CurrentCamera
+	local prevShiftLock = nil   -- track transitions to avoid redundant property sets
 	local renderConn
 	renderConn = RunService.RenderStepped:Connect(function()
 		if not humanoid or not humanoid.Parent then
@@ -79,20 +78,33 @@ local function setupCharacter(character)
 			return
 		end
 
-		-- Maintain mouse lock (re-apply each frame — survives focus loss)
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		-- Shift-lock gate: only active after onboarding is complete
+		local shiftLock = (_G.Chompers and _G.Chompers.ShiftLockReady == true)
 
-		-- Rotate HRP to match camera's horizontal look direction
-		-- This is the core shift-lock behaviour: body faces wherever mouse points
-		local camLook = camera.CFrame.LookVector
-		local flatLook = Vector3.new(camLook.X, 0, camLook.Z)
-		if flatLook.Magnitude > 0.01 then
-			local angle = math.atan2(-flatLook.X, -flatLook.Z)
-			hrp.CFrame = CFrame.new(hrp.Position)
-				* CFrame.fromEulerAnglesYXZ(0, angle, 0)
+		-- On transition (false→true or true→false), update properties
+		if shiftLock ~= prevShiftLock then
+			prevShiftLock         = shiftLock
+			humanoid.AutoRotate   = not shiftLock
+			humanoid.CameraOffset = shiftLock and CAMERA_OFFSET or Vector3.new(0, 0, 0)
 		end
 
-		-- Speed
+		if shiftLock then
+			-- Shift-lock active: lock mouse + rotate character to face camera
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+
+			local camLook  = camera.CFrame.LookVector
+			local flatLook = Vector3.new(camLook.X, 0, camLook.Z)
+			if flatLook.Magnitude > 0.01 then
+				local angle = math.atan2(-flatLook.X, -flatLook.Z)
+				hrp.CFrame  = CFrame.new(hrp.Position)
+					* CFrame.fromEulerAnglesYXZ(0, angle, 0)
+			end
+		else
+			-- Onboarding UI open: free mouse so player can click buttons
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end
+
+		-- Speed (always)
 		local targetSpeed = BASE_WALK_SPEED * currentSpeedMult
 		if isAirborne then
 			local elapsed = tick() - airTime
