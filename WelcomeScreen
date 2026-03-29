@@ -7,7 +7,7 @@
 --
 -- _G.Chompers.WelcomeScreenActive = true  → blocks StoreGuide auto-open
 -- CONFIRM pressed                         → opens StoreGuide to PREFERENCES
--- StoreGuide closed                       → _G.Chompers.ShiftLockReady = true
+-- StoreGuide closed                       → 
 -- ============================================================
 
 local Players      = game:GetService("Players")
@@ -19,7 +19,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 -- Block StoreGuide auto-open and shift-lock immediately
 _G.Chompers                      = _G.Chompers or {}
 _G.Chompers.WelcomeScreenActive  = true
-_G.Chompers.ShiftLockReady       = false
+
 
 -- Session state — persists across respawns
 local dontShowAgain  = false
@@ -240,6 +240,11 @@ local function buildWelcomeGui()
 		"Buy a Friendship Bracelet during Gathering to team up. At the end of the match, alliances must decide — leave together or fight to the last Chef.",
 		C.gold, 7)
 
+	makeCard(scroll, "🎯",
+		"SHIFT-LOCK (RECOMMENDED)",
+		"Enable Shift-Lock in Roblox settings for easier aiming and throwing. Look for the padlock icon in the bottom-right of your screen while playing. Close this guide first — it makes a big difference.",
+		Color3.fromRGB(160, 160, 255), 8)
+
 	-- ── Bottom bar ─────────────────────────────────────────
 	local btBar = Instance.new("Frame", panel)
 	btBar.Name             = "BottomBar"
@@ -304,20 +309,6 @@ local function buildWelcomeGui()
 	return sg, confirmBtn, function() return dontChecked end
 end
 
--- ── Wait for StoreGuide to close → activate shift-lock ────
-local function waitForGuideClose()
-	task.spawn(function()
-		task.wait(0.8)
-		while true do
-			task.wait(0.25)
-			if _G.Chompers.IsStoreGuideOpen and not _G.Chompers.IsStoreGuideOpen() then
-				_G.Chompers.ShiftLockReady = true
-				break
-			end
-		end
-	end)
-end
-
 -- ── Main onboarding flow ──────────────────────────────────
 local function runOnboarding()
 	if onboardingDone then return end
@@ -328,7 +319,6 @@ local function runOnboarding()
 		if _G.Chompers.OpenStoreGuide then
 			_G.Chompers.OpenStoreGuide("PREFERENCES")
 		end
-		waitForGuideClose()
 		return
 	end
 
@@ -362,7 +352,6 @@ local function runOnboarding()
 			if _G.Chompers.OpenStoreGuide then
 				_G.Chompers.OpenStoreGuide("PREFERENCES")
 			end
-			waitForGuideClose()
 		end)
 	end)
 end
@@ -371,7 +360,6 @@ end
 player.CharacterAdded:Connect(function()
 	if not onboardingDone then
 		_G.Chompers.WelcomeScreenActive = true
-		_G.Chompers.ShiftLockReady      = false
 		task.wait(0.2)
 		runOnboarding()
 	end
@@ -379,7 +367,6 @@ end)
 
 if player.Character and not onboardingDone then
 	_G.Chompers.WelcomeScreenActive = true
-	_G.Chompers.ShiftLockReady      = false
 	task.wait(0.5)
 	runOnboarding()
 end
