@@ -58,10 +58,12 @@ end
 local function setupCheckoutPrompt(part, isSelf)
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText     = isSelf and "Self-Checkout" or "Pay Here"
-	prompt.ObjectText     = isSelf and "🖥 Register" or "🧑 Cashier"
+	prompt.ObjectText     = isSelf and "🖥  Register" or "🧑  Cashier"
 	prompt.KeyboardKeyCode= Enum.KeyCode.E
-	prompt.HoldDuration   = 0   -- we compute hold dynamically; ProximityPrompt just triggers
-	prompt.MaxActivationDistance = 8
+	-- Self-checkout: short visual hold so player sees the UI activate clearly.
+	-- Staffed: no hold (instant trigger, server delay handles the wait).
+	prompt.HoldDuration          = isSelf and 0.3 or 0
+	prompt.MaxActivationDistance = isSelf and 12 or 8  -- kiosks need more range
 	prompt.RequiresLineOfSight   = false
 	prompt.Parent = part
 
