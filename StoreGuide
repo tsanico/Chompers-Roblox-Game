@@ -1103,7 +1103,35 @@ end
 local BasketBtn = mkCartBtn("🧺  Basket — 35 lb. capacity · +5% speed",0,true)
 local CartBtn   = mkCartBtn("🛒  Cart — 70 lb. capacity · −15% speed",0.515,false)
 
-local function selectCart(choice)
+-- Lock overlay — shown when Gathering starts (manual switching blocked mid-match)
+-- Dispensary proximity can still switch and will bypass this overlay
+local ContainerLockOverlay = Instance.new("TextButton", PrefPanel)
+ContainerLockOverlay.Size              = UDim2.new(1,-PAD*2,0,58)
+ContainerLockOverlay.Position          = UDim2.new(0,PAD,0,26)
+ContainerLockOverlay.BackgroundColor3  = Color3.fromRGB(14,10,24)
+ContainerLockOverlay.BackgroundTransparency = 0.3
+ContainerLockOverlay.BorderSizePixel   = 0
+ContainerLockOverlay.AutoButtonColor   = false
+ContainerLockOverlay.Text              = "🔒  Locked — approach a basket or cart rack to switch"
+ContainerLockOverlay.Font              = Enum.Font.GothamBold
+ContainerLockOverlay.TextSize          = 15
+ContainerLockOverlay.TextColor3        = Color3.fromRGB(160, 150, 200)
+ContainerLockOverlay.Visible           = false
+ContainerLockOverlay.ZIndex            = 15
+corner(ContainerLockOverlay, 10)
+
+local containerLocked = false
+
+local function selectCart(choice, fromDispensary)
+    -- Manual UI clicks blocked after Gathering; dispensary bypasses lock
+    if containerLocked and not fromDispensary then
+        if _G.Chompers and _G.Chompers.Announce then
+            _G.Chompers.Announce(
+                "🔒  Container locked — approach a basket or cart rack to switch",
+                Color3.fromRGB(160,150,200), 2)
+        end
+        return
+    end
     Selections.cart = choice
     local bActive = choice=="basket"
     BasketBtn.BackgroundColor3 = bActive and C.red or Color3.fromRGB(28,26,44)
@@ -1116,15 +1144,14 @@ local function selectCart(choice)
     local r = Remotes and Remotes:FindFirstChild("PlayerSelectCart")
     if r then r:FireServer(choice) end
 end
-BasketBtn.MouseButton1Click:Connect(function() selectCart("basket") end)
-CartBtn.MouseButton1Click:Connect(function()   selectCart("cart") end)
-selectCart("basket")
+BasketBtn.MouseButton1Click:Connect(function() selectCart("basket", false) end)
+CartBtn.MouseButton1Click:Connect(function()   selectCart("cart",   false) end)
+selectCart("basket", false)
 
 -- ── Container dispensary proximity ────────────────────────────
 -- Parts tagged IsBasketDispensary=true or IsCartDispensary=true
--- in the map auto-switch the player's container when they walk up.
--- Range: 10 studs. Checks every 0.3s (not every frame).
--- Works during match too — container can be swapped anytime.
+-- auto-switch container when player walks within range.
+-- Works even when containerLocked — dispensary always overrides.
 do
     local PROX_RANGE = 10
     local dispensaries = {}
@@ -1142,11 +1169,8 @@ do
             end
         end
     end
-
-    -- Scan after workspace settles
     task.delay(2, scanDispensaries)
 
-    -- Poll every 0.3s
     task.spawn(function()
         while true do
             task.wait(0.3)
@@ -1154,28 +1178,24 @@ do
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if not hrp then lastProxChoice = nil; continue end
 
-            local nearest = nil
-            local nearestDist = PROX_RANGE + 1
-
+            local nearest, nearestDist = nil, PROX_RANGE + 1
             for _, entry in ipairs(dispensaries) do
                 if entry.part and entry.part.Parent then
                     local d = (hrp.Position - entry.part.Position).Magnitude
                     if d <= PROX_RANGE and d < nearestDist then
-                        nearestDist = d
-                        nearest     = entry.choice
+                        nearestDist = d; nearest = entry.choice
                     end
                 end
             end
 
             if nearest and nearest ~= lastProxChoice then
                 lastProxChoice = nearest
-                selectCart(nearest)
-                -- Notify player with a small announce
+                selectCart(nearest, true)   -- fromDispensary=true bypasses lock
                 if _G.Chompers and _G.Chompers.Announce then
-                    local label = nearest == "basket"
+                    local lbl = nearest == "basket"
                         and "🧺  Switched to Basket — faster movement"
                         or  "🛒  Switched to Cart — carries more"
-                    _G.Chompers.Announce(label, Color3.fromRGB(100,200,130), 2)
+                    _G.Chompers.Announce(lbl, Color3.fromRGB(100,200,130), 2)
                 end
             elseif not nearest then
                 lastProxChoice = nil
@@ -2044,25 +2064,33 @@ if PhaseRemote then
 
         if phase == "Gathering" then
             if not Selections.confirmed then
-                -- Give 10s grace to finish preferences before locking
                 if prefBufferTimer then pcall(task.cancel, prefBufferTimer) end
                 prefBufferTimer = task.delay(10, lockPrefs)
             else
                 lockPrefs()
             end
+            -- Lock container switching from Preferences UI
+            containerLocked = true
+            ContainerLockOverlay.Visible = true
 
         elseif phase == "Cooking" or phase == "CookingGrace"
             or phase == "FoodFight" then
             lockPrefs()
+            containerLocked = true
+            ContainerLockOverlay.Visible = true
 
         elseif phase == "Prelobby" then
             unlockPrefs()
+            containerLocked = false
+            ContainerLockOverlay.Visible = false
             Selections.confirmed = false
             ConfirmBtn.Text = "✓  Ready to Shop!"
             ConfirmBtn.BackgroundColor3 = Color3.fromRGB(46,165,66)
 
         elseif phase == "EndGame" or phase == "Accolades" then
             unlockPrefs()
+            containerLocked = false
+            ContainerLockOverlay.Visible = false
         end
     end)
 end
