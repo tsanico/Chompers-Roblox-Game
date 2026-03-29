@@ -1,346 +1,482 @@
-I reviewed the system you drafted in the uploaded doc. It’s **very strong structurally** — the zones, rarity spread, and recipe tiers are coherent and readable. I’ll give you three things:
-
-1. **What you did really well**
-2. **Small balance tweaks I’d recommend**
-3. **A cleaned “lockable” version of the ingredient + recipe system**
-
-I’m **not expanding the content**, just tightening it so it plays well. I’m also respecting your core design goals:
-
-* ~20 ingredients
-* ~16–18 recipes
-* culturally diverse food
-* simple early game, expandable later
-
----
-
-# 1. What Works Extremely Well
-
-### Zone structure
-
-Your **one UltraRare per zone** rule is excellent.
-
-It guarantees:
-
-* every aisle has a jackpot
-* players explore the store
-* no zone becomes dead
-
-Your layout:
-
-| Zone      | UR        |
-| --------- | --------- |
-| Produce   | Truffle   |
-| Bakery    | Fondant   |
-| Dry Goods | Saffron   |
-| Freezer   | Ice Cream |
-| Stockroom | Wagyu     |
-
-This is **exactly how a map-driven loot system should work**. 
-
----
-
-### Ingredient count
-
-You ended up with:
-
-```text
-21 ingredients
-```
-
-That’s honestly perfect.
-
-Trying to force **exactly 20** would create awkward compromises.
-
-21 still keeps the cookbook **digestible**.
-
----
-
-### Cultural diversity
-
-Your recipes cover:
-
-| Cuisine         | Examples             |
-| --------------- | -------------------- |
-| Italian         | Pasta, Truffle Pasta |
-| Asian           | Fried Rice, Noodles  |
-| French          | Lobster Bisque       |
-| Spanish/Persian | Saffron Rice         |
-| American        | Mac & Cheese         |
-| Japanese luxury | Wagyu Steak          |
-
-This is exactly the diversity you wanted.
-
----
-
-# 2. Minor Balance Tweaks
-
-Only **four things** I would change.
-
----
-
-# Adjustment 1 — Egg Splat Cost
-
-Current:
-
-```
-Egg + Egg
-CL 8
-$4
-```
-
-Egg is $2.
-
-Players can still spam eggs easily.
-
-### Recommendation
-
-Leave ingredients the same but increase cost slightly.
-
-```
-Egg Splat
-Egg + Egg
-CL 8
-$5
-```
-
-Reason:
-
-Prevents early spam while still cheap.
-
----
-
-# Adjustment 2 — Chicken Rice Cost
-
-Current:
-
-```
-Chicken + Rice
-CL 9
-$8
-```
-
-But ingredient costs are:
-
-```
-Chicken $5
-Rice $3
-```
-
-So the recipe price equals ingredient cost.
-
-Cooking should **always be slightly better than raw throws**.
-
-### Fix
-
-```
-Cost $7
-```
-
-Small incentive to cook.
-
----
-
-# Adjustment 3 — Shrimp Noodles Cost
-
-Current:
-
-```
-CL 36
-Cost $14
-```
-
-Shrimp $7
-Noodles $3
-Soy Sauce $4
-
-Total ingredients = $14
-
-Rare tier should reward cooking.
-
-### Fix
-
-```
-Cost $15
-```
-
-Still strong but prevents underpricing.
-
----
-
-# Adjustment 4 — Wagyu Weight
-
-Current:
-
-```
-Wagyu weight 5
-```
-
-That’s very heavy compared to other ingredients.
-
-Heavy items discourage use.
-
-### Recommendation
-
-```
-weight 4
-```
-
-Still premium but usable.
-
----
-
-# 3. Ingredient System (Clean Version)
-
-Here is your **final ingredient table cleaned up**.
-
----
-
-## COMMON
-
-| Ingredient | Zone      | CL | Cost | Effect                     |
-| ---------- | --------- | -- | ---- | -------------------------- |
-| Tomato     | Produce   | 6  | $2   | MARK +15% next hit         |
-| Egg        | Produce   | 6  | $2   | Small AoE                  |
-| Flour      | Bakery    | 5  | $2   | Dust cloud accuracy debuff |
-| Milk       | Bakery    | 4  | $3   | Wide splash                |
-| Rice       | Dry Goods | 5  | $3   | Scatter AoE                |
-| Pasta      | Dry Goods | 6  | $3   | Slow                       |
-| Chicken    | Freezer   | 8  | $5   | Knockback                  |
-
----
-
-## UNCOMMON
-
-| Ingredient   | CL | Cost | Effect      |
-| ------------ | -- | ---- | ----------- |
-| Cheese Block | 7  | $4   | Slow → root |
-| Noodles      | 6  | $3   | Entangle    |
-| Soy Sauce    | 5  | $4   | MARK +20%   |
-| Oil          | 5  | $4   | Fire primer |
-| Chili Powder | 6  | $3   | Burn DoT    |
-
----
-
-## RARE
-
-| Ingredient  | CL | Cost | Effect              |
-| ----------- | -- | ---- | ------------------- |
-| Honey       | 8  | $8   | Root + sticky floor |
-| Blue Cheese | 9  | $9   | CC amplifier        |
-| Shrimp      | 8  | $7   | Double hit          |
-
----
-
-## ULTRA RARE
-
-| Ingredient | Zone      | CL | Cost | Effect             |
-| ---------- | --------- | -- | ---- | ------------------ |
-| Truffle    | Produce   | 10 | $18  | Recipe +20% CL     |
-| Fondant    | Bakery    | 12 | $16  | Slow + vision blur |
-| Saffron    | Dry Goods | 8  | $14  | Recipe splash      |
-| Ice Cream  | Freezer   | 10 | $18  | Freeze             |
-| Wagyu Beef | Stockroom | 14 | $20  | Knockdown          |
-
----
-
-## LEGENDARY
-
-| Ingredient | CL | Cost | Effect          |
-| ---------- | -- | ---- | --------------- |
-| Caviar     | 9  | $12  | Precision throw |
-
----
-
-# 4. Final Recipe List (Balanced)
-
-Your list already works. Here is the **cleaned version with the small tweaks**.
-
----
-
-# COMMON (3 servings)
-
-| Recipe             | Ingredients    | CL | Cost |
-| ------------------ | -------------- | -- | ---- |
-| Tomato Toss        | Tomato         | 6  | $2   |
-| Egg Splat          | Egg + Egg      | 8  | $5   |
-| Chicken Rice       | Chicken + Rice | 9  | $7   |
-| Spaghetti Surprise | Pasta + Tomato | 8  | $5   |
-
----
-
-# UNCOMMON (2 servings)
-
-| Recipe           | Ingredients                 | CL | Cost |
-| ---------------- | --------------------------- | -- | ---- |
-| Mac & Cheese     | Pasta + Cheese Block + Milk | 22 | $10  |
-| Chili Fried Rice | Rice + Oil + Chili Powder   | 24 | $10  |
-| Noodle Bowl      | Noodles + Soy Sauce + Oil   | 20 | $11  |
-| Soy Chicken      | Chicken + Soy Sauce + Rice  | 22 | $12  |
-
----
-
-# RARE (1 serving)
-
-| Recipe               | Ingredients                  | CL | Cost |
-| -------------------- | ---------------------------- | -- | ---- |
-| Honey Glazed Chicken | Chicken + Honey + Oil        | 34 | $17  |
-| Shrimp Noodles       | Shrimp + Noodles + Soy Sauce | 36 | $15  |
-| Blue Cheese Pasta    | Pasta + Blue Cheese + Milk   | 33 | $15  |
-
----
-
-# ULTRA RARE
-
-| Recipe             | Ingredients                    | CL | Cost |
-| ------------------ | ------------------------------ | -- | ---- |
-| Truffle Pasta      | Pasta + Truffle + Cheese Block | 44 | $25  |
-| Saffron Rice       | Rice + Saffron + Oil           | 44 | $21  |
-| Lobster Bisque     | Shrimp + Milk + Saffron + Oil  | 45 | $28  |
-| Ice Cream Shake    | Ice Cream + Milk               | 40 | $21  |
-| Honey Fondant Cake | Fondant + Honey + Flour        | 42 | $26  |
-
----
-
-# LEGENDARY
-
-| Recipe               | Ingredients                   | CL | Cost |
-| -------------------- | ----------------------------- | -- | ---- |
-| Million Dollar Steak | Wagyu Beef + Truffle + Caviar | 70 | $50  |
-
----
-
-# 5. Why This Version Will Play Well
-
-Players understand instantly:
-
-```
-cheap ingredients → spam
-cooked dishes → pressure
-rare dishes → burst
-ultra rare → chaos
-legendary → spectacle
-```
-
-The cookbook is also **small enough to memorize**, which is crucial for PvP games.
-
----
-
-# 6. The One Thing I Would NOT Change
-
-Your **ingredient effects system**.
-
-It’s fantastic because:
-
-* raw throws are still useful
-* recipes combine effects
-* cooking is strategic
-
-This is the exact type of **emergent gameplay system** that makes sandbox PvP games replayable. 
-
----
-
-✅ If you'd like, the **next step I recommend** is something surprisingly important:
-
-Design **how ingredients spawn in each aisle** (spawn weights per zone).
-
-That’s where the real balance of Chompers will come from.
+-- ============================================================
+-- ChompersData — ModuleScript · ReplicatedStorage
+--
+-- Single source of truth for all game constants, ingredients,
+-- and recipes. Part 45 (March 2026) — Vertical Slice v1.
+--
+-- Ingredient zones map to physical store sections:
+--   Produce  = far right
+--   Bakery   = far left
+--   Dry Goods = mid-left aisles
+--   Freezer  = mid-right aisles
+--   Neutral  = stockroom / no zone allergy
+--
+-- 21 ingredients, 17 recipes.
+-- Full 65-ingredient / 69-recipe set deferred to Phase 2.
+-- ============================================================
+
+local ChompersData = {}
+
+-- ============================================================
+-- CONSTANTS (all locked values — Part 43 supersedes Parts 1–42)
+-- ============================================================
+
+ChompersData.Constants = {
+
+	-- Bar system
+	-- CL = Cleanliness (HP proxy, 0–100. 100 = eliminated)
+	-- FL = Fullness (control penalty, 0–100, decays over time)
+	FL = {
+		DecayPerSecond   = 2,      -- FL drains this much per second passively
+		CookingBonus     = 0.30,   -- FL decay slows 30% while cooking (reward for kitchen time)
+	},
+
+	-- FL per hit (Balance Patch v1)
+	FLPerHit = {
+		RawCold  = 1,   -- +1 FL per raw / cold recipe hit
+		Cooked   = 2,   -- +2 FL per cooked recipe hit
+	},
+
+	TrashCanCL = 5,   -- +5 CL to player who picks up trash can loot
+
+	-- 100% state (applies to either bar hitting 100%)
+	State100 = {
+		CueDuration      = 0.5,
+		SpeedPenalty     = 0.30,   -- −30% speed after drop
+		DualSpeedPenalty = 0.60,   -- −60% if BOTH bars hit 100%
+		DropAll          = true,
+		OwnerLockDuration = 1.0,
+	},
+
+	SpeedFloor = 0.35,   -- player can never fall below 35% base speed
+
+	-- Allergy multipliers (Part 5 — locked)
+	Allergy = {
+		MatchMultiplier    = 1.75,   -- allergen hit: ×1.75 CL received
+		NoMatchMultiplier  = 0.75,   -- non-allergen hit: ×0.75 CL received
+	},
+
+	-- Damage multipliers (Cook Depth bonus REMOVED — Part 45)
+	Damage = {
+		OilFireMultiplier    = 1.60,
+		SoftCap1Threshold    = 3.0,
+		SoftCap2Threshold    = 4.0,
+		SoftCap1Efficiency   = 1.00,
+		SoftCap2Efficiency   = 0.80,
+		SoftCap3Efficiency   = 0.65,
+	},
+
+	-- Mark system (Part 9 — Black Garlic removed Phase 1)
+	Marks = {
+		Tomato   = { bonus = 0.15, window = 4 },   -- +15% CL on next hit
+		SoySauce = { bonus = 0.20, window = 4 },   -- +20% CL on next hit
+	},
+
+	-- Elemental chains (Part 9)
+	Elemental = {
+		OilWindowSeconds = 3,
+		OilFireMultiplier = 1.60,
+		-- Phase 1: only one fire recipe. Oil hit → Chili Fried Rice within 3s = ×1.6
+		FireRecipes = { "Chili Fried Rice" },
+	},
+
+	-- CC diminishing returns
+	CCDiminish = {
+		Hit1 = 1.00, Hit2 = 0.70, Hit3 = 0.40, Hit4 = 0.20,
+		ResetSeconds = 8,
+	},
+
+	FreezeCapSeconds = 2.5,
+
+	-- Favourite food system (Part 5)
+	Favourite = {
+		ThrowBonusMultiplier = 0.5,   -- +50% of baseCL as bonus
+		ThrowBonusCap        = 30,    -- bonus capped at +30 per hit
+		SelfConsumeBuffMult  = 1.5,
+		EnemyFLSpike         = 2.0,   -- ×2 FL when hit by own favourite
+	},
+	FavouriteEnemyFLSpike = 2.0,
+
+	-- Throw system (Part 43 — locked)
+	Throw = {
+		MinSpeed         = 66,
+		MaxSpeed         = 85,
+		MinRange         = 20,
+		MaxRange         = 50,
+		ArcPeak          = 8,
+		EffectiveGravity = 175,
+		GravityCounterPct = 0.108,
+		Cooldown         = 0.8,
+		MinCharge        = 0.3,
+		MaxCharge        = 1.5,
+		MaxHoldTime      = 2.0,
+		AimSpeedMult     = 0.80,
+		AimSpeedRamp     = 0.30,
+		HitRadius = {
+			Light  = 1.2,   -- wt 1–2
+			Normal = 1.5,   -- wt 3–4
+			Heavy  = 1.8,   -- wt 5+
+		},
+	},
+
+	-- Economy (Part 45 — $20 start)
+	Economy = {
+		StartingCash         = 20,
+		StartingNapkins      = 1,
+		BasketWeightLimit    = 35,
+		CartWeightLimit      = 70,
+		BasketSpeedBonus     = 0.05,
+		CartSpeedPenalty     = 0.15,
+	},
+
+	-- Respawn timers (seconds)
+	Respawn = {
+		Ingredient_Common    = 20,
+		Ingredient_Uncommon  = 35,
+		Ingredient_Rare      = 60,
+		Ingredient_UltraRare = 90,
+		Ingredient_Legendary = 0,   -- legendaries don't respawn
+		Cash_Small           = 15,
+		Cash_Stack           = 30,
+		Napkin               = 120,
+		Bracelet             = 180,
+	},
+
+	-- Phase timings (seconds)
+	Phase = {
+		PreglobbyMinPlayers  = 2,
+		Prelobby             = 60,
+		Gathering            = 120,
+		Cooking              = 90,
+		CookingGrace         = 10,
+		FoodFight            = 360,
+		Accolades            = 30,
+	},
+
+	-- Points
+	Points = {
+		PickupIngredient        = 2,
+		IngredientPaidCheckout  = 3,
+		DirectHitPerCL          = 1,
+		DirectHitPerFL          = 0.5,
+		DownEnemy               = 25,
+		Assist                  = 15,
+		FormAlliance            = 5,
+		SurviveToEnd            = 10,
+		FinishDishSolo_base     = 10,
+		FinishDishSousSide      = 8,
+		SousChefContrib_base    = 3,
+		RarityMultiplier = {
+			Common    = 1.0,
+			Uncommon  = 1.5,
+			Rare      = 2.5,
+			UltraRare = 4.0,
+			Legendary = 8.0,
+		},
+	},
+
+	-- Alliance system
+	Alliance = {
+		BraceletCost         = 12,
+		FoodFightReconfirmSeconds = 15,
+		EndGameDecisionSeconds = 30,
+		TogetherMedalShare   = 0.70,
+		MaxAllies = { [1]=1,[2]=1,[3]=1,[4]=1,[5]=1,[6]=1,[7]=1,[8]=1,[9]=1,[10]=1,
+			[11]=1,[12]=1,[13]=1,[14]=1,[15]=1,[16]=1,[17]=1,[18]=1,[19]=1,
+			[20]=2,[21]=2,[22]=2,[23]=2,[24]=2,[25]=2,[26]=2,[27]=2,[28]=2,[29]=2,
+			[30]=3,[31]=3,[32]=3,[33]=3,[34]=3,[35]=3,[36]=3,[37]=3,[38]=3,[39]=3,[40]=3 },
+	},
+
+	-- Victory hierarchy (Part 37)
+	Victory = {
+		GoldenApronMedals    = 100,
+		GrandGrocerMedals    = 60,
+		Accolade1st          = 40,
+		Accolade2nd          = 30,
+		Accolade3rd          = 25,
+		Accolade4th          = 20,
+		Accolade5th          = 15,
+	},
+
+	-- Stove interruption penalties
+	Stove = {
+		StoveInterruptPresent = 25,
+		StoveInterruptAway    = 40,
+	},
+}
+
+-- ============================================================
+-- INGREDIENTS — 21 TOTAL (Phase 1 Vertical Slice)
+--
+-- Zones map to store sections:
+--   Produce   = far right section
+--   Bakery    = far left section
+--   Dry Goods = mid-left aisles
+--   Freezer   = mid-right aisles
+--   Neutral   = stockroom / no zone allergy
+--
+-- Allergy = the zone type ("None" for Neutral ingredients)
+-- One UltraRare per zone. Neutral has Wagyu + Caviar (Legendary).
+-- ============================================================
+
+ChompersData.Ingredients = {
+
+	-- ── PRODUCE ──────────────────────────────────────────────────
+	{ name="Tomato",     zone="Produce",   rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce",   effect="MARK +15% CL on next hit" },
+	{ name="Egg",        zone="Produce",   rarity="Common",    cl=6,  wt=2, cost=2,  allergy="Produce",   effect="Mini AoE splat on impact" },
+	{ name="Truffle",    zone="Produce",   rarity="UltraRare", cl=10, wt=1, cost=18, allergy="Produce",   effect="Cooking catalyst: next recipe cooked +20% CL, consumed on cook" },
+
+	-- ── BAKERY ───────────────────────────────────────────────────
+	{ name="Flour",      zone="Bakery",    rarity="Common",    cl=5,  wt=2, cost=2,  allergy="Bakery",    effect="Dust cloud on impact — accuracy debuff 3s" },
+	{ name="Milk",       zone="Bakery",    rarity="Common",    cl=4,  wt=2, cost=3,  allergy="Bakery",    effect="Wide weak splash. Self-consume: −10 CL" },
+	{ name="Cheese Block",zone="Bakery",  rarity="Uncommon",  cl=7,  wt=2, cost=4,  allergy="Bakery",    effect="Slow on hit. Two hits same target = root 1.5s" },
+	{ name="Honey",      zone="Bakery",    rarity="Rare",      cl=8,  wt=1, cost=8,  allergy="Bakery",    effect="Root 1s + sticky floor zone 5s" },
+	{ name="Blue Cheese",zone="Bakery",   rarity="Rare",      cl=9,  wt=2, cost=9,  allergy="Bakery",    effect="CC amplifier — next slow/root on target lasts +50%" },
+	{ name="Fondant",    zone="Bakery",    rarity="UltraRare", cl=12, wt=2, cost=16, allergy="Bakery",    effect="On hit: −30% speed + vision blur 4s" },
+
+	-- ── DRY GOODS ────────────────────────────────────────────────
+	{ name="Rice",       zone="Dry Goods", rarity="Common",    cl=5,  wt=2, cost=3,  allergy="Dry Goods", effect="Scatter AoE on impact" },
+	{ name="Pasta",      zone="Dry Goods", rarity="Common",    cl=6,  wt=2, cost=3,  allergy="Dry Goods", effect="Slow on hit" },
+	{ name="Noodles",    zone="Dry Goods", rarity="Uncommon",  cl=6,  wt=2, cost=3,  allergy="Dry Goods", effect="Entangle — movement penalty 2s" },
+	{ name="Soy Sauce",  zone="Dry Goods", rarity="Uncommon",  cl=5,  wt=1, cost=4,  allergy="Dry Goods", effect="MARK +20% CL on next hit" },
+	{ name="Chili Powder",zone="Dry Goods",rarity="Uncommon",  cl=6,  wt=1, cost=3,  allergy="Dry Goods", effect="Burn DoT +1 CL/s for 4s. Fire ingredient." },
+	{ name="Saffron",    zone="Dry Goods", rarity="UltraRare", cl=8,  wt=1, cost=14, allergy="Dry Goods", effect="AoE amplifier — recipes containing Saffron gain splash radius on throw" },
+
+	-- ── FREEZER ──────────────────────────────────────────────────
+	{ name="Chicken",    zone="Freezer",   rarity="Common",    cl=8,  wt=3, cost=5,  allergy="Freezer",   effect="Knockback on direct hit" },
+	{ name="Shrimp",     zone="Freezer",   rarity="Rare",      cl=8,  wt=2, cost=7,  allergy="Freezer",   effect="Double hit — two CL impacts per throw" },
+	{ name="Ice Cream",  zone="Freezer",   rarity="UltraRare", cl=10, wt=2, cost=18, allergy="Freezer",   effect="Freeze 2s (hard cap 2.5s total)" },
+
+	-- ── NEUTRAL (Stockroom / cooking tools — no zone allergy) ────
+	{ name="Oil",        zone="Neutral",   rarity="Uncommon",  cl=5,  wt=2, cost=4,  allergy="None",      effect="Fire primer — fire recipe on same target within 3s = ×1.6 CL" },
+	{ name="Wagyu Beef", zone="Neutral",   rarity="UltraRare", cl=14, wt=5, cost=20, allergy="None",      effect="Knockdown on direct hit. Required for Million Dollar Steak." },
+	{ name="Caviar",     zone="Neutral",   rarity="Legendary", cl=9,  wt=1, cost=12, allergy="None",      effect="Precision throw, no splash. Required for Million Dollar Steak." },
+}
+
+-- ============================================================
+-- RECIPES — 17 TOTAL (Phase 1 Vertical Slice)
+--
+-- Servings by rarity: Common=3, Uncommon=2, Rare/UR/Legendary=1
+-- Cook depth bonus REMOVED (Phase 2 mechanic — see Part 45)
+-- All cooked recipes: station="Prep+Stove"
+-- Raw recipes: station="None" (bypass both stations)
+-- Fire recipe: Chili Fried Rice only (Phase 1)
+-- ============================================================
+
+ChompersData.Recipes = {
+
+	-- ── COMMON — 3 servings, 2s cook, $2–8 ──────────────────────
+	{
+		name="Tomato Toss",
+		rarity="Common", cl=6, station="None",
+		ingredients={"Tomato"},
+		wt=1, cost=2,
+		notes="Raw throw. MARK +15% on hit sets up combos. Cheapest item in the game.",
+	},
+	{
+		name="Egg Splat",
+		rarity="Common", cl=8, station="None",
+		ingredients={"Egg","Egg"},
+		wt=4, cost=4,
+		notes="Raw throw. Mini AoE splat. Requires 2 Eggs — forces a deliberate pickup route.",
+	},
+	{
+		name="Chicken Rice",
+		rarity="Common", cl=9, station="Prep+Stove",
+		ingredients={"Chicken","Rice"},
+		wt=5, cost=8,
+		notes="First cooked recipe most players will make. Freezer + Dry Goods double allergy.",
+	},
+	{
+		name="Spaghetti Surprise",
+		rarity="Common", cl=8, station="Prep+Stove",
+		ingredients={"Pasta","Tomato"},
+		wt=3, cost=5,
+		notes="Dry Goods + Produce allergy. Tomato in recipe carries MARK to next throw.",
+	},
+
+	-- ── UNCOMMON — 2 servings, 4s cook, $9–13 ───────────────────
+	{
+		name="Mac and Cheese",
+		rarity="Uncommon", cl=22, station="Prep+Stove",
+		ingredients={"Pasta","Cheese Block","Milk"},
+		wt=6, cost=10,
+		notes="Double Bakery hit (Cheese Block + Milk). Pasta adds Dry Goods.",
+	},
+	{
+		name="Chili Fried Rice",
+		rarity="Uncommon", cl=24, station="Prep+Stove",
+		ingredients={"Rice","Oil","Chili Powder"},
+		wt=5, cost=10,
+		notes="FIRE RECIPE. Oil primer on same target within 3s = ×1.6 CL (38.4 effective). Only fire recipe Phase 1.",
+	},
+	{
+		name="Noodle Bowl",
+		rarity="Uncommon", cl=20, station="Prep+Stove",
+		ingredients={"Noodles","Soy Sauce","Oil"},
+		wt=5, cost=11,
+		notes="Double Dry Goods hit. Soy Sauce carries MARK +20% from ingredient throw.",
+	},
+	{
+		name="Soy Chicken",
+		rarity="Uncommon", cl=22, station="Prep+Stove",
+		ingredients={"Chicken","Soy Sauce","Rice"},
+		wt=6, cost=12,
+		notes="Freezer + Dry Goods (x2) allergy. Soy Sauce mark carry.",
+	},
+
+	-- ── RARE — 1 serving, 7s cook, $14–18 ───────────────────────
+	{
+		name="Honey Glazed Chicken",
+		rarity="Rare", cl=34, station="Prep+Stove",
+		ingredients={"Chicken","Honey","Oil"},
+		wt=6, cost=17,
+		notes="Freezer + Bakery allergy. Root delivery vehicle — Honey mechanic applies on throw.",
+	},
+	{
+		name="Shrimp Noodles",
+		rarity="Rare", cl=36, station="Prep+Stove",
+		ingredients={"Shrimp","Noodles","Soy Sauce"},
+		wt=5, cost=14,
+		notes="Double Freezer + Dry Goods. Shrimp double-hit mechanic applies on throw.",
+	},
+	{
+		name="Blue Cheese Pasta",
+		rarity="Rare", cl=33, station="Prep+Stove",
+		ingredients={"Pasta","Blue Cheese","Milk"},
+		wt=6, cost=15,
+		notes="Triple Bakery threat (Blue Cheese + Milk). Pasta adds Dry Goods.",
+	},
+
+	-- ── ULTRA RARE — 1 serving, 12s cook, $21–28 ────────────────
+	{
+		name="Truffle Pasta",
+		rarity="UltraRare", cl=44, station="Prep+Stove",
+		ingredients={"Pasta","Truffle","Cheese Block"},
+		wt=5, cost=25,
+		notes="Dry Goods + Produce + Bakery triple allergy. Truffle catalyst consumed on cook.",
+	},
+	{
+		name="Saffron Rice",
+		rarity="UltraRare", cl=44, station="Prep+Stove",
+		ingredients={"Rice","Saffron","Oil"},
+		wt=5, cost=21,
+		notes="Saffron AoE amplifier applies on throw. Dry Goods allergy.",
+	},
+	{
+		name="Lobster Bisque",
+		rarity="UltraRare", cl=45, station="Prep+Stove",
+		ingredients={"Shrimp","Milk","Saffron","Oil"},
+		wt=7, cost=28,
+		notes="Only 4-ingredient recipe. Freezer + Bakery. Saffron AoE applies. vs Freezer allergy = ~79 CL.",
+	},
+	{
+		name="Ice Cream Shake",
+		rarity="UltraRare", cl=40, station="Prep+Stove",
+		ingredients={"Ice Cream","Milk"},
+		wt=4, cost=21,
+		notes="Freeze delivery vehicle. Double Freezer + Bakery allergy.",
+	},
+	{
+		name="Honey Fondant Cake",
+		rarity="UltraRare", cl=42, station="Prep+Stove",
+		ingredients={"Fondant","Honey","Flour"},
+		wt=5, cost=26,
+		notes="Triple Bakery. Nastiest CC combo — speed penalty + vision blur + root + sticky floor all in one throw.",
+	},
+
+	-- ── LEGENDARY — 1 serving, 20s cook, $50 ────────────────────
+	{
+		name="Million Dollar Steak",
+		rarity="Legendary", cl=70, station="Prep+Stove",
+		ingredients={"Wagyu Beef","Truffle","Caviar"},
+		wt=7, cost=50,
+		notes="Server-wide announcement on throw. Golden explosion on impact. Instant kill (cl=70 + fav bonus cap = 100). Truffle catalyst consumed on cook.",
+	},
+}
+
+-- ============================================================
+-- LEGENDARY OBJECTS (Part 14)
+-- ============================================================
+
+ChompersData.LegendaryObjects = {
+	{ name="Golden Cart",     type="WorldLoot", spawnAnywhere=true, maxPerMatch=1 },
+	{ name="Portable Cooker", type="WorldLoot", spawnAnywhere=true, maxPerMatch=1 },
+}
+
+-- ============================================================
+-- HELPER FUNCTIONS
+-- ============================================================
+
+function ChompersData.GetIngredient(name)
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.name == name then return ing end
+	end
+	return nil
+end
+
+function ChompersData.GetRecipe(name)
+	for _, rec in ipairs(ChompersData.Recipes) do
+		if rec.name == name then return rec end
+	end
+	return nil
+end
+
+function ChompersData.GetIngredientsByZone(zoneName)
+	local result = {}
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.zone == zoneName then table.insert(result, ing) end
+	end
+	return result
+end
+
+-- ============================================================
+-- EMOJI TABLE (single source of truth — Part 43)
+-- ============================================================
+
+local EMOJI_TABLE = {
+	-- Phase 1 ingredients
+	Tomato="🍅", Egg="🥚", Truffle="🍄",
+	Flour="🌾", Milk="🥛", ["Cheese Block"]="🧀", Honey="🍯",
+	["Blue Cheese"]="🧀", Fondant="🎂",
+	Rice="🍚", Pasta="🍝", Noodles="🍜", ["Soy Sauce"]="🍶",
+	["Chili Powder"]="🌶️", Saffron="🌸",
+	Chicken="🍗", Shrimp="🦐", ["Ice Cream"]="🍦",
+	Oil="🧴", ["Wagyu Beef"]="🥩", Caviar="🔵",
+	-- Phase 1 recipes
+	["Tomato Toss"]="🍅", ["Egg Splat"]="🥚",
+	["Chicken Rice"]="🍗", ["Spaghetti Surprise"]="🍝",
+	["Mac and Cheese"]="🧀", ["Chili Fried Rice"]="🍳",
+	["Noodle Bowl"]="🍜", ["Soy Chicken"]="🍗",
+	["Honey Glazed Chicken"]="🍯", ["Shrimp Noodles"]="🦐",
+	["Blue Cheese Pasta"]="🧀", ["Truffle Pasta"]="🍄",
+	["Saffron Rice"]="🌸", ["Lobster Bisque"]="🦐",
+	["Ice Cream Shake"]="🍦", ["Honey Fondant Cake"]="🎂",
+	["Million Dollar Steak"]="🥩",
+	-- Loot
+	["Loose Cash"]="💵", ["Cash Stack"]="💵", ["Big Stack"]="💵",
+	Napkin="🧻", ["Alliance Bracelet"]="💜",
+}
+
+local ZONE_EMOJI = {
+	Produce="🥬", Bakery="🧁", ["Dry Goods"]="🥫",
+	Freezer="❄️", Neutral="⬜", Stockroom="📦",
+}
+
+function ChompersData.GetEmoji(name, zone)
+	return EMOJI_TABLE[name] or (zone and ZONE_EMOJI[zone]) or "🍽"
+end
+
+-- Attach emoji to all ingredients and recipes at startup
+for _, ing in ipairs(ChompersData.Ingredients) do
+	if not ing.emoji then
+		ing.emoji = ChompersData.GetEmoji(ing.name, ing.zone)
+	end
+end
+for _, rec in ipairs(ChompersData.Recipes) do
+	if not rec.emoji then
+		rec.emoji = ChompersData.GetEmoji(rec.name)
+	end
+end
+
+return ChompersData
