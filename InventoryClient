@@ -5,7 +5,7 @@
 -- Owns: hotbar sync, inventory panel (centered modal),
 --       slot selection (keys 1-0), Q drop, checkout bar.
 --
--- Depends on: _G.Chompers (set by ChompersBottomBar)
+-- Depends on: _G.Chompers (set by ChompersHUD)
 --             InventoryToggle BindableEvent (in PlayerGui)
 -- ============================================================
 print("[InventoryClient] Script started")
@@ -36,7 +36,7 @@ local DropItemRemote         = R("DropItem")
 
 print("[InventoryClient] Remotes loaded")
 
--- Wait for _G.Chompers (ChompersBottomBar sets this)
+-- Wait for _G.Chompers (ChompersHUD sets this)
 local waited = 0
 while not (_G.Chompers and _G.Chompers.SetSlotItem) and waited < 8 do
 	task.wait(0.1); waited = waited + 0.1
@@ -540,7 +540,7 @@ local function buildLeftList()
 
 		-- Re-highlight previously selected
 		if selectedItem and selectedItem.name==item.name
-		and selectedItem.emoji==item.emoji then
+			and selectedItem.emoji==item.emoji then
 			selectedListBtn=row
 			row.BackgroundColor3=Color3.fromRGB(35,33,54)
 			rowStroke.Thickness=2; rowStroke.Color=C.red
@@ -578,7 +578,7 @@ end
 CloseBtn.MouseButton1Click:Connect(closePanel)
 Dimmer.MouseButton1Click:Connect(closePanel)
 
--- Listen for InventoryToggle from ChompersBottomBar
+-- Listen for InventoryToggle from ChompersHUD
 task.spawn(function()
 	local evt = playerGui:WaitForChild("InventoryToggle", 15)
 	if not evt then
