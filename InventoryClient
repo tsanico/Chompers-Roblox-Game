@@ -809,155 +809,112 @@ if CheckoutCompleteRemote then
 end
 
 -- ============================================================
--- SELF-CHECKOUT UI
+-- SELF-CHECKOUT — uses the existing inventory panel + PAY buttons
+-- When player presses E at a self-checkout kiosk the server fires
+-- ShowSelfCheckoutUI, which opens the normal inventory and sets
+-- checkoutMode=true. Each unpaid row gets a PAY button.
+-- Closing inventory fires SelfCheckoutClose to the server.
 -- ============================================================
 
-local SelfCheckoutR   = Remotes:WaitForChild("ShowSelfCheckoutUI", 10)
-local HideSelfCoR     = Remotes:WaitForChild("HideSelfCheckoutUI", 10)
-local ScanItemR       = Remotes:WaitForChild("SelfCheckoutScanItem", 10)
-local ItemPaidR       = Remotes:WaitForChild("SelfCheckoutItemPaid", 10)
-local CloseKioskR     = Remotes:WaitForChild("SelfCheckoutClose", 10)
+local SelfCheckoutR = Remotes:WaitForChild("ShowSelfCheckoutUI", 10)
+local HideSelfCoR   = Remotes:WaitForChild("HideSelfCheckoutUI", 10)
+local ScanItemR     = Remotes:WaitForChild("SelfCheckoutScanItem", 10)
+local ItemPaidR     = Remotes:WaitForChild("SelfCheckoutItemPaid", 10)
+local CloseKioskR   = Remotes:WaitForChild("SelfCheckoutClose", 10)
 
-local selfGui = Instance.new("ScreenGui")
-selfGui.Name="SelfCheckoutGui"; selfGui.ResetOnSpawn=false
-selfGui.DisplayOrder=16; selfGui.IgnoreGuiInset=true
-selfGui.Enabled=false; selfGui.Parent=playerGui
+local checkoutMode  = false  -- true while at a self-checkout kiosk
 
-local selfPanel = Instance.new("Frame", selfGui)
-selfPanel.Size = UDim2.new(0,420,0,0)
-selfPanel.AutomaticSize = Enum.AutomaticSize.Y
-selfPanel.AnchorPoint = Vector2.new(0.5,1)
-selfPanel.Position = UDim2.new(0.5,0,1,-100)
-selfPanel.BackgroundColor3 = Color3.fromRGB(16,14,28)
-selfPanel.BorderSizePixel = 0; corner(selfPanel,14)
-mkStroke(selfPanel,2,Color3.fromRGB(65,140,255))
-local selfLL = Instance.new("UIListLayout", selfPanel)
-selfLL.SortOrder=Enum.SortOrder.LayoutOrder; selfLL.Padding=UDim.new(0,0)
-
--- Header
-local selfHdr = Instance.new("Frame", selfPanel)
-selfHdr.Size=UDim2.new(1,0,0,50); selfHdr.LayoutOrder=1
-selfHdr.BackgroundColor3=Color3.fromRGB(22,20,38); selfHdr.BorderSizePixel=0
-local selfTitle = mkLabel(selfHdr,"🖥  SELF-CHECKOUT",
-	Enum.Font.GothamBlack,18,Color3.fromRGB(100,160,255),
-	Enum.TextXAlignment.Left,UDim2.new(0,14,0,0),UDim2.new(0.7,0,1,0))
-local selfMoneyLabel = mkLabel(selfHdr,"💵 $0",
-	Enum.Font.GothamBlack,16,C.money,
-	Enum.TextXAlignment.Right,UDim2.new(0.7,0,0,0),UDim2.new(0.3,-14,1,0))
-
--- Close button
-local selfClose = Instance.new("TextButton", selfPanel)
-selfClose.Size=UDim2.new(1,0,0,36); selfClose.LayoutOrder=999
-selfClose.BackgroundColor3=Color3.fromRGB(28,22,46); selfClose.BorderSizePixel=0
-selfClose.Font=Enum.Font.GothamBold; selfClose.TextSize=15
-selfClose.TextColor3=C.dim; selfClose.Text="Close Kiosk"; selfClose.AutoButtonColor=false
-corner(selfClose,0)
-selfClose.MouseButton1Click:Connect(function()
-	selfGui.Enabled=false
-	if CloseKioskR then CloseKioskR:FireServer() end
+-- Notify server when player closes the inventory panel during checkout
+local origClosePanel
+CloseBtn.MouseButton1Click:Connect(function()
+	if checkoutMode then
+		checkoutMode = false
+		if CloseKioskR then CloseKioskR:FireServer() end
+		rebuildPanel()   -- remove PAY buttons
+	end
 end)
 
--- Item scroll
-local selfScroll = Instance.new("ScrollingFrame", selfPanel)
-selfScroll.Size=UDim2.new(1,0,0,0); selfScroll.AutomaticSize=Enum.AutomaticSize.Y
-selfScroll.LayoutOrder=2; selfScroll.MaxCanvasSize=UDim2.new(0,0,0,400)
-selfScroll.CanvasSize=UDim2.new(1,0,0,0); selfScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
-selfScroll.BackgroundTransparency=1; selfScroll.BorderSizePixel=0
-selfScroll.ScrollBarThickness=6; selfScroll.ScrollBarImageColor3=Color3.fromRGB(65,140,255)
-local scrollLL = Instance.new("UIListLayout",selfScroll)
-scrollLL.SortOrder=Enum.SortOrder.LayoutOrder; scrollLL.Padding=UDim.new(0,4)
-local scrollPad = Instance.new("UIPadding",selfScroll)
-scrollPad.PaddingLeft=UDim.new(0,8); scrollPad.PaddingRight=UDim.new(0,8)
-scrollPad.PaddingTop=UDim.new(0,6); scrollPad.PaddingBottom=UDim.new(0,6)
-
-local selfItemRows = {}   -- [slotIndex] = row frame
-
-local function buildSelfCheckoutItems(itemList, money)
-	for _, c in ipairs(selfScroll:GetChildren()) do
-		if c:IsA("Frame") or c:IsA("TextButton") then c:Destroy() end
-	end
-	selfItemRows = {}
-	selfMoneyLabel.Text = "💵 $"..tostring(money or 0)
-
-	for idx, entry in ipairs(itemList) do
-		local row = Instance.new("TextButton", selfScroll)
-		row.Name = "SelfRow_"..entry.slotIndex
-		row.Size = UDim2.new(1,0,0,58); row.LayoutOrder=idx
-		row.BackgroundColor3=Color3.fromRGB(24,22,38); row.BorderSizePixel=0
-		row.AutoButtonColor=false; row.Text=""; row.ZIndex=16; corner(row,8)
-		mkStroke(row,1.5,Color3.fromRGB(50,46,70))
-
-		mkLabel(row, entry.emoji or "🍽", Enum.Font.GothamBold, 30, Color3.fromRGB(245,242,255),
-			Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,54,1,0)).ZIndex=17
-
-		mkLabel(row, entry.name or "?", Enum.Font.GothamBlack, 16, Color3.fromRGB(245,242,255),
-			Enum.TextXAlignment.Left, UDim2.new(0,58,0,8), UDim2.new(1,-150,0,22)).ZIndex=17
-
-		local scanBtn = Instance.new("TextButton", row)
-		scanBtn.Size=UDim2.new(0,80,0,36); scanBtn.AnchorPoint=Vector2.new(1,0.5)
-		scanBtn.Position=UDim2.new(1,-8,0.5,0)
-		scanBtn.BackgroundColor3=Color3.fromRGB(30,70,140); scanBtn.BorderSizePixel=0
-		scanBtn.Font=Enum.Font.GothamBlack; scanBtn.TextSize=14
-		scanBtn.TextColor3=Color3.fromRGB(120,180,255)
-		scanBtn.Text="E  $"..tostring(entry.cost or 0)
-		scanBtn.AutoButtonColor=false; scanBtn.ZIndex=18; corner(scanBtn,8)
-		mkStroke(scanBtn,1.5,Color3.fromRGB(65,140,255))
-
-		local capSlot = entry.slotIndex
-		scanBtn.MouseButton1Click:Connect(function()
-			if ScanItemR then ScanItemR:FireServer(capSlot) end
-		end)
-
-		selfItemRows[entry.slotIndex] = row
-	end
-end
-
 if SelfCheckoutR then
-	SelfCheckoutR.OnClientEvent:Connect(function(itemList, money)
-		buildSelfCheckoutItems(itemList, money)
-		selfGui.Enabled = true
+	SelfCheckoutR.OnClientEvent:Connect(function(_, money)
+		checkoutMode = true
+		openPanel()   -- opens existing inventory panel
+		-- Money label update happens via normal UpdateMoney remote
 	end)
 end
 
 if HideSelfCoR then
 	HideSelfCoR.OnClientEvent:Connect(function()
-		selfGui.Enabled = false
+		checkoutMode = false
+		closePanel()
+		rebuildPanel()
 	end)
 end
 
--- When an item is paid: cross it out or remove it from the list
+-- When server confirms an item is paid, refresh the panel
 if ItemPaidR then
 	ItemPaidR.OnClientEvent:Connect(function(slotIndex, cost, newMoney, reason)
-		selfMoneyLabel.Text = "💵 $"..tostring(newMoney or 0)
-		local row = selfItemRows[slotIndex]
-		if reason == "ok" and row then
-			-- Flash green then fade out
-			TweenService:Create(row, TweenInfo.new(0.15),
-				{BackgroundColor3=Color3.fromRGB(14,40,18)}):Play()
-			task.wait(0.4)
-			row:Destroy()
-			selfItemRows[slotIndex] = nil
-			-- Check if all items done
-			local anyLeft = false
-			for _, r in pairs(selfItemRows) do
-				if r and r.Parent then anyLeft=true; break end
+		if reason == "ok" then
+			-- Mark item as paid locally for instant feedback
+			if localInventory[slotIndex] then
+				localInventory[slotIndex].paid = true
 			end
-			if not anyLeft then
-				task.wait(0.5)
-				selfGui.Enabled=false
-				if _G.Chompers and _G.Chompers.Announce then
-					_G.Chompers.Announce("🖥 All items checked out!", C.green, 2.5)
-				end
+			syncHotbar()
+			rebuildPanel()
+			if _G.Chompers and _G.Chompers.Announce then
+				local name = localInventory[slotIndex] and localInventory[slotIndex].name or "Item"
+				_G.Chompers.Announce("✅ Paid for "..name.." ($"..cost..")",
+					Color3.fromRGB(70,195,85), 1.8)
 			end
-		elseif reason == "broke" and row then
-			TweenService:Create(row, TweenInfo.new(0.15),
-				{BackgroundColor3=Color3.fromRGB(40,14,14)}):Play()
-			task.delay(0.3, function()
-				TweenService:Create(row, TweenInfo.new(0.15),
-					{BackgroundColor3=Color3.fromRGB(24,22,38)}):Play()
-			end)
+		elseif reason == "broke" then
+			if _G.Chompers and _G.Chompers.Announce then
+				_G.Chompers.Announce("❌ Not enough money!", Color3.fromRGB(218,65,65), 2)
+			end
 		end
 	end)
+end
+
+-- buildLeftList already calls makeRow; we extend makeRow with PAY button in checkout mode
+-- The PAY button is injected into makeRow via checkoutMode flag (closure captures it)
+-- We store a reference to the original makeRow builder and re-run buildLeftList
+-- when checkoutMode changes (rebuildPanel handles this).
+
+-- Patch: inject PAY button into rows when in checkoutMode.
+-- This is done by overriding the row click area with a dedicated button.
+-- We hook into UpdateInventory to rebuild when inventory changes.
+local _origRebuild = rebuildPanel
+function rebuildPanel()
+	_origRebuild()
+	if not checkoutMode then return end
+	-- After normal build, add PAY buttons to unpaid rows in LeftScroll
+	for _, child in ipairs(LeftScroll:GetChildren()) do
+		if child:IsA("TextButton") and child.Name:match("^Row_") then
+			local slotIdx = tonumber(child.Name:match("%d+"))
+			if slotIdx and localInventory[slotIdx] and not localInventory[slotIdx].paid then
+				-- Only add if not already there
+				if not child:FindFirstChild("PayBtn") then
+					local payBtn = Instance.new("TextButton", child)
+					payBtn.Name = "PayBtn"
+					payBtn.Size = UDim2.new(0,56,0,28)
+					payBtn.AnchorPoint = Vector2.new(1,0.5)
+					payBtn.Position = UDim2.new(1,-6,0.5,0)
+					payBtn.BackgroundColor3 = Color3.fromRGB(30,100,40)
+					payBtn.BorderSizePixel = 0
+					payBtn.Font = Enum.Font.GothamBlack
+					payBtn.TextSize = 12
+					payBtn.TextColor3 = Color3.fromRGB(150,255,160)
+					payBtn.Text = "PAY"
+					payBtn.AutoButtonColor = false
+					payBtn.ZIndex = 20
+					local uic = Instance.new("UICorner", payBtn)
+					uic.CornerRadius = UDim.new(0,6)
+					local capIdx = slotIdx
+					payBtn.MouseButton1Click:Connect(function()
+						if ScanItemR then ScanItemR:FireServer(capIdx) end
+					end)
+				end
+			end
+		end
+	end
 end
 
 print("[InventoryClient] Ready")
