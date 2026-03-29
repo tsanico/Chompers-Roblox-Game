@@ -1,17 +1,21 @@
 -- ============================================================
 -- ThrowClient — LocalScript · StarterPlayerScripts
 --
--- LEFT CLICK  → instant quick throw (40% power, camera direction)
--- RIGHT CLICK hold → baseball-windup aim mode:
---   • FOV zooms in gradually (70→40) proportional to hold time
---   • Charge bar fills blue→red
---   • Arc preview dots track camera aim
---   • Slight speed debuff while aiming
---   • Release to fire at charged power
---   • Auto-fires at MaxCharge (1.5s)
+-- LMB HOLD  → starts charging immediately
+--              arc preview dots appear and track camera aim
+--              charge bar fills blue → red
+--              NO camera or FOV changes — camera stays free
+-- LMB RELEASE → fires at current charge
+-- AUTO-FIRE   → holds at full charge for 0.25s grace, then fires
+-- RMB         → cancel current charge without firing
 --
--- NO Scriptable camera. FOV-only zoom keeps Roblox camera working normally.
--- Sends ThrowFood(slot, chargePercent, targetPos) to ThrowServer.
+-- Charge curve (eased, not linear):
+--   alpha     = clamp((held - MinCharge) / (MaxCharge - MinCharge), 0, 1)
+--   eased     = alpha ^ 0.8       (front-loaded: mid-charge is strong)
+--   horizSpeed = MinSpeed + (MaxSpeed - MinSpeed) * eased  → 66..85 st/s
+--   range      = MinRange + (MaxRange - MinRange) * eased   → 20..50 st
+--
+-- Sends ThrowFood(slot, horizSpeed, targetPos) to ThrowServer.
 -- ============================================================
 
 local Players          = game:GetService("Players")
@@ -33,16 +37,11 @@ end
 local ThrowFood = Remotes:WaitForChild("ThrowFood", 15)
 
 -- ── Constants ─────────────────────────────────────────────────
-local C           = C_Data.Throw
-local MIN_PCT     = 0.4                -- quick throw = 40% power
-local THROW_CD    = C.Cooldown + 0.05
-local G_EFF       = workspace.Gravity * (1 - (C.GravityCounterPct or 0.82))
+local C      = C_Data.Throw
+local G_EFF  = C.EffectiveGravity or 175   -- studs/s²
 
-local FOV_NORMAL  = 70
-local FOV_AIM_MAX = 40     -- max zoom at full charge
-local AIM_SPEED_MULT = 0.65
-local ARC_DOTS    = 22
-local ARC_DT      = 0.06
+local ARC_DOTS = 14
+local ARC_DT   = 0.055
 
 -- ── Own ScreenGui ─────────────────────────────────────────────
 local playerGui = player:WaitForChild("PlayerGui")
@@ -54,7 +53,7 @@ ThrowGui.DisplayOrder = 5; ThrowGui.Parent = playerGui
 -- ── Charge bar ────────────────────────────────────────────────
 local ChargeBar = Instance.new("Frame", ThrowGui)
 ChargeBar.Name = "ChargeBar"
-ChargeBar.Size = UDim2.new(0, 380, 0, 18)
+ChargeBar.Size = UDim2.new(0, 340, 0, 18)
 ChargeBar.AnchorPoint = Vector2.new(0.5, 1)
 ChargeBar.Position = UDim2.new(0.5, 0, 1, -120)
 ChargeBar.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
@@ -72,10 +71,10 @@ local _cf = Instance.new("UICorner", ChargeFill); _cf.CornerRadius = UDim.new(0,
 local arcDots = {}
 for i = 1, ARC_DOTS do
 	local dot = Instance.new("Part")
-	dot.Shape = Enum.PartType.Ball; dot.Size = Vector3.new(0.3, 0.3, 0.3)
+	dot.Shape = Enum.PartType.Ball; dot.Size = Vector3.new(0.28, 0.28, 0.28)
 	dot.Color = Color3.fromRGB(255, 210, 50); dot.Material = Enum.Material.Neon
 	dot.CanCollide = false; dot.Anchored = true; dot.CastShadow = false
-	dot.Transparency = 0.15 + (i / ARC_DOTS) * 0.65
+	dot.Transparency = 0.12 + (i / ARC_DOTS) * 0.70
 	dot.CFrame = CFrame.new(0, -2000, 0); dot.Parent = workspace
 	arcDots[i] = dot
 end
@@ -85,9 +84,9 @@ local function hideArcDots()
 end
 
 -- ── State ─────────────────────────────────────────────────────
-local aiming      = false   -- right-click held
-local aimStart    = 0
-local preAimSpeed = nil
+local charging    = false
+local holdStart   = 0
+local graceStart  = nil     -- set when full charge first reached
 local lastThrow   = 0
 
 -- ── Helpers ───────────────────────────────────────────────────
@@ -110,7 +109,7 @@ local function getOrigin()
 	return hrp.Position + Vector3.new(0, 1.5, 0)
 end
 
--- Aim point: screen-centre raycast (where the crosshair points)
+-- Screen-centre raycast so aim follows camera crosshair exactly
 local function getAimPoint()
 	local sz     = camera.ViewportSize
 	local unitRay= camera:ScreenPointToRay(sz.X/2, sz.Y/2)
@@ -124,19 +123,22 @@ local function getAimPoint()
 	return result and result.Position or (unitRay.Origin + unitRay.Direction * 80)
 end
 
-local function getChargePct(elapsed)
-	if elapsed <= C.MinCharge then return MIN_PCT end
-	local t = math.clamp((elapsed - C.MinCharge)/(C.MaxCharge - C.MinCharge), 0, 1)
-	return MIN_PCT + (1 - MIN_PCT) * t
+-- Eased charge curve — front-loaded so mid-charge feels strong
+local function getChargeParams(elapsed)
+	local held  = math.max(0, elapsed - C.MinCharge)
+	local alpha = math.clamp(held / (C.MaxCharge - C.MinCharge), 0, 1)
+	local eased = alpha ^ 0.8
+	local horizSpeed = C.MinSpeed + (C.MaxSpeed - C.MinSpeed) * eased
+	local range      = C.MinRange + (C.MaxRange - C.MinRange) * eased
+	return horizSpeed, range, eased
 end
 
-local function chargeColour(pct)
-	local t = math.clamp((pct - MIN_PCT)/(1 - MIN_PCT), 0, 1)
-	return Color3.new(0.15 + t*0.70, 0.08*(1-t), (1-t)*0.75 + 0.05)
+local function chargeColour(eased)
+	return Color3.new(0.15 + eased*0.70, 0.08*(1-eased), (1-eased)*0.75 + 0.05)
 end
 
-local function computeVelocity(origin, target, pct)
-	local horizSpeed = C.BaseSpeed * pct
+-- Ballistic solver: given horizontal speed, find launch velocity to hit target
+local function computeVelocity(origin, target, horizSpeed)
 	local disp  = target - origin
 	local hDist = Vector3.new(disp.X, 0, disp.Z).Magnitude
 	if hDist < 0.5 then hDist = 0.5 end
@@ -163,69 +165,63 @@ local function updateArcDots(origin, vel)
 end
 
 -- ── Throw ─────────────────────────────────────────────────────
-local function doThrow(pct)
-	if tick() - lastThrow < THROW_CD then return end
+local function doThrow(horizSpeed)
+	if tick() - lastThrow < (C.Cooldown or 0.8) then return end
 	local origin = getOrigin(); if not origin then return end
-	local target = getAimPoint()
-	local slot   = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
-	lastThrow = tick()
-	ThrowFood:FireServer(slot, pct, target)
+	local aimPt  = getAimPoint()
+	-- Clamp target to current range
+	local flat = Vector3.new(aimPt.X-origin.X, 0, aimPt.Z-origin.Z)
+	local range = C.MinRange + (C.MaxRange - C.MinRange) *
+		math.clamp((horizSpeed - C.MinSpeed) / math.max(C.MaxSpeed - C.MinSpeed, 1), 0, 1)
+	if flat.Magnitude > range then
+		aimPt = origin + (flat.Unit * range) + Vector3.new(0, aimPt.Y - origin.Y, 0)
+	end
+	local slot = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
+	lastThrow  = tick()
+	ThrowFood:FireServer(slot, horizSpeed, aimPt)
 end
 
--- ── Enter / exit aim mode ─────────────────────────────────────
-local function enterAim()
-	if aiming or isBlocked() then return end
-	aiming = true; aimStart = tick()
-	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	if hum then preAimSpeed = hum.WalkSpeed; hum.WalkSpeed = hum.WalkSpeed * AIM_SPEED_MULT end
-end
-
-local function exitAim(doFire)
-	if not aiming then return end
-	local elapsed = tick() - aimStart
-	aiming = false
-
-	-- Restore FOV and speed
-	TweenService:Create(camera, TweenInfo.new(0.15), {FieldOfView = FOV_NORMAL}):Play()
-	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	if hum and preAimSpeed then hum.WalkSpeed = preAimSpeed; preAimSpeed = nil end
-
+local function cancelCharge()
+	charging = false; graceStart = nil
 	ChargeBar.Visible = false
 	hideArcDots()
-
-	if doFire and not isBlocked() then
-		doThrow(getChargePct(elapsed))
-	end
 end
 
--- ── Heartbeat — zoom, charge bar, arc ─────────────────────────
+-- ── Heartbeat — charge bar + arc + grace window ───────────────
 RunService.Heartbeat:Connect(function()
-	if not aiming then return end
+	if not charging then return end
 
-	local elapsed = tick() - aimStart
+	local elapsed = tick() - holdStart
+	local horizSpeed, range, eased = getChargeParams(elapsed)
+	local atCap = elapsed >= C.MaxCharge
 
-	-- Auto-fire at max charge
-	if elapsed >= C.MaxCharge then
-		exitAim(true); return
+	-- Grace window: hold at cap for GracePeriod before auto-fire
+	if atCap then
+		if not graceStart then graceStart = tick() end
+		if tick() - graceStart >= (C.GracePeriod or 0.25) then
+			cancelCharge()
+			if not isBlocked() then doThrow(C.MaxSpeed) end
+			return
+		end
+		-- Flash bar at full charge during grace
+		local flash = math.floor(tick() * 8) % 2 == 0
+		ChargeFill.BackgroundColor3 = flash
+			and Color3.fromRGB(255, 255, 100)
+			or  Color3.fromRGB(220, 60, 30)
+		ChargeFill.Size = UDim2.new(1, 0, 1, 0)
+	else
+		graceStart = nil
+		ChargeFill.BackgroundColor3 = chargeColour(eased)
+		TweenService:Create(ChargeFill, TweenInfo.new(0.04),
+			{Size = UDim2.new(elapsed / C.MaxCharge, 0, 1, 0),
+			 BackgroundColor3 = chargeColour(eased)}):Play()
 	end
-
-	local pct = getChargePct(elapsed)
-
-	-- Progressive FOV zoom proportional to charge
-	local zoomT = math.clamp((elapsed - C.MinCharge) / (C.MaxCharge - C.MinCharge), 0, 1)
-	local targetFOV = FOV_NORMAL + (FOV_AIM_MAX - FOV_NORMAL) * zoomT
-	camera.FieldOfView = camera.FieldOfView + (targetFOV - camera.FieldOfView) * 0.15
-
-	-- Charge bar
 	ChargeBar.Visible = true
-	local col = chargeColour(pct)
-	TweenService:Create(ChargeFill, TweenInfo.new(0.04),
-		{Size = UDim2.new(pct, 0, 1, 0), BackgroundColor3 = col}):Play()
 
 	-- Arc preview
 	local origin = getOrigin()
 	if origin then
-		local vel = computeVelocity(origin, getAimPoint(), pct)
+		local vel = computeVelocity(origin, getAimPoint(), horizSpeed)
 		updateArcDots(origin, vel)
 	end
 end)
@@ -234,29 +230,32 @@ end)
 UserInputService.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 
-	-- RIGHT CLICK or R2 — enter aim / charge mode
+	-- RMB → cancel charge without firing
 	if input.UserInputType == Enum.UserInputType.MouseButton2
-		or input.KeyCode == Enum.KeyCode.ButtonR2 then
-		enterAim(); return
+		or input.KeyCode == Enum.KeyCode.ButtonL2 then
+		cancelCharge(); return
 	end
 
-	-- LEFT CLICK or R1 — quick throw at 40% power (no charge)
+	-- LMB → start charging
 	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.KeyCode == Enum.KeyCode.ButtonR1 then
+		or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		if isBlocked() then return end
-		if aiming then
-			-- Left-click while aiming fires immediately at current charge
-			exitAim(true); return
-		end
-		doThrow(MIN_PCT)
+		if charging then return end   -- already charging
+		charging  = true
+		holdStart = tick()
+		graceStart = nil
 	end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	-- Release RIGHT CLICK / R2 → fire at accumulated charge
-	if input.UserInputType == Enum.UserInputType.MouseButton2
+	-- LMB release → fire at current charge
+	if input.UserInputType == Enum.UserInputType.MouseButton1
 		or input.KeyCode == Enum.KeyCode.ButtonR2 then
-		exitAim(true)
+		if not charging then return end
+		local elapsed = tick() - holdStart
+		local horizSpeed = getChargeParams(elapsed)
+		cancelCharge()
+		if not isBlocked() then doThrow(horizSpeed) end
 	end
 end)
 
