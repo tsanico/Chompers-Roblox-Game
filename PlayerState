@@ -58,18 +58,17 @@ local function defaultState()
 		at100FLTime = 0,
 
 		-- ── Economy ───────────────────────────────────────────
-		money = C.Economy.StartingCash,   -- $15 start
+		money = C.Economy.StartingCash,
 
 		-- ── Inventory ─────────────────────────────────────────
-		-- Each item: { name, rarity, wt, cost, allergy, paid, effect, zone }
 		inventory = {},
-		container = "Basket",            -- "Basket" or "Cart"
-		napkins = C.Napkin.StartingCount, -- 1 per match
+		container = "Basket",
+		napkins = C.Economy.StartingNapkins or 1,
 
 		-- ── Bathroom ──────────────────────────────────────────
-		pottyBreaks = C.Bathroom.PottyBreaksPerMatch,  -- 3
+		pottyBreaks = 3,   -- breaks per match (hard-coded Phase 1)
 		inBathroom = false,
-		bathroomResetTime = nil,   -- timestamp when both bars hit 0 in bathroom
+		bathroomResetTime = nil,
 
 		-- ── Prelobby selections ───────────────────────────────
 		allergy = nil,            -- e.g. "Dairy", "Gluten" — nil until chosen
@@ -395,7 +394,7 @@ function PlayerState.UseNapkin(player)
 	if s.napkins <= 0 then return false end
 	s.napkins = s.napkins - 1
 	-- Napkin heals −25 CL (2s, interruptible — handled by calling script)
-	PlayerState.ModifyCL(player, -C.Napkin.CLHeal)
+	PlayerState.ModifyCL(player, -25)
 	return true
 end
 
@@ -684,7 +683,7 @@ function PlayerState._CheckBathroomReset(player)
 	if s.cl == 0 and s.fl == 0 and not s.bathroomResetTime then
 		s.bathroomResetTime = tick()
 		-- Force exit after 10s (Balance Patch v1)
-		task.delay(C.Bathroom.MaxStayAfterResetSeconds, function()
+		task.delay(10, function()
 			if s.inBathroom and s.bathroomResetTime then
 				PlayerState.ExitBathroom(player)
 			end
