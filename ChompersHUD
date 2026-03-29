@@ -314,7 +314,16 @@ for i=1,NUM_SLOTS do
 		Enum.TextXAlignment.Center,UDim2.new(0,0,1,-14),UDim2.new(1,0,0,14))
 	prL.Name="PriceLabel"; prL.ZIndex=3
 	slots[i]=sl; slotData[i]={}
-end
+
+	-- Hover: show tooltip above this slot
+	sl.MouseEnter:Connect(function()
+		if slotData[i] and slotData[i].name then
+			buildTooltip(slotData[i], i)
+		end
+	end)
+	sl.MouseLeave:Connect(function()
+		TooltipFrame.Visible = false
+	end)
 
 local function highlightSlot(i)
 	for j,sl in ipairs(slots) do
@@ -325,16 +334,171 @@ local function highlightSlot(i)
 end
 highlightSlot(1)
 
-_G.Chompers.SetSlotItem = function(i,data)
+-- ── Slot colour constants ─────────────────────────────────────
+local SLOT_PAID_BG    = Color3.fromRGB(14,36,18)   -- dark green tint: paid ingredient
+local SLOT_UNPAID_BG  = Color3.fromRGB(38,14,14)   -- dark red tint: unpaid ingredient
+local SLOT_COOKED_BG  = Color3.fromRGB(14,36,18)   -- green: cooked recipe (ready)
+local SLOT_UNCOOKED_BG= Color3.fromRGB(36,30,8)    -- amber: uncooked dish
+local SLOT_BURNED_BG  = Color3.fromRGB(38,14,14)   -- red: burned dish
+
+-- ── Tooltip panel — appears above hotbar on hover ─────────────
+local TooltipFrame = Instance.new("Frame", Gui)
+TooltipFrame.Name            = "HotbarTooltip"
+TooltipFrame.Size            = UDim2.new(0, 260, 0, 0)
+TooltipFrame.AutomaticSize   = Enum.AutomaticSize.Y
+TooltipFrame.AnchorPoint     = Vector2.new(0.5, 1)
+TooltipFrame.Position        = UDim2.new(0.5, 0, 1, -(BAR_BOTTOM + SLOT_SIZE + 10))
+TooltipFrame.BackgroundColor3= Color3.fromRGB(14,12,24)
+TooltipFrame.BorderSizePixel = 0; TooltipFrame.Visible = false; TooltipFrame.ZIndex = 20
+corner(TooltipFrame, 10); mkStroke(TooltipFrame, 1.5, Color3.fromRGB(60,56,90))
+local tipLL = Instance.new("UIListLayout", TooltipFrame)
+tipLL.SortOrder    = Enum.SortOrder.LayoutOrder
+tipLL.Padding      = UDim.new(0, 4)
+local tipPad = Instance.new("UIPadding", TooltipFrame)
+tipPad.PaddingLeft=UDim.new(0,10); tipPad.PaddingRight=UDim.new(0,10)
+tipPad.PaddingTop=UDim.new(0,8);   tipPad.PaddingBottom=UDim.new(0,8)
+
+local function clearTooltip()
+	for _, c in ipairs(TooltipFrame:GetChildren()) do
+		if c:IsA("TextLabel") or c:IsA("Frame") then c:Destroy() end
+	end
+end
+
+local function addTipLine(text, font, size, color, order)
+	local l = Instance.new("TextLabel", TooltipFrame)
+	l.Size = UDim2.new(1,0,0,0); l.AutomaticSize = Enum.AutomaticSize.Y
+	l.BackgroundTransparency = 1
+	l.Text = text; l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14; l.TextColor3 = color or C.white
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextWrapped = true; l.ZIndex = 21; l.LayoutOrder = order or 0
+	return l
+end
+
+local function addTipDivider(order)
+	local d = Instance.new("Frame", TooltipFrame); d.LayoutOrder = order
+	d.Size = UDim2.new(1,0,0,1); d.BackgroundColor3 = Color3.fromRGB(50,46,70)
+	d.BorderSizePixel = 0; d.ZIndex = 21
+end
+
+local function buildTooltip(data, slotIndex)
+	clearTooltip()
+	if not data or not data.name then
+		TooltipFrame.Visible = false; return
+	end
+
+	-- Position tooltip above the hovered slot
+	local slotX = (slotIndex - 1) * (SLOT_SIZE + SLOT_GAP)
+	local centreX = slotX + SLOT_SIZE/2
+	local frameW = totalHotbarW
+	local tipW = 260
+	-- Clamp so tooltip doesn't go off screen
+	local anchorX = math.clamp(centreX / frameW, 0.05, 0.95)
+	TooltipFrame.AnchorPoint = Vector2.new(anchorX, 1)
+	local offsetX = -(anchorX * tipW - centreX)
+	TooltipFrame.Position = UDim2.new(
+		(HotbarFrame.Position.X.Scale) + centreX/workspace.CurrentCamera.ViewportSize.X,
+		0,
+		1, -(BAR_BOTTOM + SLOT_SIZE + 10))
+
+	-- Name + emoji
+	addTipLine((data.emoji or "🍽").."  "..data.name,
+		Enum.Font.GothamBlack, 16, C.white, 1)
+
+	-- Status line
+	local isRecipe = data.cookStatus ~= nil or data.ingredients ~= nil
+	if isRecipe then
+		local statusText = data.cookStatus == "Cooked" and "✅ Cooked"
+			or data.cookStatus == "Burned" and "🔥 Burned"
+			or data.cookStatus == "Uncooked" and "⚠ Uncooked (needs Stovetop)"
+			or "🥗 Recipe"
+		local statusCol = data.cookStatus == "Cooked" and C.green
+			or data.cookStatus == "Burned" and C.red or C.gold
+		addTipLine(statusText, Enum.Font.GothamBold, 13, statusCol, 2)
+	else
+		local paidText = data.paid and "✅ Paid — ready to throw" or "❌ Unpaid — pay at checkout"
+		addTipLine(paidText, Enum.Font.GothamBold, 13, data.paid and C.green or C.red, 2)
+	end
+
+	addTipDivider(3)
+
+	-- Stats
+	if data.cl and data.cl > 0 then
+		addTipLine("🧼 +"..data.cl.." CL damage", Enum.Font.Gotham, 13,
+			Color3.fromRGB(65,185,235), 4)
+	end
+	if data.allergy and data.allergy ~= "None" then
+		addTipLine("⚠️ Allergen: "..data.allergy, Enum.Font.Gotham, 13,
+			Color3.fromRGB(230,90,90), 5)
+	end
+	if data.cost and data.cost > 0 then
+		addTipLine("💲 $"..data.cost, Enum.Font.Gotham, 13, C.money, 6)
+	end
+	if data.effect and data.effect ~= "" then
+		addTipLine("💥 "..data.effect, Enum.Font.Gotham, 12,
+			Color3.fromRGB(200,195,230), 7)
+	end
+	if data.buildsInto and #data.buildsInto > 0 then
+		addTipDivider(8)
+		addTipLine("Builds into: "..table.concat(data.buildsInto, ", "),
+			Enum.Font.Gotham, 12, C.dim, 9)
+	end
+
+	TooltipFrame.Visible = true
+end
+
+_G.Chompers.SetSlotItem = function(i, data)
 	if i<1 or i>NUM_SLOTS then return end
-	local sl=slots[i]; slotData[i]=data or {}
-	local r=data and data.rarity or nil
-	sl.BackgroundColor3=r and (RARITY_BG[r] or C.bg) or C.bg
-	local str=sl:FindFirstChild("SlotStroke")
-	if str then str.Color=i==activeSlot and C.red or (r and RARITY_STROKE[r] or C.stroke) end
-	sl.EmojiLabel.Text=data and (data.emoji or "") or ""
-	sl.PriceLabel.Text=data and data.price and ("$"..data.price) or ""
-	sl.PriceLabel.TextColor3=data and data.paid and C.green or C.gold
+	local sl = slots[i]; slotData[i] = data or {}
+	local r  = data and data.rarity or nil
+
+	-- Background: cook status for recipes, paid status for ingredients
+	local bg
+	if data then
+		if data.cookStatus == "Cooked" then
+			bg = SLOT_COOKED_BG
+		elseif data.cookStatus == "Burned" then
+			bg = SLOT_BURNED_BG
+		elseif data.cookStatus == "Uncooked" then
+			bg = SLOT_UNCOOKED_BG
+		elseif data.ingredients then
+			-- Recipe with no cookStatus = ready
+			bg = SLOT_COOKED_BG
+		elseif data.paid == false then
+			bg = SLOT_UNPAID_BG
+		elseif data.paid == true then
+			bg = SLOT_PAID_BG
+		else
+			bg = r and (RARITY_BG[r] or C.bg) or C.bg
+		end
+	else
+		bg = C.bg
+	end
+	sl.BackgroundColor3 = bg
+
+	local str = sl:FindFirstChild("SlotStroke")
+	if str then
+		str.Color     = i==activeSlot and C.red or (r and RARITY_STROKE[r] or C.stroke)
+		str.Thickness = i==activeSlot and 2.5 or 1.5
+	end
+	sl.EmojiLabel.Text = data and (data.emoji or "") or ""
+	-- Price label: show paid status indicator instead of price
+	if data then
+		if data.cookStatus == "Cooked" then
+			sl.PriceLabel.Text = "✓ COOKED"; sl.PriceLabel.TextColor3 = C.green
+		elseif data.cookStatus == "Burned" then
+			sl.PriceLabel.Text = "BURNED"; sl.PriceLabel.TextColor3 = C.red
+		elseif data.cookStatus == "Uncooked" then
+			sl.PriceLabel.Text = "RAW"; sl.PriceLabel.TextColor3 = C.gold
+		elseif data.paid == false then
+			sl.PriceLabel.Text = "UNPAID"; sl.PriceLabel.TextColor3 = C.red
+		else
+			sl.PriceLabel.Text = data.cost and ("$"..data.cost) or ""
+			sl.PriceLabel.TextColor3 = C.green
+		end
+	else
+		sl.PriceLabel.Text = ""
+	end
 end
 _G.Chompers.SetSelectedSlot = function(i) highlightSlot(i) end
 _G.Chompers.GetSelectedSlot = function() return activeSlot end
