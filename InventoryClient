@@ -635,11 +635,6 @@ local function buildLeftList()
 		for _, entry in ipairs(paid) do makeRow(entry) end
 	end
 end
-			rowStroke.Thickness=2; rowStroke.Color=C.red
-			showDetail(item, origI)
-		end
-	end
-end
 
 -- ============================================================
 -- REBUILD / OPEN / CLOSE
