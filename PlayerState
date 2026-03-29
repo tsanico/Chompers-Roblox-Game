@@ -81,11 +81,6 @@ local function defaultState()
 		ccHitCount = 0,           -- consecutive CC hits (diminishing returns)
 		lastCCTime = 0,           -- last CC hit timestamp
 
-		-- ── Craving State ─────────────────────────────────────
-		cravingActive = false,
-		cravingExpiresAt = 0,
-		cravingCooldownUntil = 0,
-
 		-- ── Oil primer (elemental chain) ───────────────────────
 		oilPrimedAt = 0,          -- timestamp of last Oil hit applied
 
@@ -108,6 +103,16 @@ local function defaultState()
 		ingredientsPurchased = 0,
 		itemsGathered = 0,
 		downsTriggered = 0,
+
+		-- ── Medals (lifetime, persisted eventually via DataStore) ──
+		medals = 0,
+
+		-- ── Equipped title (set via StoreGuide) ───────────────────
+		equippedTitle = nil,      -- string or nil
+
+		-- ── Knowledge: what this player has revealed about others ──
+		-- [targetUserId] = {fav=string, allergy=string}
+		knownInfo = {},
 
 		-- ── Status ────────────────────────────────────────────
 		isEliminated = false,
@@ -512,40 +517,6 @@ function PlayerState.StartFLDecay()
 end
 
 -- ============================================================
--- CRAVING STATE (Favourite mechanic — Part 5)
--- Triggered when player self-consumes their favourite recipe
--- ============================================================
-
-function PlayerState.ActivateCraving(player)
-	local s = _state[player]
-	if not s then return false end
-	local now = tick()
-	if now < s.cravingCooldownUntil then return false end  -- on cooldown
-
-	s.cravingActive = true
-	s.cravingExpiresAt = now + C.Craving.WindowSeconds
-	-- Cooldown starts when window expires or is consumed
-	task.delay(C.Craving.WindowSeconds, function()
-		if s.cravingActive then
-			PlayerState.ConsumeCraving(player)
-		end
-	end)
-	return true
-end
-
--- Called when craving is consumed on a hit
-function PlayerState.ConsumeCraving(player)
-	local s = _state[player]
-	if not s then return end
-	s.cravingActive = false
-	s.cravingCooldownUntil = tick() + C.Craving.CooldownSeconds
-end
-
-function PlayerState.IsCravingActive(player)
-	local s = _state[player]
-	return s and s.cravingActive and tick() < s.cravingExpiresAt
-end
-
 -- ============================================================
 -- MARKS (Part 9 — one active, highest value wins)
 -- ============================================================
@@ -811,6 +782,111 @@ function PlayerState.RecordDown(player)
 end
 
 -- ============================================================
+-- MEDALS
+-- ============================================================
+
+function PlayerState.GetMedals(player)
+	local s = _state[player]; return s and s.medals or 0
+end
+
+function PlayerState.AddMedals(player, amount)
+	local s = _state[player]; if not s then return end
+	s.medals = s.medals + (amount or 0)
+	local UpdateMedals = R("UpdateMedals")
+	if UpdateMedals then UpdateMedals:FireClient(player, s.medals) end
+end
+
+function PlayerState.DeductMedals(player, amount)
+	local s = _state[player]; if not s then return false end
+	if s.medals < amount then return false end
+	s.medals = s.medals - amount
+	local UpdateMedals = R("UpdateMedals")
+	if UpdateMedals then UpdateMedals:FireClient(player, s.medals) end
+	return true
+end
+
+-- ============================================================
+-- EQUIPPED TITLE
+-- ============================================================
+
+function PlayerState.SetEquippedTitle(player, title)
+	local s = _state[player]; if not s then return end
+	s.equippedTitle = title
+end
+
+function PlayerState.GetEquippedTitle(player)
+	local s = _state[player]; return s and s.equippedTitle or nil
+end
+
+-- ============================================================
+-- KNOWLEDGE: what a player has revealed about others
+-- ============================================================
+
+function PlayerState.RecordKnownInfo(player, targetUserId, fav, allergy)
+	local s = _state[player]; if not s then return end
+	s.knownInfo[targetUserId] = {fav = fav, allergy = allergy}
+end
+
+function PlayerState.GetKnownInfo(player, targetUserId)
+	local s = _state[player]; if not s then return nil end
+	return s.knownInfo[targetUserId]
+end
+
+-- ============================================================
+-- FRIENDSHIP BAND CHECK
+-- ============================================================
+
+function PlayerState.HasFriendshipBand(player)
+	local s = _state[player]; if not s then return false end
+	for _, item in ipairs(s.inventory) do
+		if item.name == "Friendship Bracelet" then return true end
+	end
+	return false
+end
+
+function PlayerState.ConsumeFriendshipBand(player)
+	-- Removes first friendship band from inventory, returns true if found
+	local s = _state[player]; if not s then return false end
+	for i, item in ipairs(s.inventory) do
+		if item.name == "Friendship Bracelet" then
+			table.remove(s.inventory, i)
+			PlayerState.SyncInventory(player)
+			return true
+		end
+	end
+	return false
+end
+
+-- ============================================================
+-- SCOREBOARD DATA BUILDER
+-- Returns array sorted by score descending, with all columns
+-- the expanded scoreboard needs.
+-- ============================================================
+
+function PlayerState.GetScoreboardData()
+	local rows = {}
+	for player, s in pairs(_state) do
+		table.insert(rows, {
+			userId    = player.UserId,
+			name      = player.DisplayName or player.Name,
+			allyId    = s.allyUserId,
+			score     = s.points,
+			gather    = s.itemsGathered,
+			cook      = 0,   -- count of unique recipes: compute below
+			clDealt   = math.floor(s.totalCLDealt),
+			flDealt   = math.floor(s.totalFLDealt),
+			breaks    = s.pottyBreaks,
+			-- fav/allergy intentionally omitted from this payload —
+			-- each client tracks their own revealedInfo table.
+		})
+		rows[#rows].cook = 0
+		for _ in pairs(s.recipesCooked) do rows[#rows].cook = rows[#rows].cook + 1 end
+	end
+	table.sort(rows, function(a,b) return a.score > b.score end)
+	return rows
+end
+
+-- ============================================================
 -- REMOTE LISTENERS (Prelobby selections from client)
 -- ============================================================
 
@@ -839,6 +915,22 @@ R("RequestLobbyData").OnServerEvent:Connect(function(player)
 		money     = s.money,
 		napkins   = s.napkins,
 	})
+end)
+
+R("RequestScoreboard").OnServerEvent:Connect(function(player)
+	local ScoreboardData = R("ScoreboardData")
+	if ScoreboardData then
+		ScoreboardData:FireClient(player, PlayerState.GetScoreboardData())
+	end
+end)
+
+R("EquipTitle").OnServerEvent:Connect(function(player, titleStr)
+	if type(titleStr) ~= "string" or #titleStr > 80 then return end
+	PlayerState.SetEquippedTitle(player, titleStr)
+	-- Refresh that player's billboard for others (server-side billboard or
+	-- re-fire to client so StoreGuide can update its local billboard)
+	local r = R("BillboardRefresh")
+	if r then r:FireClient(player, titleStr) end
 end)
 
 -- ============================================================
