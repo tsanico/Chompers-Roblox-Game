@@ -561,6 +561,13 @@ function PlayerState.ApplyOilPrimer(player)
 	s.oilPrimedAt = tick()
 end
 
+function PlayerState.ClearOilPrimer(player)
+	-- Consumes the primer. Sets timestamp to 0 so IsOilPrimed returns false immediately.
+	local s = _state[player]
+	if not s then return end
+	s.oilPrimedAt = 0
+end
+
 function PlayerState.IsOilPrimed(player)
 	local s = _state[player]
 	if not s then return false end
