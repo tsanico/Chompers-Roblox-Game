@@ -71,25 +71,59 @@ local function fireBreaks(player)
     if s then UpdateBreaks:FireClient(player, s.pottyBreaks) end
 end
 
-local function setDoor(stall, occupied)
+-- ── Door control ─────────────────────────────────────────────
+-- Doors default SOLID (Transparency=0, CanCollide=true).
+-- They open briefly (0.7s) only when a player enters or exits
+-- with valid conditions. Occupied state shows as red, not open.
+local function setDoor(stall, state)
+    -- state: "free" | "occupied" | "opening"
     local door = doorsByStall[stall]
     if not door then return end
-    -- Occupied: make door semi-transparent red, unoccupied: clear
-    door.Transparency    = occupied and 0.6 or 0.9
-    door.BrickColor      = occupied
-        and BrickColor.new("Bright red")
-        or  BrickColor.new("Institutional white")
+
+    if state == "opening" then
+        -- Brief open window — player is moving through
+        door.Transparency = 0.65
+        door.CanCollide   = false
+        door.BrickColor   = BrickColor.new("Bright green")
+        task.delay(0.7, function()
+            if door and door.Parent then
+                local current = stallOccupant[stall]
+                -- Re-evaluate state after open window
+                if current then
+                    door.Transparency = 0
+                    door.CanCollide   = true
+                    door.BrickColor   = BrickColor.new("Bright red")
+                else
+                    door.Transparency = 0
+                    door.CanCollide   = true
+                    door.BrickColor   = BrickColor.new("Medium stone grey")
+                end
+            end
+        end)
+
+    elseif state == "occupied" then
+        -- Closed + red tint: occupied but physically solid
+        door.Transparency = 0
+        door.CanCollide   = true
+        door.BrickColor   = BrickColor.new("Bright red")
+
+    else  -- "free"
+        -- Closed + neutral: no one inside
+        door.Transparency = 0
+        door.CanCollide   = true
+        door.BrickColor   = BrickColor.new("Medium stone grey")
+    end
 end
 
 local function clearPlayerSession(player)
     local stall = playerStall[player]
     if stall then
         stallOccupant[stall] = nil
-        setDoor(stall, false)
+        setDoor(stall, "opening")   -- brief green open so player can walk out
+        -- setDoor's own task.delay closes it to "free" after 0.7s
     end
     playerStall[player] = nil
 
-    -- Cancel forced-exit timer if still running
     if playerTimer[player] then
         task.cancel(playerTimer[player])
         playerTimer[player] = nil
@@ -167,7 +201,14 @@ local function handleUse(player, stall, isSink)
         -- Claim stall
         stallOccupant[stall] = player
         playerStall[player]  = stall
-        setDoor(stall, true)
+
+        -- Open door briefly (0.7s green) then close red/solid
+        setDoor(stall, "opening")
+        task.delay(0.75, function()
+            if stallOccupant[stall] == player then
+                setDoor(stall, "occupied")
+            end
+        end)
 
         -- Fire client — entering
         BathroomEnterR:FireClient(player, s.pottyBreaks)
@@ -224,6 +265,10 @@ local function setupStall(part, isSink)
             if sibling:IsA("BasePart")
             and sibling:GetAttribute("IsBathroomDoor") == true then
                 doorsByStall[part] = sibling
+                -- Initialise to closed/solid state
+                sibling.Transparency = 0
+                sibling.CanCollide   = true
+                sibling.BrickColor   = BrickColor.new("Medium stone grey")
                 break
             end
         end
