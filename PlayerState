@@ -229,11 +229,12 @@ function PlayerState.GetSpeedMult(player)
 		mult = mult * (1 - penalty)
 	end
 
-	-- FL size/speed tiers
-	if s.fl >= C.FL.Tier2Min and s.fl < C.FL.Tier2Max then
-		mult = mult * C.FL.Tier2SpeedMult   -- −25%
-	elseif s.fl >= C.FL.Tier1Min and s.fl < C.FL.Tier1Max then
-		mult = mult * C.FL.Tier1SpeedMult   -- −10%
+	-- FL fullness speed tiers (Phase 1 — hardcoded thresholds)
+	-- FL 60–79: -10% speed; FL 80–100: -25% speed
+	if s.fl >= 80 then
+		mult = mult * 0.75   -- −25%
+	elseif s.fl >= 60 then
+		mult = mult * 0.90   -- −10%
 	end
 
 	-- 100% CL debuff
