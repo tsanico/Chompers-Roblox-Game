@@ -189,26 +189,25 @@ local function applyDamage(attacker, target, itemData, itemName)
 	local elementalMult = 1.0
 	if isFireRecipe(itemName) and PlayerState.IsOilPrimed(target) then
 		elementalMult = C.Elemental.OilFireMultiplier
-		-- Consume the oil primer
-		PlayerState.ApplyOilPrimer(target)  -- resets timer so it won't double-proc
+		PlayerState.ClearOilPrimer(target)   -- consume the primer so it can't double-proc
 	end
 	local clAfterElemental = clAfterDepth * elementalMult
 
-	-- ── 4. Mark: certain ingredients prime a bonus on the target ──
-	-- Marks are applied FIRST so they affect subsequent hits, not this one.
-	-- This throw still deals its own baseCL — the bonus triggers on the NEXT hit.
-	local markIngredients = { Tomato=true, ["Soy Sauce"]=true, ["Black Garlic"]=true }
-	if markIngredients[itemName] then
-		PlayerState.ApplyMarkToTarget(target, { name=itemName })
-	end
-
-	-- Consume existing mark on target (set by previous throw)
+	-- ── 4. Mark bonus from PREVIOUS hit (read BEFORE applying new mark) ────
+	-- Marks prime the NEXT hit from any attacker — not the current one.
+	-- Capture the existing mark first, then apply any new mark this throw sets.
 	local mark = PlayerState.GetActiveMark(target)
 	local markBonus = 0
 	if mark and tick() < mark.expiresAt then
 		markBonus = clAfterElemental * mark.bonus
 	end
 	local clAfterMark = clAfterElemental + markBonus
+
+	-- Now apply new mark if this ingredient is a mark primer (affects next hit)
+	local markIngredients = { Tomato=true, ["Soy Sauce"]=true, ["Black Garlic"]=true }
+	if markIngredients[itemName] then
+		PlayerState.ApplyMarkToTarget(target, { name=itemName })
+	end
 
 	-- ── 5. Favourite food bonus (attacker's favourite) ─────────
 	local favBonus = 0
@@ -306,8 +305,8 @@ R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, chargePercent, 
 	local itemData = s.inventory[slotIndex]
 	if not itemData then return end
 
-	-- TODO: re-enable paid check once CheckoutServer is built.
-	-- if not itemData.paid then return end
+	-- Only paid items can be thrown (CheckoutServer marks items paid on checkout)
+	if not itemData.paid then return end
 
 	chargePercent = math.clamp(tonumber(chargePercent) or 1, 0.4, 1.0)
 
