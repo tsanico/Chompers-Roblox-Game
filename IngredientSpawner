@@ -570,8 +570,11 @@ task.spawn(function()
 				if entry.isLoot then
 					spawnLootAt(entry.worldX, entry.worldZ, entry.y)
 				elseif entry.surfacePart and entry.surfacePart.Parent then
+					-- Add small jitter so respawned items don't stack on the original position
+					local jX = (math.random() - 0.5) * 1.8
+					local jZ = (math.random() - 0.5) * 1.8
 					spawnIngredientAt(
-						entry.worldX, entry.worldZ,
+						entry.worldX + jX, entry.worldZ + jZ,
 						entry.surfaceTop, entry.ing,
 						entry.surfacePart)
 				end
