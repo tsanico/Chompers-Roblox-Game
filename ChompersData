@@ -44,15 +44,18 @@ ChompersData.Constants = {
 		MaxValue            = 100,
 		WarnSlowDuration    = 0.75,
 		DecaysOverTime      = true,   -- FL decays slowly; CL does not
-		-- Overweight size/speed effects
+		-- Size + speed STACK cumulatively every 10% FL above 10%.
+		-- Each tier adds on top of the previous — not a flat swap.
 		Tier1Min            = 10,     -- 10–20%: +10% size, −10% speed
 		Tier1Max            = 20,
 		Tier1SizeMult       = 1.10,
 		Tier1SpeedMult      = 0.90,
-		Tier2Min            = 20,     -- 20–30%: +25% size, −25% speed
+		Tier2Min            = 20,     -- 20–30%: +25% total size, −25% total speed
 		Tier2Max            = 30,
 		Tier2SizeMult       = 1.25,
 		Tier2SpeedMult      = 0.75,
+		-- Above 30%: linear scaling continues until 80% (bathroom unlock)
+		-- At 80%+: visually large and noticeably slow compared to start of match
 	},
 
 	-- FL per hit (Balance Patch v1 — differentiated by recipe type)
@@ -60,6 +63,10 @@ ChompersData.Constants = {
 		RawCold  = 1,   -- +1 FL per raw / cold recipe hit
 		Cooked   = 2,   -- +2 FL per cooked recipe hit
 	},
+
+	-- Trash can outdoor loot — adds CL to the PICKER, NOT FL
+	-- Dirty food off the floor lands on you, it does not go inside you.
+	TrashCanCL = 5,   -- +5 CL to player who picks up trash can loot
 
 	-- 100% state (applies to either bar hitting 100%)
 	State100 = {
@@ -134,14 +141,17 @@ ChompersData.Constants = {
 	-- Legacy alias (do not use in new code)
 	FavouriteEnemyFLSpike = 2.0,
 
-	-- Throw system (Part 11 — Balance Patch v1)
+	-- Throw system (Part 11 — Balance Patch v1, updated ranges March 2026)
 	Throw = {
-		BaseSpeed           = 80,    -- studs/s
-		BaseDistance        = 50,    -- studs
-		ArcPeak             = 8,     -- studs
-		Cooldown            = 0.8,   -- seconds (Balance Patch v1, up from 0.4)
-		MinCharge           = 0.3,   -- seconds (40% power)
-		MaxCharge           = 1.5,   -- seconds (100% power)
+		BaseSpeed           = 45,    -- studs/s horizontal (full charge). Min = 18 studs/s (40%)
+		BaseDistance        = 70,    -- studs max range (full charge, flat surface)
+		ArcPeak             = 13,    -- studs peak arc height (full charge, flat)
+		GravityCounterPct   = 0.82,  -- fraction of workspace.Gravity counteracted by BodyForce
+		-- Effective gravity = workspace.Gravity * (1 - GravityCounterPct) ≈ 35 studs/s²
+		-- Arc math: horiz 45 st/s, flat target 70 st → T=1.56s, peak=13.5 st ✓
+		Cooldown            = 0.8,   -- seconds between throws (Balance Patch v1)
+		MinCharge           = 0.3,   -- seconds (40% power → 18 st/s, ~28 st range)
+		MaxCharge           = 1.5,   -- seconds (100% power → 45 st/s, ~70 st range)
 	},
 
 	-- AoE falloff (Part 11)
@@ -196,6 +206,41 @@ ChompersData.Constants = {
 		FriendshipBraceletCost = 12,
 		AssistScorePct       = 0.35,  -- 35% of CL dealt as assist score (within 4s)
 		AssistWindowSeconds  = 4,
+	},
+
+	-- ============================================================
+	-- VICTORY HIERARCHY (Locked March 2026)
+	-- Three distinct win layers — all fire simultaneously at match end.
+	-- ============================================================
+	Victory = {
+		-- Layer 1: True Win — survival (Golden Apron)
+		TrueWin = "Last Chef Standing",    -- final survivor or allied pair
+		TrueWinAward = "Golden Apron",     -- cosmetic + announcement
+
+		-- TIMER EXPIRY RULE (LOCKED):
+		-- If the 6-minute Food Fight hard cap expires with multiple players
+		-- still alive, there is NO true winner (Last Chef Standing is not awarded).
+		-- The Grand Grocer (MVP) and all 5 Accolades are still awarded normally.
+		-- This preserves the integrity of the survival win condition —
+		-- if nobody was eliminated, nobody earned the Golden Apron.
+		TimerExpiryNoTrueWinner = true,
+
+		-- Layer 2: Performance MVP — points (Grand Grocer)
+		MVP = "Grand Grocer",              -- highest total Points score
+		-- Points include: CL dealt, eliminations, recipes cooked, assists, gathering
+
+		-- Layer 3: Accolades — top 5 per-match highlights
+		Accolades = {
+			{ id="HeadChef",           label="Head Chef",           metric="Most CL damage dealt"      },
+			{ id="KitchenMaster",      label="Kitchen Master",      metric="Most recipes cooked"       },
+			{ id="CleanUpCrew",        label="Clean-Up Crew",       metric="Most eliminations"         },
+			{ id="SousChefSupreme",    label="Sous-Chef Supreme",   metric="Most cooking assists"      },
+			{ id="ChaosConnoisseur",   label="Chaos Connoisseur",   metric="Most environmental mayhem" },
+		},
+
+		-- End-match display order: True Win → MVP → Top 5 Accolades
+		-- Players can earn MVP or Accolades even if eliminated early.
+		-- Timer expiry: MVP + Accolades awarded, True Win slot left empty.
 	},
 
 	-- Points system (Part 15)
