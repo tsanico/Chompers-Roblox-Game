@@ -26,12 +26,22 @@ local C                 = ChompersData.Constants
 local Remotes       = ReplicatedStorage:WaitForChild("ChompersRemotes")
 local function R(name) return Remotes:WaitForChild(name) end
 
+-- Auto-create helper: finds or creates a RemoteEvent so nothing hangs on WaitForChild
+local function getOrCreate(name)
+	local r = Remotes:FindFirstChild(name)
+	if not r then
+		r = Instance.new("RemoteEvent")
+		r.Name = name; r.Parent = Remotes
+	end
+	return r
+end
+
 -- ── Remotes ─────────────────────────────────────────────────
 local PhaseChangedRemote    = R("PhaseChanged")
 local TransitionToStore     = R("TransitionToStore")
 local UpdateLobbyState      = R("UpdateLobbyState")
-local TimerUpdateRemote     = R("TimerUpdate")
-local AnnounceRemote        = R("Announce")
+local TimerUpdateRemote     = getOrCreate("TimerUpdate")
+local AnnounceRemote        = getOrCreate("Announce")
 
 -- ── BindableEvent so server systems can listen to phase changes
 -- Create it if it doesn't exist (lives in ServerScriptService)
