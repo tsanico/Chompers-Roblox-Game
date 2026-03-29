@@ -197,18 +197,22 @@ local function napkinRefreshUI()
 	NapLabel.TextColor3 = napkinStock>0 and C.napkin or C.dim
 end
 
--- Countdown bar ticks
+-- Countdown bar — always visible; full when no cooldown, filling during cooldown
 RunService.Heartbeat:Connect(function()
-	if #napkinQueue==0 then NapCdFill.Size=UDim2.new(0,0,1,0); return end
-	local q = napkinQueue[1]
+	if #napkinQueue == 0 then
+		-- Fully charged: show bar completely full
+		NapCdFill.Size = UDim2.new(1, 0, 1, 0)
+		return
+	end
+	local q   = napkinQueue[1]
 	local now = os.clock()
 	if now >= q.finishTime then
-		table.remove(napkinQueue,1)
+		table.remove(napkinQueue, 1)
 		napkinStock = napkinStock + 1
 		napkinRefreshUI()
 	else
-		local pct = 1 - (q.finishTime-now)/NAP_COOLDOWN
-		NapCdFill.Size = UDim2.new(math.clamp(pct,0,1),0,1,0)
+		local pct = 1 - (q.finishTime - now) / NAP_COOLDOWN
+		NapCdFill.Size = UDim2.new(math.clamp(pct, 0, 1), 0, 1, 0)
 	end
 end)
 
