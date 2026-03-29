@@ -418,8 +418,8 @@ function PlayerState.ModifyCL(player, delta)
 	s.cl = math.clamp(s.cl + delta, 0, 100)
 	UpdateCleanliness:FireClient(player, s.cl)
 
-	-- Warning threshold
-	if s.cl >= C.CL.WarnThreshold and prev < C.CL.WarnThreshold then
+	-- Warning threshold (95% — hardcoded Phase 1 constant)
+	if s.cl >= 95 and prev < 95 then
 		HitPlayer:FireClient(player, "cl_warn")
 	end
 
@@ -461,7 +461,7 @@ function PlayerState.ModifyFL(player, delta)
 	s.fl = math.clamp(s.fl + delta, 0, 100)
 	UpdateFullness:FireClient(player, s.fl)
 
-	if s.fl >= C.FL.WarnThreshold and prev < C.FL.WarnThreshold then
+	if s.fl >= 95 and prev < 95 then
 		HitPlayer:FireClient(player, "fl_warn")
 	end
 
