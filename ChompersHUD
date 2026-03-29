@@ -137,9 +137,11 @@ Gui.DisplayOrder=2; Gui.IgnoreGuiInset=true
 Gui.Parent = player:WaitForChild("PlayerGui")
 
 -- ── InventoryToggle (BindableEvent for InventoryClient) ───────
+-- InventoryClient does playerGui:WaitForChild("InventoryToggle")
+-- so this MUST be a direct child of PlayerGui, not of a ScreenGui
 local InventoryToggleBE = Instance.new("BindableEvent")
 InventoryToggleBE.Name = "InventoryToggle"
-InventoryToggleBE.Parent = Gui   -- accessible by InventoryClient
+InventoryToggleBE.Parent = player:WaitForChild("PlayerGui")
 _G.Chompers.InventoryToggle = InventoryToggleBE
 
 -- ============================================================
@@ -537,6 +539,9 @@ _G.Chompers.Announce = function(msg, color, duration)
 	end)
 end
 
+-- Phase tracking (needed for alliance gating)
+local currentPhase = "Prelobby"
+
 local PHASE_COLS={
 	Prelobby=Color3.fromRGB(105,100,138), Gathering=Color3.fromRGB(70,195,85),
 	Cooking=Color3.fromRGB(235,155,35),   CookingGrace=Color3.fromRGB(235,155,35),
@@ -548,7 +553,12 @@ local PHASE_LABELS={
 	Cooking="COOKING",    CookingGrace="COOKING",
 	FoodFight="FOOD FIGHT",EndGame="END GAME",Accolades="ACCOLADES",
 }
+
+-- Phases during which alliances cannot be offered
+local ALLIANCE_BLOCKED = {Prelobby=true, EndGame=true, Accolades=true}
+
 local function setPhase(phase)
+	currentPhase = phase
 	local col=PHASE_COLS[phase] or C.dim
 	PhaseLabel.Text=PHASE_LABELS[phase] or phase:upper()
 	PhaseLabel.TextColor3=col
@@ -646,52 +656,253 @@ _G.Chompers.UpdateFullness=function(v)
 end
 
 -- ============================================================
--- SCOREBOARD — Tab-hold overlay
+-- SCOREBOARD — lives in StoreGuide → Match → Scoreboard tab
+-- This module owns the reveal-info table and exposes it to StoreGuide
+-- Tab key (in INPUT section below) calls _G.Chompers.OpenToScoreboard
 -- ============================================================
 
-local SBOverlay=mkFrame(Gui,
-	UDim2.new(0,380,0,400),UDim2.new(0.5,-190,0,54),
-	Color3.fromRGB(16,14,26),14)
-SBOverlay.Name="ScoreboardOverlay"; SBOverlay.Visible=false
-local sbHdr=mkFrame(SBOverlay,UDim2.new(1,0,0,38),nil,C.red,14,true)
-mkLabel(sbHdr,"📊  Scoreboard",Enum.Font.GothamBlack,16,C.white).ZIndex=2
-local sbScroll=Instance.new("ScrollingFrame",SBOverlay)
-sbScroll.Size=UDim2.new(1,-8,1,-46); sbScroll.Position=UDim2.new(0,4,0,42)
-sbScroll.BackgroundTransparency=1; sbScroll.BorderSizePixel=0
-sbScroll.ScrollBarThickness=5; sbScroll.ScrollBarImageColor3=C.red
-sbScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; sbScroll.CanvasSize=UDim2.new(0,0,0,0)
-local sbLL=Instance.new("UIListLayout",sbScroll)
-sbLL.SortOrder=Enum.SortOrder.LayoutOrder; sbLL.Padding=UDim.new(0,3)
+local revealedInfo = {}   -- [userId] = {fav="...", allergy="..."}
 
-local function refreshSB(data)
-	for _,c in ipairs(sbScroll:GetChildren()) do
-		if c:IsA("Frame") then c:Destroy() end
-	end
-	for rank,d in ipairs(data or {}) do
-		local row=Instance.new("Frame",sbScroll); row.LayoutOrder=rank
-		row.Size=UDim2.new(1,0,0,34)
-		row.BackgroundColor3=rank==1 and Color3.fromRGB(48,38,12) or Color3.fromRGB(24,22,36)
-		row.BorderSizePixel=0; corner(row,6)
-		local rc=rank==1 and C.gold or rank==2 and Color3.fromRGB(185,185,195)
-			or rank==3 and Color3.fromRGB(165,105,65) or C.dim
-		mkLabel(row,rank.."  "..(d.name or "?"),Enum.Font.GothamBold,13,rc,
-			Enum.TextXAlignment.Left,UDim2.new(0,8,0,0),UDim2.new(0.5,0,1,0))
-		mkLabel(row,"🧼 "..tostring(d.clDealt or 0),Enum.Font.Gotham,12,C.white,
-			Enum.TextXAlignment.Center,UDim2.new(0.5,0,0,0),UDim2.new(0.25,0,1,0))
-		mkLabel(row,"🍳 "..tostring(d.recipes or 0),Enum.Font.Gotham,12,C.white,
-			Enum.TextXAlignment.Center,UDim2.new(0.75,0,0,0),UDim2.new(0.25,0,1,0))
-	end
+-- Expose to StoreGuide's scoreboard renderer
+_G.Chompers.GetRevealedInfo = function(userId)
+	return revealedInfo[userId]
 end
-_G.Chompers.UpdateScoreboard=function(data) refreshSB(data) end
+
+_G.Chompers.UpdateScoreboard = function(data)
+	-- Stub — actual rendering is in StoreGuide.
+	-- StoreGuide overwrites this with its own implementation after loading.
+end
+
+_G.Chompers.RevealPlayerInfo = function(userId, fav, allergy)
+	revealedInfo[userId] = {fav=fav, allergy=allergy}
+	if _G.Chompers.Announce then
+		_G.Chompers.Announce("🔍 Revealed: ⭐ "..fav.."  ⚠ "..allergy,
+			Color3.fromRGB(200,170,255), 5)
+	end
+	-- Tell StoreGuide to redraw if scoreboard is open
+	if _G.Chompers.RefreshScoreboardIfVisible then
+		_G.Chompers.RefreshScoreboardIfVisible()
+	end
+	-- Also re-request fresh server data
+	local r = Remotes and Remotes:FindFirstChild("RequestScoreboard")
+	if r then r:FireServer() end
+end
 
 -- ============================================================
--- INPUT
+-- PROXIMITY INSPECT UI — Press E near a player to reveal info / offer alliance
 -- ============================================================
+
+local INSPECT_RANGE   = 10   -- studs
+local INSPECT_COST    = 15   -- medals to reveal info
+local nearestTarget   = nil  -- the Player object currently in range
+local inspectOpen     = false
+
+-- Hint label shown when near someone
+local InspectHint = mkFrame(Gui,
+	UDim2.new(0,260,0,36), UDim2.new(0.5,-130,1,-BAR_BOTTOM-52-12),
+	Color3.fromRGB(16,14,26), 18)
+InspectHint.Name = "InspectHint"; InspectHint.Visible = false
+mkStroke(InspectHint, 1.5, Color3.fromRGB(80,76,110))
+mkLabel(InspectHint, "Press E to Inspect",
+	Enum.Font.GothamBold, 15, C.dim)
+
+-- Inspect panel (2-button popup)
+local InspectPanel = mkFrame(Gui,
+	UDim2.new(0,320,0,160), UDim2.new(0.5,-160,0.5,-80),
+	Color3.fromRGB(14,12,24), 16)
+InspectPanel.Name = "InspectPanel"; InspectPanel.Visible = false; InspectPanel.ZIndex = 20
+mkStroke(InspectPanel, 2, Color3.fromRGB(80,76,120))
+
+-- Target name header
+local inspectHdr = mkFrame(InspectPanel, UDim2.new(1,0,0,48), nil,
+	Color3.fromRGB(22,20,36), 16, true)
+inspectHdr.ZIndex = 21
+local inspectNameLabel = mkLabel(inspectHdr, "Player",
+	Enum.Font.GothamBlack, 18, C.white,
+	Enum.TextXAlignment.Center, UDim2.new(0,0,0,2), UDim2.new(1,0,0,26))
+inspectNameLabel.ZIndex = 22
+local inspectTitleLabel = mkLabel(inspectHdr, "",
+	Enum.Font.GothamBold, 13, Color3.fromRGB(160,140,210),
+	Enum.TextXAlignment.Center, UDim2.new(0,0,0,28), UDim2.new(1,0,0,18))
+inspectTitleLabel.ZIndex = 22
+
+-- Reveal Info button
+local RevealBtn = Instance.new("TextButton", InspectPanel)
+RevealBtn.Name = "RevealBtn"
+RevealBtn.Size = UDim2.new(1,-24,0,44); RevealBtn.Position = UDim2.new(0,12,0,58)
+RevealBtn.BackgroundColor3 = Color3.fromRGB(20,14,40)
+RevealBtn.BorderSizePixel = 0; RevealBtn.AutoButtonColor = false
+RevealBtn.Font = Enum.Font.GothamBlack; RevealBtn.TextSize = 17
+RevealBtn.TextColor3 = Color3.fromRGB(200,170,255)
+RevealBtn.Text = "🔍  Reveal Info  (🏅 "..INSPECT_COST.." medals)"
+RevealBtn.ZIndex = 21; corner(RevealBtn, 10)
+mkStroke(RevealBtn, 1.5, Color3.fromRGB(100,70,160))
+
+-- Alliance Offer button
+local AllianceBtn = Instance.new("TextButton", InspectPanel)
+AllianceBtn.Name = "AllianceBtn"
+AllianceBtn.Size = UDim2.new(1,-24,0,40); AllianceBtn.Position = UDim2.new(0,12,0,108)
+AllianceBtn.BackgroundColor3 = Color3.fromRGB(10,24,14)
+AllianceBtn.BorderSizePixel = 0; AllianceBtn.AutoButtonColor = false
+AllianceBtn.Font = Enum.Font.GothamBold; AllianceBtn.TextSize = 16
+AllianceBtn.TextColor3 = C.green
+AllianceBtn.Text = "🤝  Offer Alliance  ($12 bracelet)"
+AllianceBtn.ZIndex = 21; corner(AllianceBtn, 10)
+mkStroke(AllianceBtn, 1.5, Color3.fromRGB(40,100,50))
+
+local allianceBtnActive = false
+
+local function setAllianceBtnState(hasband)
+	allianceBtnActive = hasband
+	AllianceBtn.TextColor3 = hasband and C.green or C.dim
+	AllianceBtn.BackgroundColor3 = hasband
+		and Color3.fromRGB(10,24,14) or Color3.fromRGB(18,18,18)
+	local str = AllianceBtn:FindFirstChildWhichIsA("UIStroke")
+	if str then str.Color = hasband
+		and Color3.fromRGB(40,100,50) or Color3.fromRGB(40,38,55) end
+	AllianceBtn.Text = hasband
+		and "🤝  Offer Alliance  ($12 bracelet)"
+		or  "🤝  No Bracelet in Inventory"
+end
+
+local inspectTargetId = nil
+
+local function openInspect(targetPlayer)
+	if inspectOpen then return end
+	inspectOpen = true
+	inspectTargetId = targetPlayer.UserId
+	inspectNameLabel.Text = targetPlayer.DisplayName or targetPlayer.Name
+
+	-- Always grey alliance button immediately — server will re-enable if conditions met
+	setAllianceBtnState(false)
+	-- If phase blocks alliance, show reason instead of "no bracelet"
+	if ALLIANCE_BLOCKED[currentPhase] then
+		AllianceBtn.Text = "🤝  Alliances open during match only"
+	end
+
+	local r = Remotes and Remotes:FindFirstChild("RequestInspect")
+	if r then r:FireServer(targetPlayer.UserId) end
+	InspectPanel.Visible = true
+	InspectHint.Visible = false
+end
+
+local function closeInspect()
+	inspectOpen = false
+	inspectTargetId = nil
+	InspectPanel.Visible = false
+end
+
+onR("InspectTargetInfo", function(targetId, title, hasBand)
+	if targetId ~= inspectTargetId then return end
+	inspectTitleLabel.Text = title and title or "(no title)"
+	-- Only enable alliance button if phase allows it AND player has a band
+	if ALLIANCE_BLOCKED[currentPhase] then
+		setAllianceBtnState(false)
+		AllianceBtn.Text = "🤝  Alliances open during match only"
+	else
+		setAllianceBtnState(hasBand)
+	end
+end)
+
+-- Server fires back PlayerInfoRevealed when inspect succeeds
+onR("PlayerInfoRevealed", function(targetId, fav, allergy, denied, reason)
+	if denied then
+		if _G.Chompers.Announce then
+			_G.Chompers.Announce("❌ "..tostring(reason), C.red, 3)
+		end
+		closeInspect(); return
+	end
+	_G.Chompers.RevealPlayerInfo(targetId, fav, allergy)
+	closeInspect()
+end)
+
+onR("AllianceOfferResult", function(success, reason)
+	if _G.Chompers.Announce then
+		_G.Chompers.Announce(success and "🤝 Alliance offer sent!" or ("❌ "..tostring(reason)),
+			success and C.green or C.red, 3)
+	end
+	closeInspect()
+end)
+
+RevealBtn.MouseButton1Click:Connect(function()
+	if not inspectTargetId then return end
+	local r = Remotes and Remotes:FindFirstChild("RequestReveal")
+	if r then r:FireServer(inspectTargetId) end
+end)
+
+AllianceBtn.MouseButton1Click:Connect(function()
+	if not allianceBtnActive or not inspectTargetId then return end
+	local r = Remotes and Remotes:FindFirstChild("OfferAlliance")
+	if r then r:FireServer(inspectTargetId) end
+end)
+
+-- Hover effects on buttons
+RevealBtn.MouseEnter:Connect(function()
+	TweenService:Create(RevealBtn, TweenInfo.new(0.1),
+		{BackgroundColor3=Color3.fromRGB(32,20,58)}):Play()
+end)
+RevealBtn.MouseLeave:Connect(function()
+	TweenService:Create(RevealBtn, TweenInfo.new(0.1),
+		{BackgroundColor3=Color3.fromRGB(20,14,40)}):Play()
+end)
+AllianceBtn.MouseEnter:Connect(function()
+	if not allianceBtnActive then return end
+	TweenService:Create(AllianceBtn, TweenInfo.new(0.1),
+		{BackgroundColor3=Color3.fromRGB(14,34,18)}):Play()
+end)
+AllianceBtn.MouseLeave:Connect(function()
+	if not allianceBtnActive then return end
+	TweenService:Create(AllianceBtn, TweenInfo.new(0.1),
+		{BackgroundColor3=Color3.fromRGB(10,24,14)}):Play()
+end)
+
+-- Proximity detection loop — finds nearest player within INSPECT_RANGE
+RunService.Heartbeat:Connect(function()
+	if inspectOpen then return end
+	local char = player.Character
+	if not char then nearestTarget = nil; InspectHint.Visible = false; return end
+	local hrp  = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then nearestTarget = nil; InspectHint.Visible = false; return end
+
+	local bestDist = INSPECT_RANGE + 1
+	local best = nil
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			local c = p.Character
+			local h = c and c:FindFirstChild("HumanoidRootPart")
+			if h then
+				local d = (hrp.Position - h.Position).Magnitude
+				if d < bestDist then bestDist = d; best = p end
+			end
+		end
+	end
+	nearestTarget = best
+	if best then
+		InspectHint.Text = "Press E to Inspect "..best.DisplayName
+		InspectHint.Visible = true
+	else
+		InspectHint.Visible = false
+	end
+end)
+
+
 
 UserInputService.InputBegan:Connect(function(input,gpe)
 	if gpe then return end
 	local kc=input.KeyCode
-	if kc==Enum.KeyCode.Tab then SBOverlay.Visible=true end
+	-- Tab: open Store Guide directly to Match → Scoreboard
+	if kc==Enum.KeyCode.Tab then
+		if _G.Chompers.OpenToScoreboard then
+			_G.Chompers.OpenToScoreboard()
+		end
+	end
+	-- E key: open inspect for nearest player, or close if already open
+	if kc==Enum.KeyCode.E then
+		if inspectOpen then closeInspect()
+		elseif nearestTarget then openInspect(nearestTarget) end
+	end
+	-- Escape: close inspect panel
+	if kc==Enum.KeyCode.Escape and inspectOpen then closeInspect() end
 	if kc==Enum.KeyCode.G then
 		if inventoryOpen then setInventoryOpen(false) end
 		if _G.Chompers.IsStoreGuideOpen() then _G.Chompers.CloseStoreGuide()
@@ -710,8 +921,8 @@ UserInputService.InputBegan:Connect(function(input,gpe)
 		if r then r:FireServer(n) end
 	end
 end)
-UserInputService.InputEnded:Connect(function(input)
-	if input.KeyCode==Enum.KeyCode.Tab then SBOverlay.Visible=false end
+UserInputService.InputEnded:Connect(function(_input)
+	-- reserved for future input-end handling
 end)
 SGBtn.MouseButton1Click:Connect(function()
 	if inventoryOpen then setInventoryOpen(false) end
@@ -719,6 +930,7 @@ SGBtn.MouseButton1Click:Connect(function()
 	else _G.Chompers.OpenStoreGuide() end
 end)
 
+-- ============================================================
 -- ============================================================
 -- REMOTE LISTENERS
 -- ============================================================
@@ -738,17 +950,106 @@ onR("TimerUpdate",       function(secs)
 	TimerLabel.Text=m..":"..(s<10 and "0" or "")..s
 	TimerLabel.TextColor3=secs<=30 and C.warn or C.gold
 end)
-onR("UpdateScoreboard",  function(data) refreshSB(data) end)
+-- Scoreboard data — route to _G.Chompers.UpdateScoreboard (implemented by StoreGuide)
+onR("UpdateScoreboard", function(data) _G.Chompers.UpdateScoreboard(data) end)
+onR("ScoreboardData",   function(data) _G.Chompers.UpdateScoreboard(data) end)
 onR("UpdatePlayerCount", function(c,t) _G.Chompers.SetPlayerCount(c,t) end)
 onR("SlotUpdate",        function(i,data) _G.Chompers.SetSlotItem(i,data) end)
 onR("SelectSlot",        function(i) highlightSlot(i) end)
-onR("Announce",          function(msg,col,dur)
-	_G.Chompers.Announce(msg, col, dur)
-end)
--- Napkin sync (server confirms heal + new count)
+onR("Announce",          function(msg,col,dur) _G.Chompers.Announce(msg,col,dur) end)
 onR("NapkinSync",        function(newStock)
 	napkinStock = math.max(napkinStock, newStock)
 	napkinRefreshUI()
+end)
+-- Server-pushed reveal (hit-based auto-reveal from combat system)
+onR("RevealPlayerInfo", function(targetId, fav, allergy)
+	_G.Chompers.RevealPlayerInfo(targetId, fav, allergy)
+end)
+-- Medal balance update
+local localMedals = 0
+onR("UpdateMedals", function(n)
+	localMedals = n or 0
+	local canAfford = localMedals >= INSPECT_COST
+	RevealBtn.TextColor3 = canAfford and Color3.fromRGB(200,170,255) or C.dim
+	RevealBtn.Text = canAfford
+		and ("🔍  Reveal Info  (🏅 "..INSPECT_COST.." medals)")
+		or  ("🔍  Reveal Info  (need 🏅 "..INSPECT_COST..")")
+end)
+
+-- ── Incoming Alliance Offer popup ─────────────────────────────
+local AlliancePopup = mkFrame(Gui,
+	UDim2.new(0,340,0,140), UDim2.new(0.5,-170,0,TOP_Y+PILL_H+10),
+	Color3.fromRGB(12,26,14), 16)
+AlliancePopup.Name="AlliancePopup"; AlliancePopup.Visible=false; AlliancePopup.ZIndex=25
+mkStroke(AlliancePopup, 2, Color3.fromRGB(50,160,70))
+
+mkLabel(AlliancePopup, "🤝 Alliance Offer",
+	Enum.Font.GothamBlack, 20, C.green,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,8), UDim2.new(1,0,0,28)).ZIndex = 26
+
+local allianceFromLabel = mkLabel(AlliancePopup, "from someone",
+	Enum.Font.GothamBold, 15, C.dim,
+	Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,36), UDim2.new(1,0,0,20))
+allianceFromLabel.ZIndex = 26
+
+local allianceTimerLabel = mkLabel(AlliancePopup, "10s",
+	Enum.Font.GothamBlack, 13, Color3.fromRGB(180,100,80),
+	Enum.TextXAlignment.Right,
+	UDim2.new(1,-12,0,8), UDim2.new(0,30,0,18))
+allianceTimerLabel.ZIndex = 26
+
+local function mkPopBtn(label, col, bg, strokeCol, xPos)
+	local b = Instance.new("TextButton", AlliancePopup)
+	b.Size = UDim2.new(0.46,-8,0,40)
+	b.Position = UDim2.new(xPos,xPos==0 and 8 or 0,1,-48)
+	b.BackgroundColor3=bg; b.BorderSizePixel=0; b.AutoButtonColor=false
+	b.Font=Enum.Font.GothamBlack; b.TextSize=18
+	b.TextColor3=col; b.Text=label; b.ZIndex=26
+	corner(b,10); mkStroke(b,1.5,strokeCol); return b
+end
+local AcceptBtn2  = mkPopBtn("✓ Accept",  C.green, Color3.fromRGB(14,48,18),
+	Color3.fromRGB(40,140,55),  0)
+local DeclineBtn2 = mkPopBtn("✗ Decline", C.red,   Color3.fromRGB(40,12,12),
+	Color3.fromRGB(140,40,40), 0.54)
+
+local pendingRequesterId = nil
+local allianceCountdown  = nil
+
+local function closeAlliancePopup()
+	AlliancePopup.Visible = false
+	pendingRequesterId = nil
+	if allianceCountdown then task.cancel(allianceCountdown); allianceCountdown=nil end
+end
+
+onR("IncomingAllianceOffer", function(requesterId, requesterName)
+	pendingRequesterId = requesterId
+	allianceFromLabel.Text = "from "..tostring(requesterName)
+	AlliancePopup.Visible = true
+	local t = 10; allianceTimerLabel.Text = t.."s"
+	if allianceCountdown then task.cancel(allianceCountdown) end
+	allianceCountdown = task.spawn(function()
+		while t > 0 and AlliancePopup.Visible do
+			task.wait(1); t = t - 1
+			allianceTimerLabel.Text = t.."s"
+			allianceTimerLabel.TextColor3 = t <= 3 and C.red or Color3.fromRGB(180,100,80)
+		end
+		closeAlliancePopup()
+	end)
+end)
+
+AcceptBtn2.MouseButton1Click:Connect(function()
+	if not pendingRequesterId then return end
+	local r = Remotes and Remotes:FindFirstChild("RespondAlliance")
+	if r then r:FireServer(pendingRequesterId, true) end
+	closeAlliancePopup()
+end)
+DeclineBtn2.MouseButton1Click:Connect(function()
+	if not pendingRequesterId then return end
+	local r = Remotes and Remotes:FindFirstChild("RespondAlliance")
+	if r then r:FireServer(pendingRequesterId, false) end
+	closeAlliancePopup()
 end)
 
 print("ChompersHUD loaded!")
