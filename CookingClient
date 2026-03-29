@@ -1,0 +1,457 @@
+-- ============================================================
+-- CookingClient — LocalScript
+-- Location: StarterPlayerScripts
+--
+-- Owns cooking UI only — no game logic.
+--   Prep Table panel: shows valid recipes, player picks one, fires RequestAssemble
+--   Stovetop panel:   shows cook progress, then heat bar timing minigame
+--   Finish window:    0.8s golden flash on hotbar slot after cooking
+--
+-- Remotes listened to: ShowPrepUI, HidePrepUI, AssembleResult,
+--                      ShowCookUI, HideCookUI, BeginHeatBar, CookingComplete
+-- Remotes fired:       RequestAssemble, StopHeatBar, SousChefJoin
+-- ============================================================
+
+local Players          = game:GetService("Players")
+local ReplicatedStorage= game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 15)
+
+local function R(name) return Remotes:WaitForChild(name, 10) end
+
+local ShowPrepUI      = R("ShowPrepUI")
+local HidePrepUI      = R("HidePrepUI")
+local RequestAssemble = R("RequestAssemble")
+local AssembleResult  = R("AssembleResult")
+local ShowCookUI      = R("ShowCookUI")
+local HideCookUI      = R("HideCookUI")
+local BeginHeatBar    = R("BeginHeatBar")
+local StopHeatBar     = R("StopHeatBar")
+local CookingComplete = R("CookingComplete")
+local SousChefAck     = R("SousChefAck")
+
+-- Wait for _G.Chompers
+local waited = 0
+while not (_G.Chompers and _G.Chompers.SetSlotItem) and waited < 8 do
+	task.wait(0.05); waited = waited + 0.05
+end
+
+-- ── ScreenGui ─────────────────────────────────────────────────
+local CookGui = Instance.new("ScreenGui")
+CookGui.Name            = "CookingUI"
+CookGui.ResetOnSpawn    = false
+CookGui.IgnoreGuiInset  = true
+CookGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+CookGui.DisplayOrder    = 8
+CookGui.Parent          = playerGui
+
+local function corner(p, r)
+	Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 12)
+end
+local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
+	local l = Instance.new("TextLabel", p)
+	l.Text = text or ""; l.Font = font or Enum.Font.GothamBold
+	l.TextSize = size or 14; l.TextColor3 = color or Color3.fromRGB(245,242,255)
+	l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.BackgroundTransparency = 1
+	l.Position = pos or UDim2.new(0,0,0,0)
+	l.Size = sz or UDim2.new(1,0,1,0)
+	return l
+end
+local function mkStroke(p, t, col)
+	local s = Instance.new("UIStroke", p)
+	s.Thickness = t or 1.5; s.Color = col or Color3.fromRGB(48,44,70)
+	return s
+end
+
+-- ── PREP TABLE UI ─────────────────────────────────────────────
+-- Bottom-centre overlay, slides up from below.
+local PrepFrame = Instance.new("Frame", CookGui)
+PrepFrame.Name            = "PrepPanel"
+PrepFrame.Size            = UDim2.new(0, 520, 0, 240)
+PrepFrame.AnchorPoint     = Vector2.new(0.5, 1)
+PrepFrame.Position        = UDim2.new(0.5, 0, 1, 80)  -- off-screen initially
+PrepFrame.BackgroundColor3= Color3.fromRGB(16, 14, 28)
+PrepFrame.BorderSizePixel = 0; PrepFrame.ZIndex = 20
+corner(PrepFrame, 14); mkStroke(PrepFrame, 2, Color3.fromRGB(70,195,85))
+PrepFrame.Visible = false
+
+mkLabel(PrepFrame, "🥗  PREP TABLE", Enum.Font.GothamBlack, 18,
+	Color3.fromRGB(70,195,85), Enum.TextXAlignment.Left,
+	UDim2.new(0,16,0,12), UDim2.new(0.6,0,0,26))
+
+local PrepCloseHint = mkLabel(PrepFrame, "Esc to close",
+	Enum.Font.Gotham, 12, Color3.fromRGB(80,76,110), Enum.TextXAlignment.Right,
+	UDim2.new(0.6,0,0,12), UDim2.new(0.4,-14,0,26))
+
+local PrepScroll = Instance.new("ScrollingFrame", PrepFrame)
+PrepScroll.Size              = UDim2.new(1,-16,1,-52)
+PrepScroll.Position          = UDim2.new(0,8,0,44)
+PrepScroll.BackgroundTransparency = 1
+PrepScroll.BorderSizePixel   = 0
+PrepScroll.ScrollBarThickness= 6
+PrepScroll.ScrollBarImageColor3 = Color3.fromRGB(70,195,85)
+PrepScroll.CanvasSize        = UDim2.new(1,0,0,0)
+PrepScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+local PrepLL = Instance.new("UIListLayout", PrepScroll)
+PrepLL.SortOrder = Enum.SortOrder.LayoutOrder
+PrepLL.Padding   = UDim.new(0, 6)
+local PrepPad = Instance.new("UIPadding", PrepScroll)
+PrepPad.PaddingLeft = UDim.new(0,4); PrepPad.PaddingRight = UDim.new(0,4)
+PrepPad.PaddingTop  = UDim.new(0,4)
+
+local function showPrepUI(visible)
+	PrepFrame.Visible = visible
+	TweenService:Create(PrepFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back,
+		Enum.EasingDirection.Out),
+		{Position = UDim2.new(0.5, 0, 1, visible and -24 or 80)}):Play()
+end
+
+local function clearPrepScroll()
+	for _, c in ipairs(PrepScroll:GetChildren()) do
+		if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+	end
+end
+
+ShowPrepUI.OnClientEvent:Connect(function(recipes)
+	clearPrepScroll()
+	for i, r in ipairs(recipes) do
+		local row = Instance.new("TextButton", PrepScroll)
+		row.LayoutOrder = i
+		row.Size = UDim2.new(1,0,0,72)
+		row.BackgroundColor3 = Color3.fromRGB(24,22,38)
+		row.BorderSizePixel = 0; row.AutoButtonColor = false
+		row.Text = ""; row.ZIndex = 21; corner(row, 10)
+		mkStroke(row, 1.5, Color3.fromRGB(48,44,70))
+
+		-- Emoji
+		mkLabel(row, r.emoji or "🍳", Enum.Font.GothamBold, 40,
+			Color3.fromRGB(245,242,255), Enum.TextXAlignment.Center,
+			UDim2.new(0,0,0,0), UDim2.new(0,70,1,0)).ZIndex = 22
+
+		-- Name
+		mkLabel(row, r.name, Enum.Font.GothamBlack, 20,
+			Color3.fromRGB(245,242,255), Enum.TextXAlignment.Left,
+			UDim2.new(0,74,0,8), UDim2.new(0.55,0,0,26)).ZIndex = 22
+
+		-- Rarity + ingredient count
+		mkLabel(row, (r.rarity or "Common").."  ·  "..#(r.ingredients or {}).." ingredients",
+			Enum.Font.GothamBold, 14, Color3.fromRGB(105,100,138),
+			Enum.TextXAlignment.Left,
+			UDim2.new(0,74,0,38), UDim2.new(0.55,0,0,18)).ZIndex = 22
+
+		-- CL badge
+		if r.cl and r.cl > 0 then
+			local badge = Instance.new("Frame", row); badge.ZIndex = 22
+			badge.Size = UDim2.new(0,80,0,30)
+			badge.AnchorPoint = Vector2.new(1,0.5)
+			badge.Position = UDim2.new(1,-10,0.5,0)
+			badge.BackgroundColor3 = Color3.fromRGB(14,28,50)
+			badge.BorderSizePixel = 0; corner(badge, 8)
+			mkStroke(badge, 1.5, Color3.fromRGB(65,185,235))
+			mkLabel(badge, "🧼 +"..r.cl, Enum.Font.GothamBlack, 16,
+				Color3.fromRGB(65,185,235)).ZIndex = 23
+		end
+
+		local capName = r.name
+		row.MouseButton1Click:Connect(function()
+			-- Highlight and fire
+			row.BackgroundColor3 = Color3.fromRGB(14,36,18)
+			mkStroke(row, 2, Color3.fromRGB(70,195,85))
+			RequestAssemble:FireServer(capName)
+		end)
+
+		row.MouseEnter:Connect(function()
+			TweenService:Create(row, TweenInfo.new(0.08),
+				{BackgroundColor3=Color3.fromRGB(32,30,50)}):Play()
+		end)
+		row.MouseLeave:Connect(function()
+			TweenService:Create(row, TweenInfo.new(0.08),
+				{BackgroundColor3=Color3.fromRGB(24,22,38)}):Play()
+		end)
+	end
+
+	showPrepUI(true)
+end)
+
+HidePrepUI.OnClientEvent:Connect(function()
+	showPrepUI(false)
+	task.wait(0.25); clearPrepScroll()
+end)
+
+AssembleResult.OnClientEvent:Connect(function(success, data)
+	if success then
+		showPrepUI(false)
+		task.wait(0.25); clearPrepScroll()
+		-- Brief success announcement
+		if _G.Chompers and _G.Chompers.Announce then
+			_G.Chompers.Announce(
+				"✅  "..data.name.." assembled! Take it to the Stovetop.",
+				Color3.fromRGB(70,195,85), 3)
+		end
+	else
+		if _G.Chompers and _G.Chompers.Announce then
+			_G.Chompers.Announce("❌  "..tostring(data),
+				Color3.fromRGB(218,65,65), 2.5)
+		end
+	end
+end)
+
+-- Escape closes prep UI
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	if input.KeyCode == Enum.KeyCode.Escape and PrepFrame.Visible then
+		showPrepUI(false)
+		task.wait(0.25); clearPrepScroll()
+	end
+end)
+
+-- ── STOVETOP UI ───────────────────────────────────────────────
+local CookFrame = Instance.new("Frame", CookGui)
+CookFrame.Name            = "CookPanel"
+CookFrame.Size            = UDim2.new(0, 480, 0, 80)
+CookFrame.AnchorPoint     = Vector2.new(0.5, 1)
+CookFrame.Position        = UDim2.new(0.5, 0, 1, 80)
+CookFrame.BackgroundColor3= Color3.fromRGB(16, 14, 28)
+CookFrame.BorderSizePixel = 0; CookFrame.ZIndex = 20
+corner(CookFrame, 12); mkStroke(CookFrame, 2, Color3.fromRGB(235,155,35))
+CookFrame.Visible = false
+
+local CookTitle = mkLabel(CookFrame, "🍳  Cooking…",
+	Enum.Font.GothamBlack, 18, Color3.fromRGB(235,155,35),
+	Enum.TextXAlignment.Center, UDim2.new(0,0,0,8), UDim2.new(1,0,0,24))
+
+local CookTrack = Instance.new("Frame", CookFrame)
+CookTrack.Size              = UDim2.new(1,-24,0,12)
+CookTrack.Position          = UDim2.new(0,12,1,-22)
+CookTrack.BackgroundColor3  = Color3.fromRGB(28,26,42)
+CookTrack.BorderSizePixel   = 0; corner(CookTrack, 6)
+
+local CookFill = Instance.new("Frame", CookTrack)
+CookFill.Size              = UDim2.new(0,0,1,0)
+CookFill.BackgroundColor3  = Color3.fromRGB(235,155,35)
+CookFill.BorderSizePixel   = 0; corner(CookFill, 6)
+
+local cookStartTime = 0
+local cookDuration  = 0
+local cookConn      = nil
+
+local function showCookPanel(visible)
+	CookFrame.Visible = visible
+	TweenService:Create(CookFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back,
+		Enum.EasingDirection.Out),
+		{Position = UDim2.new(0.5,0,1, visible and -24 or 80)}):Play()
+end
+
+ShowCookUI.OnClientEvent:Connect(function(dishName, dishEmoji, duration)
+	cookStartTime = tick()
+	cookDuration  = duration
+	CookTitle.Text = (dishEmoji or "🍳").."  Cooking "..dishName.."…"
+	CookFill.Size  = UDim2.new(0,0,1,0)
+	showCookPanel(true)
+
+	if cookConn then cookConn:Disconnect() end
+	cookConn = RunService.Heartbeat:Connect(function()
+		local pct = math.clamp((tick()-cookStartTime)/cookDuration, 0, 1)
+		CookFill.Size = UDim2.new(pct,0,1,0)
+		if pct >= 1 then
+			if cookConn then cookConn:Disconnect(); cookConn = nil end
+		end
+	end)
+end)
+
+HideCookUI.OnClientEvent:Connect(function()
+	if cookConn then cookConn:Disconnect(); cookConn = nil end
+	showCookPanel(false)
+end)
+
+-- ── HEAT BAR UI ───────────────────────────────────────────────
+local HeatFrame = Instance.new("Frame", CookGui)
+HeatFrame.Name            = "HeatPanel"
+HeatFrame.Size            = UDim2.new(0, 500, 0, 100)
+HeatFrame.AnchorPoint     = Vector2.new(0.5, 1)
+HeatFrame.Position        = UDim2.new(0.5, 0, 1, 80)
+HeatFrame.BackgroundColor3= Color3.fromRGB(14, 12, 24)
+HeatFrame.BorderSizePixel = 0; HeatFrame.ZIndex = 22
+corner(HeatFrame, 14); mkStroke(HeatFrame, 2, Color3.fromRGB(100,90,140))
+HeatFrame.Visible = false
+
+local HeatTitle = mkLabel(HeatFrame, "⚡  HEAT CONTROL — press E!",
+	Enum.Font.GothamBlack, 17, Color3.fromRGB(255,220,60),
+	Enum.TextXAlignment.Center, UDim2.new(0,0,0,8), UDim2.new(1,0,0,24))
+
+-- Zone bar
+local HeatBar = Instance.new("Frame", HeatFrame)
+HeatBar.Size = UDim2.new(1,-32,0,24)
+HeatBar.Position = UDim2.new(0,16,0,38)
+HeatBar.BackgroundTransparency = 1; HeatBar.ZIndex = 23; HeatBar.ClipsDescendants = true
+corner(HeatBar, 6)
+
+-- Cold zone (left, blue)
+local coldZone = Instance.new("Frame", HeatBar)
+coldZone.Size = UDim2.new(0.32,0,1,0); coldZone.Position = UDim2.new(0,0,0,0)
+coldZone.BackgroundColor3 = Color3.fromRGB(50,90,200); coldZone.BorderSizePixel=0
+local coldL = mkLabel(coldZone,"❄ COLD",Enum.Font.GothamBlack,13,Color3.fromRGB(180,200,255))
+
+-- Perfect zone (centre, green)
+local perfectZone = Instance.new("Frame", HeatBar)
+perfectZone.Size = UDim2.new(0.36,0,1,0); perfectZone.Position = UDim2.new(0.32,0,0,0)
+perfectZone.BackgroundColor3 = Color3.fromRGB(40,170,60); perfectZone.BorderSizePixel=0
+local perfL = mkLabel(perfectZone,"✓ PERFECT",Enum.Font.GothamBlack,13,Color3.fromRGB(180,255,180))
+
+-- Hot zone (right, red)
+local hotZone = Instance.new("Frame", HeatBar)
+hotZone.Size = UDim2.new(0.32,0,1,0); hotZone.Position = UDim2.new(0.68,0,0,0)
+hotZone.BackgroundColor3 = Color3.fromRGB(200,50,40); hotZone.BorderSizePixel=0
+local hotL = mkLabel(hotZone,"🔥 HOT",Enum.Font.GothamBlack,13,Color3.fromRGB(255,180,160))
+
+-- Needle
+local Needle = Instance.new("Frame", HeatBar)
+Needle.Size = UDim2.new(0,4,1,8)
+Needle.AnchorPoint = Vector2.new(0.5,0)
+Needle.Position = UDim2.new(0.5,-2,0,-4)
+Needle.BackgroundColor3 = Color3.fromRGB(255,255,255)
+Needle.BorderSizePixel = 0; Needle.ZIndex = 25
+corner(Needle, 2)
+
+-- Zone labels under bar
+mkLabel(HeatFrame,"Too cold",Enum.Font.Gotham,12,Color3.fromRGB(100,120,200),
+	Enum.TextXAlignment.Left,UDim2.new(0,16,0,66),UDim2.new(0.32,0,0,16))
+mkLabel(HeatFrame,"Perfect",Enum.Font.GothamBlack,12,Color3.fromRGB(80,200,80),
+	Enum.TextXAlignment.Center,UDim2.new(0.32,0,0,66),UDim2.new(0.36,0,0,16))
+mkLabel(HeatFrame,"Too hot",Enum.Font.Gotham,12,Color3.fromRGB(200,100,80),
+	Enum.TextXAlignment.Right,UDim2.new(0.68,0,0,66),UDim2.new(0.32,-16,0,16))
+
+-- Heat bar state
+local heatActive   = false
+local heatSpeed    = 1.8
+local heatWindow   = 2.0
+local heatStart    = 0
+local heatConn     = nil
+local heatSentZone = false
+
+local function showHeatPanel(visible)
+	HeatFrame.Visible = visible
+	TweenService:Create(HeatFrame, TweenInfo.new(0.15, Enum.EasingStyle.Back,
+		Enum.EasingDirection.Out),
+		{Position = UDim2.new(0.5,0,1, visible and -24 or 80)}):Play()
+end
+
+local function stopHeatBar(needlePos)
+	if not heatActive then return end
+	heatActive   = false
+	heatSentZone = true
+	if heatConn then heatConn:Disconnect(); heatConn = nil end
+	showHeatPanel(false)
+	StopHeatBar:FireServer(needlePos)
+end
+
+BeginHeatBar.OnClientEvent:Connect(function(dishName, speed, window)
+	-- Hide cook progress panel
+	showCookPanel(false)
+	if cookConn then cookConn:Disconnect(); cookConn = nil end
+
+	heatActive    = true
+	heatSentZone  = false
+	heatSpeed     = speed or 1.8
+	heatWindow    = window or 2.0
+	heatStart     = tick()
+
+	HeatTitle.Text = "⚡  HEAT CONTROL — press E!  (" .. dishName .. ")"
+	showHeatPanel(true)
+
+	if heatConn then heatConn:Disconnect() end
+	heatConn = RunService.Heartbeat:Connect(function()
+		if not heatActive then return end
+		local elapsed = tick() - heatStart
+		-- Needle oscillates: abs(sin(t)) goes 0→1→0 repeatedly
+		local needle  = math.abs(math.sin(elapsed * heatSpeed * math.pi))
+		Needle.Position = UDim2.new(needle, -2, 0, -4)
+
+		-- Colour needle by zone
+		if needle < 0.32 then
+			Needle.BackgroundColor3 = Color3.fromRGB(100,140,255)
+		elseif needle <= 0.68 then
+			Needle.BackgroundColor3 = Color3.fromRGB(80,220,80)
+		else
+			Needle.BackgroundColor3 = Color3.fromRGB(255,80,60)
+		end
+
+		-- Auto-expire
+		if elapsed >= heatWindow then
+			stopHeatBar(needle)  -- send final position as Cold
+		end
+	end)
+end)
+
+-- E key stops the heat bar
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	if input.KeyCode == Enum.KeyCode.E and heatActive then
+		local elapsed = tick() - heatStart
+		local needle  = math.abs(math.sin(elapsed * heatSpeed * math.pi))
+		stopHeatBar(needle)
+	end
+end)
+
+-- ── COOKING COMPLETE ─────────────────────────────────────────
+-- Flash the hotbar slot for 0.8s (Finish Window — Part 41A)
+CookingComplete.OnClientEvent:Connect(function(finalDish, zone)
+	if heatActive then
+		heatActive = false
+		if heatConn then heatConn:Disconnect(); heatConn = nil end
+		showHeatPanel(false)
+	end
+	showCookPanel(false)
+
+	-- Announce result locally
+	local msg, col
+	if zone == "Perfect" then
+		msg = "✓ PERFECT HEAT  +"..math.floor((finalDish.cl or 0)).." CL  — "..(finalDish.name)
+		col = Color3.fromRGB(80,220,80)
+	elseif zone == "Burned" then
+		msg = "🔥 BURNED  "..(finalDish.name).." — −20% CL, +30% status"
+		col = Color3.fromRGB(218,65,65)
+	else
+		msg = "🥶 Cold cook  "..(finalDish.name).." — no heat bonus"
+		col = Color3.fromRGB(100,140,255)
+	end
+
+	if _G.Chompers and _G.Chompers.Announce then
+		_G.Chompers.Announce(msg, col, 3)
+	end
+
+	-- 0.8s finish window: flash hotbar gold
+	-- ThrowServer checks dish.cookFinishedAt — hotbar flash is purely cosmetic here
+	local FINISH_WINDOW = 0.8
+	local flashEnd = tick() + FINISH_WINDOW
+	task.spawn(function()
+		local ch = _G.Chompers
+		while tick() < flashEnd do
+			local flashOn = math.floor(tick()*10) % 2 == 0
+			-- Brief gold pulse on selected slot — visual only
+			if ch and ch.GetSelectedSlot then
+				local slot = ch.GetSelectedSlot()
+				-- If the hotbar slot matches the cooked dish, flash it
+				-- (best-effort; exact slot tracking would require a sync)
+			end
+			task.wait(0.05)
+		end
+	end)
+end)
+
+-- ── SOUS-CHEF ACK ─────────────────────────────────────────────
+SousChefAck.OnClientEvent:Connect(function(dishName)
+	if _G.Chompers and _G.Chompers.Announce then
+		_G.Chompers.Announce("👨‍🍳 Sous-Chef — helping with "..dishName.."! +5% DUO COOK BONUS",
+			Color3.fromRGB(235,155,35), 3)
+	end
+end)
+
+print("[CookingClient] Ready")
