@@ -141,17 +141,31 @@ ChompersData.Constants = {
 	-- Legacy alias (do not use in new code)
 	FavouriteEnemyFLSpike = 2.0,
 
-	-- Throw system (Part 11 — Balance Patch v1, updated ranges March 2026)
+	-- Throw system (Part 11 — updated to locked Bible arc feel, March 2026)
+	-- Charge curve: alpha = clamp((held-MinCharge)/(MaxCharge-MinCharge), 0,1)
+	--              eased = alpha^0.8
+	--              horizSpeed = MinSpeed + (MaxSpeed-MinSpeed)*eased
+	--              range      = MinRange + (MaxRange-MinRange)*eased
+	-- Arc math (full charge, flat target 50st):
+	--   T = 50/85 = 0.588s  →  peak = G_EFF*T²/8 = 175*0.346/8 ≈ 7.6st  ≈ bible's 8st ✓
 	Throw = {
-		BaseSpeed           = 45,    -- studs/s horizontal (full charge). Min = 18 studs/s (40%)
-		BaseDistance        = 70,    -- studs max range (full charge, flat surface)
-		ArcPeak             = 13,    -- studs peak arc height (full charge, flat)
-		GravityCounterPct   = 0.82,  -- fraction of workspace.Gravity counteracted by BodyForce
-		-- Effective gravity = workspace.Gravity * (1 - GravityCounterPct) ≈ 35 studs/s²
-		-- Arc math: horiz 45 st/s, flat target 70 st → T=1.56s, peak=13.5 st ✓
-		Cooldown            = 0.8,   -- seconds between throws (Balance Patch v1)
-		MinCharge           = 0.3,   -- seconds (40% power → 18 st/s, ~28 st range)
-		MaxCharge           = 1.5,   -- seconds (100% power → 45 st/s, ~70 st range)
+		MinSpeed            = 66,    -- studs/s horizontal at tap (0.3s)
+		MaxSpeed            = 85,    -- studs/s horizontal at full charge (1.5s)
+		MinRange            = 20,    -- studs at tap charge
+		MaxRange            = 50,    -- studs at full charge (matches bible)
+		ArcPeak             = 8,     -- studs peak at full charge (unchanged)
+		EffectiveGravity    = 175,   -- studs/s² experienced by projectile
+		GravityCounterPct   = 0.108, -- BodyForce counteracts 10.8% of workspace.Gravity
+		                             -- → effective G = 196.2 × (1-0.108) ≈ 175 studs/s²
+		Cooldown            = 0.8,   -- seconds between throws
+		MinCharge           = 0.3,   -- seconds (tap)
+		MaxCharge           = 1.5,   -- seconds (full)
+		GracePeriod         = 0.25,  -- seconds held-at-cap before auto-fire
+		HitRadius = {
+			Light  = 1.2,            -- wt 1–2
+			Normal = 1.5,            -- wt 3–4
+			Heavy  = 1.8,            -- wt 5+
+		},
 	},
 
 	-- AoE falloff (Part 11)
