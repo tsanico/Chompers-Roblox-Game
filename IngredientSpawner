@@ -265,27 +265,41 @@ local function weightedPick(pool)
 	return pool[1]
 end
 
--- Distribute N spawn points evenly across a part's top surface
+-- Distribute N spawn points randomly across a part's full top surface.
+-- Uses fully random placement (not grid) with a minimum separation check
+-- so items don't pile on top of each other.
 local function getSurfacePoints(part, count)
 	local pos   = part.Position
 	local sizeX = part.Size.X
 	local sizeZ = part.Size.Z
-	local cols  = math.ceil(math.sqrt(count))
-	local rows  = math.ceil(count / cols)
-	local stepX = sizeX / (cols + 1)
-	local stepZ = sizeZ / (rows + 1)
+	-- Inset slightly from the edges so items don't fall off
+	local insetX = math.max(sizeX * 0.08, 0.3)
+	local insetZ = math.max(sizeZ * 0.08, 0.3)
+	local usableX = sizeX - insetX * 2
+	local usableZ = sizeZ - insetZ * 2
+
 	local points = {}
-	local i = 0
-	for row = 1, rows do
-		for col = 1, cols do
-			i = i + 1
-			if i > count then break end
-			local jX = (math.random() - 0.5) * stepX * 0.35
-			local jZ = (math.random() - 0.5) * stepZ * 0.35
-			table.insert(points, Vector3.new(
-				pos.X - sizeX/2 + stepX * col + jX,
-				0,
-				pos.Z - sizeZ/2 + stepZ * row + jZ))
+	local minSep = 0.7   -- minimum studs between items on same surface
+
+	for _ = 1, count do
+		local best, bestMinDist = nil, -1
+		-- Try up to 8 candidates, keep the one furthest from existing points
+		for _ = 1, 8 do
+			local cx = pos.X - sizeX/2 + insetX + math.random() * usableX
+			local cz = pos.Z - sizeZ/2 + insetZ + math.random() * usableZ
+			local minDist = math.huge
+			for _, ep in ipairs(points) do
+				local d = math.sqrt((cx-ep.X)^2 + (cz-ep.Z)^2)
+				if d < minDist then minDist = d end
+			end
+			if minDist > bestMinDist then
+				best = Vector3.new(cx, 0, cz); bestMinDist = minDist
+			end
+		end
+		if best and bestMinDist >= minSep then
+			table.insert(points, best)
+		elseif best then
+			table.insert(points, best)   -- still place even if too close — better than skipping
 		end
 	end
 	return points
@@ -570,9 +584,9 @@ task.spawn(function()
 				if entry.isLoot then
 					spawnLootAt(entry.worldX, entry.worldZ, entry.y)
 				elseif entry.surfacePart and entry.surfacePart.Parent then
-					-- Add small jitter so respawned items don't stack on the original position
-					local jX = (math.random() - 0.5) * 1.8
-					local jZ = (math.random() - 0.5) * 1.8
+					-- Add random jitter so respawned items don't stack on the original position
+					local jX = (math.random() - 0.5) * 2.8
+					local jZ = (math.random() - 0.5) * 2.8
 					spawnIngredientAt(
 						entry.worldX + jX, entry.worldZ + jZ,
 						entry.surfaceTop, entry.ing,
