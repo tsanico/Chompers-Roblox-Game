@@ -267,9 +267,9 @@ local TABS = {
     {id="OVERVIEW",    label="🏠 Overview",    color=Color3.fromRGB(50,130,200),  order=1},
     {id="RULES",       label="📜 Rules",       color=C.red,                       order=2},
     {id="COOKBOOK",    label="📖 Cookbook",    color=Color3.fromRGB(65,48,128),   order=3},
-    {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=4},
+    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=4},
     {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=5},
-    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=6},
+    {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=6},
 }
 
 local function switchTab(id)
@@ -446,6 +446,7 @@ local tips = {
     "🚽  Bathrooms are immune zones. 3 potty breaks per match. Spend them wisely.",
     "🛒  Basket = faster. Cart = carries more. Choose in Preferences before Gathering.",
     "📖  Open the Cookbook tab to browse all recipes and ingredients.",
+    "🎯  Enable Shift-Lock (padlock icon, bottom-right of screen) for much easier aiming and throwing. Close the Store Guide first.",
 }
 for i, tip in ipairs(tips) do
     local tf = Instance.new("Frame", ovScroll)
@@ -551,11 +552,12 @@ addRuleSection("🍳 Cooking", Color3.fromRGB(85,210,130), {
     "Perfect cook (nail the heat window): +10% CL bonus.",
     "Any single hit of 25+ CL while at a station drops the cook. You lose the ingredients.",
 })
-addRuleSection("🎯 Marks, Elemental & Control", Color3.fromRGB(175,95,220), {
+addRuleSection("🎯 Mark, Elemental & Control", Color3.fromRGB(175,95,220), {
     "🔴 MARK — tags a target so your NEXT hit deals bonus CL. Tomato: +15%. Soy Sauce: +20%.",
     "⚡ ELEMENTAL — Oil hit, then follow with Chili Fried Rice within 3s → ×1.6 CL. The only fire combo in Phase 1.",
     "🎮 CONTROL — 2× Cheese Block: 1.5s root. Honey: root + sticky floor 5s. Blue Cheese: next slow/root on target +50% duration. Ice Cream: Freeze 2s.",
-    "CC diminishing returns: same effect within 8s → reduced potency each repeat. Spam is punished. Freeze hard cap: 2.5s total.",
+    "CC diminishing returns: same effect within 8s → reduced potency each repeat. Freeze hard cap: 2.5s total.",
+    "🎯 TIP: Enable Shift-Lock (padlock icon in the bottom-right of your Roblox screen) for much easier aiming and throwing. Close the Store Guide before enabling it.",
 })
 addRuleSection("🤝 Alliances", C.ally, {
     "Friendship Bracelets cost $12 at the Trade Hub kiosk. Available during Gathering AND Cooking phases.",
@@ -1858,6 +1860,7 @@ local KEYS={
     {"F","Inspect nearby player"},
     {"Tab","Open Store Guide → Scoreboard tab"},
     {"Escape","Close any open HUD"},
+    {"🎯 Padlock (bottom-right)","Enable Shift-Lock from Roblox menu — recommended for aiming and throwing. Close the guide first."},
 }
 for i,kb in ipairs(KEYS) do
     local row=Instance.new("Frame",kbScroll)
