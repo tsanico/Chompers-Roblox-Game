@@ -97,70 +97,67 @@ local function getItemAllergy(itemName, itemData)
 end
 
 -- ============================================================
+-- ============================================================
 -- SPAWN PROJECTILE
--- Uses ballistic math with EFFECTIVE gravity (18% of workspace.Gravity)
--- achieved via a BodyForce that counteracts 82% of gravity.
--- This gives a dramatic cartoon-arc with 70-stud max range.
+-- horizSpeed validated server-side; BodyForce counteracts 10.8% of gravity
+-- → effective G ≈ 175 studs/s² (matches bible 8-stud arc at 50-stud full throw).
+-- Projectile size scales with item weight for dodgeability.
 -- ============================================================
 
-local function spawnProjectile(itemData, origin, targetPos, chargePercent, rarity)
-	local G_COUNTER_PCT = C.GravityCounterPct or 0.82
-	local G_EFF         = workspace.Gravity * (1 - G_COUNTER_PCT)  -- ~35 studs/s²
-	local horizSpeed    = C.BaseSpeed * chargePercent
+local function getHitRadius(wt)
+	local hr = C.Throw.HitRadius
+	if wt <= 2 then return hr and hr.Light  or 1.2
+	elseif wt <= 4 then return hr and hr.Normal or 1.5
+	else                 return hr and hr.Heavy  or 1.8
+	end
+end
+
+local function spawnProjectile(itemData, origin, targetPos, horizSpeed, rarity)
+	local G_COUNTER_PCT = C.Throw.GravityCounterPct or 0.108
+	local G_EFF         = workspace.Gravity * (1 - G_COUNTER_PCT)  -- ≈175 studs/s²
 
 	local disp  = targetPos - origin
 	local hDist = Vector3.new(disp.X, 0, disp.Z).Magnitude
 	if hDist < 0.5 then hDist = 0.5 end
-	local T = hDist / math.max(horizSpeed, 4)
-	-- Ballistic formula using effective (reduced) gravity
+	local T   = hDist / math.max(horizSpeed, 4)
 	local vel = disp / T + Vector3.new(0, 0.5 * G_EFF * T, 0)
-	if vel.Magnitude > 250 then vel = vel.Unit * 250 end
+	if vel.Magnitude > 300 then vel = vel.Unit * 300 end
+
+	local wt     = itemData.wt or itemData.weight or 1
+	local radius = getHitRadius(wt)
+	local diam   = radius * 2
 
 	local proj = Instance.new("Part")
 	proj.Name        = "FoodProjectile"
 	proj.Shape       = Enum.PartType.Ball
-	proj.Size        = Vector3.new(0.85, 0.85, 0.85)
+	proj.Size        = Vector3.new(diam, diam, diam)
 	proj.Color       = RARITY_COLOURS[rarity] or RARITY_COLOURS.Common
 	proj.Material    = Enum.Material.SmoothPlastic
-	proj.CanCollide  = false
-	proj.CastShadow  = false
-	proj.Anchored    = false
-	proj.CFrame      = CFrame.new(origin)
-	proj.Parent      = workspace
+	proj.CanCollide  = false; proj.CastShadow = false; proj.Anchored = false
+	proj.CFrame      = CFrame.new(origin); proj.Parent = workspace
 
-	-- BodyForce counteracts 82% of gravity, giving the effective G_EFF arc
 	local bf = Instance.new("BodyForce", proj)
 	bf.Force = Vector3.new(0, proj.AssemblyMass * workspace.Gravity * G_COUNTER_PCT, 0)
-
-	-- Apply initial velocity
 	proj.AssemblyLinearVelocity = vel
 
-	-- Enable collision after short delay so thrower doesn't self-hit
-	task.delay(0.12, function()
+	task.delay(0.10, function()
 		if proj and proj.Parent then proj.CanCollide = true end
 	end)
 
-	-- Emoji billboard
 	local bb = Instance.new("BillboardGui", proj)
-	bb.Size = UDim2.new(0, 44, 0, 44)
-	bb.StudsOffset = Vector3.new(0, 0.7, 0)
+	bb.Size = UDim2.new(0, 48, 0, 48); bb.StudsOffset = Vector3.new(0, 0.8, 0)
 	bb.AlwaysOnTop = false
 	local emoji = Instance.new("TextLabel", bb)
-	emoji.Size = UDim2.new(1,0,1,0)
-	emoji.BackgroundTransparency = 1
-	emoji.Text = itemData.emoji or "🍽"
-	emoji.TextScaled = true
+	emoji.Size = UDim2.new(1,0,1,0); emoji.BackgroundTransparency = 1
+	emoji.Text = itemData.emoji or "🍽"; emoji.TextScaled = true
 
-	-- Lifetime = 2.5× expected flight time, capped at 12s
-	local maxLife = math.clamp(T * 2.5, 3, 12)
+	local maxLife = math.clamp(T * 2.5, 2, 10)
 	game:GetService("Debris"):AddItem(proj, maxLife)
-
-	return proj
+	return proj, radius
 end
 
 -- ============================================================
 -- APPLY DAMAGE
--- Resolves all multipliers and calls PlayerState functions.
 -- ============================================================
 
 local function applyDamage(attacker, target, itemData, itemName)
@@ -169,117 +166,98 @@ local function applyDamage(attacker, target, itemData, itemName)
 	if not tState or not aState then return end
 	if tState.isEliminated or tState.inBathroom then return end
 
-	local baseCL  = itemData.cl or 0
+	local baseCL      = itemData.cl or 0
 	local itemAllergy = getItemAllergy(itemName, itemData)
 
-	-- ── 1. Allergy multiplier ──────────────────────────────────
+	-- 1. Allergy
 	local allergyMult = 1.0
 	if tState.allergy and tState.allergy ~= "None" then
 		allergyMult = (itemAllergy == tState.allergy)
-			and C.Allergy.MatchMultiplier
-			or  C.Allergy.NoMatchMultiplier
+			and C.Allergy.MatchMultiplier or C.Allergy.NoMatchMultiplier
 	end
 	local clAfterAllergy = baseCL * allergyMult
 
-	-- ── 2. Cook depth bonus (recipe only) ─────────────────────
-	local depthBonus = getCookDepthBonus(itemName)
-	local clAfterDepth = clAfterAllergy * (1 + depthBonus)
+	-- 2. Cook depth
+	local clAfterDepth = clAfterAllergy * (1 + getCookDepthBonus(itemName))
 
-	-- ── 3. Elemental: oil primer + fire recipe ─────────────────
+	-- 3. Elemental
 	local elementalMult = 1.0
 	if isFireRecipe(itemName) and PlayerState.IsOilPrimed(target) then
 		elementalMult = C.Elemental.OilFireMultiplier
-		PlayerState.ClearOilPrimer(target)   -- consume the primer so it can't double-proc
+		PlayerState.ClearOilPrimer(target)
 	end
 	local clAfterElemental = clAfterDepth * elementalMult
 
-	-- ── 4. Mark bonus from PREVIOUS hit (read BEFORE applying new mark) ────
-	-- Marks prime the NEXT hit from any attacker — not the current one.
-	-- Capture the existing mark first, then apply any new mark this throw sets.
+	-- 4. Mark bonus (read BEFORE applying new mark)
 	local mark = PlayerState.GetActiveMark(target)
 	local markBonus = 0
 	if mark and tick() < mark.expiresAt then
 		markBonus = clAfterElemental * mark.bonus
 	end
 	local clAfterMark = clAfterElemental + markBonus
-
-	-- Now apply new mark if this ingredient is a mark primer (affects next hit)
 	local markIngredients = { Tomato=true, ["Soy Sauce"]=true, ["Black Garlic"]=true }
 	if markIngredients[itemName] then
 		PlayerState.ApplyMarkToTarget(target, { name=itemName })
 	end
 
-	-- ── 5. Favourite food bonus (attacker's favourite) ─────────
+	-- 5. Favourite bonus
 	local favBonus = 0
 	if aState.favourite and aState.favourite == itemName then
-		favBonus = math.min(baseCL * C.Favourite.ThrowBonusMultiplier,
-			C.Favourite.ThrowBonusCap)
+		favBonus = math.min(baseCL * C.Favourite.ThrowBonusMultiplier, C.Favourite.ThrowBonusCap)
 	end
 	local finalCL = math.max(0, clAfterMark + favBonus)
 
-	-- ── 6. Apply CL to target ──────────────────────────────────
+	-- 6. Apply CL
 	if finalCL > 0 then
 		PlayerState.ModifyCL(target, finalCL)
 		PlayerState.RecordCLDealt(attacker, finalCL)
 		PlayerState.AddPoints(attacker, finalCL * C.Points.DirectHitPerCL)
 	end
 
-	-- ── 7. Apply FL to target (food hit = FL increase) ─────────
+	-- 7. Apply FL
 	local isCooked = itemData.cooked == true
 	local flDelta  = isCooked and C.FLPerHit.Cooked or C.FLPerHit.RawCold
-
-	-- Enemy hitting target with target's own favourite → ×2 FL spike
 	if tState.favourite and tState.favourite == itemName then
 		flDelta = flDelta * C.Favourite.EnemyFLSpike
 	end
 	PlayerState.ModifyFL(target, flDelta)
-	if flDelta > 0 then
-		PlayerState.RecordFLDealt(attacker, flDelta)
-	end
+	if flDelta > 0 then PlayerState.RecordFLDealt(attacker, flDelta) end
 
-	-- ── 8. Oil primer: oil ingredient primes the target ────────
-	if isOilIngredient(itemName) then
-		PlayerState.ApplyOilPrimer(target)
-	end
+	-- 8. Oil primer
+	if isOilIngredient(itemName) then PlayerState.ApplyOilPrimer(target) end
 
-	-- ── 9. Hit-based reveal check ──────────────────────────────
+	-- 9. Hit-reveal
 	if _G.InspectCheckHitReveal then
 		_G.InspectCheckHitReveal(attacker, target, itemName, itemAllergy)
 	end
 
-	-- ── 10. Fire hit signal to target's client (screen flash etc.) ──
-	local HitPlayer = Remotes:FindFirstChild("HitPlayer")
-	if HitPlayer then
-		HitPlayer:FireClient(target, "food_hit", finalCL, itemAllergy)
+	-- 10. Elimination
+	local tState2 = PlayerState.Get(target)
+	if tState2 and tState2.cl >= 100 then
+		PlayerState.EliminatePlayer(target, attacker)
+		PlayerState.AddPoints(attacker, C.Points.DownEnemy)
 	end
 
-	-- ── 11. Server announcement for Legendary throws ───────────
-	if itemData.rarity == "Legendary" then
-		local Announce = Remotes:FindFirstChild("Announce")
-		if Announce then
-			local atkName = attacker.DisplayName or attacker.Name
-			local defName = target.DisplayName or target.Name
-			Announce:FireAllClients(
-				"💣 "..atkName.." threw the "..itemName.." at "..defName.."!",
-				Color3.fromRGB(220,160,30), 5)
-		end
+	-- 11. Big-hit announcement
+	local Announce = Remotes:FindFirstChild("Announce")
+	if Announce and finalCL >= 60 then
+		local atkName = attacker.DisplayName or attacker.Name
+		local defName = target.DisplayName or target.Name
+		Announce:FireAllClients("💣 "..atkName.." threw "..itemName.." at "..defName.."!",
+			Color3.fromRGB(220,160,30), 5)
 	end
 end
 
 -- ============================================================
--- PROCESS HIT
--- Called when projectile .Touched fires on a player character.
--- Returns true if a valid hit was processed.
+-- PROCESS HIT (shared by .Touched and spherecast)
 -- ============================================================
 
 local function processHit(proj, hitPart, attacker, itemData, itemName, hitProcessed)
 	if hitProcessed[1] then return false end
 	local target = playerFromHit(hitPart)
 	if not target or target == attacker then return false end
-
 	local tState = PlayerState.Get(target)
 	if not tState or tState.isEliminated or tState.inBathroom then return false end
-
 	hitProcessed[1] = true
 	proj:Destroy()
 	applyDamage(attacker, target, itemData, itemName)
@@ -288,10 +266,11 @@ end
 
 -- ============================================================
 -- THROW FOOD — main remote handler
--- Client fires: ThrowFood(slotIndex, chargePercent, direction)
+-- Client sends: ThrowFood(slotIndex, horizSpeed, targetPos)
+-- horizSpeed validated server-side to [MinSpeed, MaxSpeed].
 -- ============================================================
 
-R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, chargePercent, targetPos)
+R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, horizSpeed, targetPos)
 	local s = PlayerState.Get(player)
 	if not s then return end
 	if s.isEliminated or s.inBathroom then return end
@@ -304,13 +283,11 @@ R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, chargePercent, 
 
 	local itemData = s.inventory[slotIndex]
 	if not itemData then return end
-
-	-- Only paid items can be thrown (CheckoutServer marks items paid on checkout)
 	if not itemData.paid then return end
 
-	chargePercent = math.clamp(tonumber(chargePercent) or 1, 0.4, 1.0)
+	horizSpeed = math.clamp(tonumber(horizSpeed) or C.Throw.MinSpeed,
+		C.Throw.MinSpeed, C.Throw.MaxSpeed)
 
-	-- targetPos must be a Vector3 within reasonable range of the player
 	if typeof(targetPos) ~= "Vector3" then return end
 
 	local char = player.Character
@@ -318,46 +295,53 @@ R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, chargePercent, 
 	if not hrp then return end
 	local origin = hrp.Position + Vector3.new(0, 1.5, 0)
 
-	-- Clamp target to max throw distance
-	local maxDist = C.Throw.BaseDistance * 1.5
 	local toTarget = targetPos - origin
-	if toTarget.Magnitude > maxDist then
-		targetPos = origin + toTarget.Unit * maxDist
+	if toTarget.Magnitude > C.Throw.MaxRange * 1.5 then
+		targetPos = origin + toTarget.Unit * (C.Throw.MaxRange * 1.5)
 	end
 
 	lastThrowTime[player] = now
-
 	local itemName = itemData.name
 	local itemCopy = {}
 	for k, v in pairs(itemData) do itemCopy[k] = v end
 	PlayerState.RemoveItem(player, slotIndex)
 
-	local proj = spawnProjectile(itemCopy, origin, targetPos, chargePercent,
+	local proj, hitRadius = spawnProjectile(itemCopy, origin, targetPos, horizSpeed,
 		itemCopy.rarity or "Common")
 
 	local hitProcessed = {false}
+
+	-- Primary: .Touched
 	proj.Touched:Connect(function(part)
 		processHit(proj, part, player, itemCopy, itemName, hitProcessed)
 	end)
 
+	-- Secondary: per-frame spherecast (catches fast/jumping targets .Touched misses)
+	local prevPos = proj.Position
 	local conn
 	conn = RunService.Heartbeat:Connect(function()
 		if hitProcessed[1] or not proj or not proj.Parent then
 			conn:Disconnect(); return
 		end
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p ~= player and p.Character then
-				local pHRP = p.Character:FindFirstChild("HumanoidRootPart")
-				if pHRP and (proj.Position - pHRP.Position).Magnitude < 1.5 then
-					processHit(proj, pHRP, player, itemCopy, itemName, hitProcessed)
-					conn:Disconnect(); return
-				end
+		local newPos = proj.Position
+		local dir    = newPos - prevPos
+		local dist   = dir.Magnitude
+		if dist > 0.01 then
+			local params = RaycastParams.new()
+			if player.Character then
+				params.FilterDescendantsInstances = {player.Character, proj}
+				params.FilterType = Enum.RaycastFilterType.Exclude
+			end
+			local result = workspace:Spherecast(prevPos, hitRadius, dir.Unit * dist, params)
+			if result and result.Instance then
+				processHit(proj, result.Instance, player, itemCopy, itemName, hitProcessed)
+				conn:Disconnect()
 			end
 		end
+		prevPos = newPos
 	end)
 end)
 
--- ── Clean up per-player state on disconnect ───────────────────
 Players.PlayerRemoving:Connect(function(player)
 	lastThrowTime[player] = nil
 end)
