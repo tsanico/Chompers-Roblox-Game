@@ -33,6 +33,7 @@ local function R(name) return Remotes:WaitForChild(name) end
 
 local DropItemRemote      = R("DropItem")
 local UpdateInventory     = R("UpdateInventory")
+local AnnounceRemote      = Remotes:FindFirstChild("Announce")
 
 local LIVE_FOLDER_NAME    = "Ingredients_Live"
 
@@ -327,12 +328,9 @@ local function setupDumpsters()
 
 				-- Trash can loot adds CL to the picker, NOT FL.
 				-- Dirty food off the floor lands on you — you didn't eat it.
-				-- Bible Part 3 / ChompersData.Constants.TrashCanCL = 5
-				-- Using base 5 CL; the existing +10 was a placeholder.
 				PlayerState.ModifyCL(player, ChompersData.Constants.TrashCanCL or 5)
 
-				-- For now: give a random Common ingredient from any zone
-				-- Full dumpster shared inventory = Step 8+ implementation
+				-- Give a random Common ingredient (free, already paid)
 				local commons = {}
 				for _, ing in ipairs(ChompersData.Ingredients) do
 					if ing.rarity == "Common" then
@@ -341,17 +339,26 @@ local function setupDumpsters()
 				end
 				if #commons == 0 then return end
 				local ing = commons[math.random(1, #commons)]
-				PlayerState.AddItem(player, {
+				local added = PlayerState.AddItem(player, {
 					name    = ing.name,
 					rarity  = ing.rarity,
 					wt      = ing.wt,
-					cost    = 0,       -- dumpster items are free (already "paid")
+					cost    = 0,
 					emoji   = ing.emoji or "🍽",
 					allergy = ing.allergy,
 					zone    = ing.zone,
 					cl      = ing.cl,
-					paid    = true,    -- free item, counts as paid
+					paid    = true,
 				})
+
+				-- HUD feedback — dirty food warning + item found
+				if AnnounceRemote then
+					local clPenalty = ChompersData.Constants.TrashCanCL or 5
+					local itemLabel = (ing.emoji or "🍽") .. " " .. ing.name
+					AnnounceRemote:FireClient(player,
+						"🗑️  Found " .. itemLabel .. "! (+" .. clPenalty .. " CL — dirty food)",
+						Color3.fromRGB(160, 120, 60), 3.5)
+				end
 			end)
 		end
 	end
