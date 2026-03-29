@@ -33,6 +33,7 @@ local UpdateMoneyRemote      = R("UpdateMoney")
 local CheckoutStartRemote    = R("CheckoutStart")
 local CheckoutCompleteRemote = R("CheckoutComplete")
 local DropItemRemote         = R("DropItem")
+local ReorderRemote          = R("ReorderInventory")
 
 print("[InventoryClient] Remotes loaded")
 
@@ -305,144 +306,158 @@ local function showDetail(item, origIndex)
 	local strokeCol = RARITY_STROKE[rarity] or C.stroke
 	local bgCol     = RARITY_BG[rarity]    or C.bgCard
 
-	-- Top card: emoji + name + status
+	-- ── HERO: emoji fills left column, name+status stacked right ──
 	local topCard = Instance.new("Frame", RightScroll)
-	topCard.Size             = UDim2.new(1,0,0,120)
+	topCard.Size = UDim2.new(1,0,0,110)
 	topCard.BackgroundColor3 = bgCol
-	topCard.BorderSizePixel  = 0; topCard.LayoutOrder = 1; topCard.ZIndex = 12
+	topCard.BorderSizePixel = 0; topCard.LayoutOrder = 1; topCard.ZIndex = 12
 	corner(topCard, 12); mkStroke(topCard, 2, strokeCol)
 
 	mkLabel(topCard, item.emoji or "🍽",
-		Enum.Font.GothamBold, 72, C.white, Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,0), UDim2.new(0,110,1,0)).ZIndex = 13
+		Enum.Font.GothamBold, 64, C.white, Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,0), UDim2.new(0,100,1,0)).ZIndex = 13
 
 	mkLabel(topCard, item.name or "Unknown",
-		Enum.Font.GothamBlack, 26, C.white, Enum.TextXAlignment.Left,
-		UDim2.new(0,116,0,10), UDim2.new(1,-124,0,30)).ZIndex = 13
+		Enum.Font.GothamBlack, 24, C.white, Enum.TextXAlignment.Left,
+		UDim2.new(0,104,0,12), UDim2.new(1,-112,0,30)).ZIndex = 13
 
-	mkLabel(topCard, rarity,
+	mkLabel(topCard, rarity..(item.zone and ("  ·  "..(item.zone)) or ""),
 		Enum.Font.GothamBold, 15, strokeCol, Enum.TextXAlignment.Left,
-		UDim2.new(0,116,0,42), UDim2.new(1,-124,0,18)).ZIndex = 13
+		UDim2.new(0,104,0,46), UDim2.new(1,-112,0,20)).ZIndex = 13
 
-	-- Zone + weight meta
-	local meta = {}
-	if item.zone then table.insert(meta, "📍 " .. item.zone) end
-	table.insert(meta, "⚖ " .. tostring(item.wt or item.weight or 0) .. " wt")
-	mkLabel(topCard, table.concat(meta, "   "),
-		Enum.Font.Gotham, 13, C.dim, Enum.TextXAlignment.Left,
-		UDim2.new(0,116,0,62), UDim2.new(1,-124,0,16)).ZIndex = 13
+	-- Paid status
+	local stText = item.paid and "✓  PAID" or ("UNPAID  $"..tostring(item.cost or 0))
+	local stCol  = item.paid and C.green or C.orange
+	mkLabel(topCard, stText, Enum.Font.GothamBlack, 13, stCol,
+		Enum.TextXAlignment.Left,
+		UDim2.new(0,104,0,72), UDim2.new(1,-112,0,20)).ZIndex = 13
 
-	-- Status (paid/unpaid or cook state)
-	local stText, stColor
-	if item.cookStatus then
-		if item.cookStatus == "Cooked" then stText="COOKED ✓"; stColor=C.green
-		elseif item.cookStatus == "Burned" then stText="BURNED"; stColor=C.red
-		else stText="UNCOOKED"; stColor=C.gold end
-	elseif item.paid then stText="✓ PAID"; stColor=C.green
-	else stText="UNPAID  $"..tostring(item.cost or 0); stColor=C.orange end
-	mkLabel(topCard, stText,
-		Enum.Font.GothamBlack, 14, stColor, Enum.TextXAlignment.Left,
-		UDim2.new(0,116,0,82), UDim2.new(1,-124,0,22)).ZIndex = 13
+	-- ── SUBICONS (Cookbook-style 72px chips) ──────────────────────
+	local chipRow = Instance.new("Frame", RightScroll)
+	chipRow.LayoutOrder = 2
+	chipRow.Size = UDim2.new(1,0,0,0); chipRow.AutomaticSize = Enum.AutomaticSize.Y
+	chipRow.BackgroundTransparency = 1
+	local chipLL = Instance.new("UIListLayout", chipRow)
+	chipLL.FillDirection = Enum.FillDirection.Horizontal
+	chipLL.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	chipLL.VerticalAlignment   = Enum.VerticalAlignment.Center
+	chipLL.Padding = UDim.new(0, 6)
 
-	-- Section helper
-	local nextOrder = 2
-	local function section(title, value, color)
-		if not value or value == "" then return end
-		local row = Instance.new("Frame", RightScroll)
-		row.Size = UDim2.new(1,0,0,0); row.AutomaticSize = Enum.AutomaticSize.Y
-		row.BackgroundColor3 = C.bgLight; row.BorderSizePixel=0
-		row.LayoutOrder = nextOrder; nextOrder = nextOrder + 1; row.ZIndex = 12
-		corner(row, 8)
-		local pad = Instance.new("UIPadding", row)
+	local function chip(icon, label, bg, tc)
+		local f = Instance.new("Frame", chipRow)
+		f.Size = UDim2.new(0,0,0,72); f.AutomaticSize = Enum.AutomaticSize.X
+		f.BackgroundColor3 = bg; f.BorderSizePixel = 0; corner(f, 12)
+		local s = Instance.new("UIStroke", f); s.Thickness = 2; s.Color = tc
+		local ll = Instance.new("UIListLayout", f)
+		ll.SortOrder = Enum.SortOrder.LayoutOrder
+		ll.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		ll.VerticalAlignment   = Enum.VerticalAlignment.Center
+		local pad = Instance.new("UIPadding", f)
 		pad.PaddingLeft=UDim.new(0,12); pad.PaddingRight=UDim.new(0,12)
-		pad.PaddingTop=UDim.new(0,8);  pad.PaddingBottom=UDim.new(0,8)
-		local ll = Instance.new("UIListLayout", row)
-		ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,2)
-
-		local tl = Instance.new("TextLabel", row)
-		tl.Size=UDim2.new(1,0,0,16); tl.BackgroundTransparency=1
-		tl.Text=title; tl.Font=Enum.Font.GothamBlack; tl.TextSize=11
-		tl.TextColor3=color or C.dim; tl.TextXAlignment=Enum.TextXAlignment.Left
-		tl.ZIndex=13; tl.LayoutOrder=1
-
-		local vl = Instance.new("TextLabel", row)
-		vl.Size=UDim2.new(1,0,0,0); vl.AutomaticSize=Enum.AutomaticSize.Y
-		vl.BackgroundTransparency=1; vl.Text=tostring(value)
-		vl.Font=Enum.Font.Gotham; vl.TextSize=17; vl.TextColor3=C.white
-		vl.TextXAlignment=Enum.TextXAlignment.Left
-		vl.TextWrapped=true; vl.LineHeight=1.3; vl.ZIndex=13; vl.LayoutOrder=2
+		pad.PaddingTop=UDim.new(0,8);   pad.PaddingBottom=UDim.new(0,8)
+		local iL = Instance.new("TextLabel", f); iL.LayoutOrder=1
+		iL.Size=UDim2.new(0,0,0,32); iL.AutomaticSize=Enum.AutomaticSize.X
+		iL.BackgroundTransparency=1; iL.Text=icon
+		iL.Font=Enum.Font.GothamBold; iL.TextSize=30; iL.TextColor3=tc; iL.ZIndex=13
+		local lL = Instance.new("TextLabel", f); lL.LayoutOrder=2
+		lL.Size=UDim2.new(0,0,0,20); lL.AutomaticSize=Enum.AutomaticSize.X
+		lL.BackgroundTransparency=1; lL.Text=label
+		lL.Font=Enum.Font.GothamBlack; lL.TextSize=17; lL.TextColor3=tc; lL.ZIndex=13
 	end
 
+	-- Allergy or clean
 	if item.allergy and item.allergy ~= "None" then
-		section("⚠ ALLERGY", item.allergy, C.red)
+		chip("⚠️", item.allergy, Color3.fromRGB(50,10,10), Color3.fromRGB(230,90,90))
+	else
+		chip("✅", "No allergen", Color3.fromRGB(10,28,14), Color3.fromRGB(70,195,85))
 	end
+	-- Cost
+	chip("💲", "$"..(item.cost or "?"), Color3.fromRGB(10,28,14), Color3.fromRGB(70,195,85))
+	-- CL
+	local clVal = (item.cl and item.cl > 0) and "+"..item.cl.." CL" or "N/A"
+	local clCol = (item.cl and item.cl > 0) and Color3.fromRGB(65,185,235) or C.dim
+	chip("🧼", clVal, Color3.fromRGB(14,28,50), clCol)
+	-- Weight
+	chip("⚖️", (item.wt or item.weight or 0).." wt",
+		Color3.fromRGB(30,22,8), Color3.fromRGB(200,160,80))
+
+	-- ── EFFECT / NOTE ─────────────────────────────────────────────
+	local nextOrder = 3
 	if item.effect and item.effect ~= "" then
-		section("✨ EFFECT", item.effect, C.gold)
-	end
-	if item.cl and item.cl > 0 then
-		section("🧼 CL DAMAGE", "+" .. item.cl .. " per hit", C.weight)
-	end
-	if item.ingredients then
-		section("📋 INGREDIENTS", table.concat(item.ingredients, " · "), C.green)
-	end
-	if item.station and item.station ~= "" then
-		section("🍳 STATION", item.station, C.dim)
+		local eff = Instance.new("TextLabel", RightScroll); eff.LayoutOrder = nextOrder; nextOrder=nextOrder+1
+		eff.Size=UDim2.new(1,0,0,0); eff.AutomaticSize=Enum.AutomaticSize.Y
+		eff.BackgroundTransparency=1; eff.Text="💥  "..item.effect
+		eff.Font=Enum.Font.GothamBold; eff.TextSize=18
+		eff.TextColor3=Color3.fromRGB(220,215,240)
+		eff.TextXAlignment=Enum.TextXAlignment.Left; eff.TextWrapped=true; eff.ZIndex=12
 	end
 	if item.notes and item.notes ~= "" then
-		section("📝 NOTE", item.notes, C.dim)
+		local nt = Instance.new("TextLabel", RightScroll); nt.LayoutOrder = nextOrder; nextOrder=nextOrder+1
+		nt.Size=UDim2.new(1,0,0,0); nt.AutomaticSize=Enum.AutomaticSize.Y
+		nt.BackgroundTransparency=1; nt.Text="💡  "..item.notes
+		nt.Font=Enum.Font.GothamBold; nt.TextSize=18; nt.TextColor3=C.gold
+		nt.TextXAlignment=Enum.TextXAlignment.Left; nt.TextWrapped=true; nt.ZIndex=12
+	end
+	if item.ingredients then
+		local nt = Instance.new("TextLabel", RightScroll); nt.LayoutOrder = nextOrder; nextOrder=nextOrder+1
+		nt.Size=UDim2.new(1,0,0,0); nt.AutomaticSize=Enum.AutomaticSize.Y
+		nt.BackgroundTransparency=1
+		nt.Text="📋  "..table.concat(item.ingredients, "  ·  ")
+		nt.Font=Enum.Font.GothamBold; nt.TextSize=16; nt.TextColor3=C.dim
+		nt.TextXAlignment=Enum.TextXAlignment.Left; nt.TextWrapped=true; nt.ZIndex=12
 	end
 
-	-- ── Slot assignment row ───────────────────────────────────
+	-- ── SLOT ASSIGNMENT ───────────────────────────────────────────
 	if origIndex then
 		local slotRow = Instance.new("Frame", RightScroll)
-		slotRow.Size             = UDim2.new(1,0,0,60)
-		slotRow.BackgroundColor3 = C.bgLight
-		slotRow.BorderSizePixel  = 0
-		slotRow.LayoutOrder      = nextOrder; nextOrder = nextOrder + 1
-		slotRow.ZIndex           = 12
-		corner(slotRow, 8)
+		slotRow.Size = UDim2.new(1,0,0,70)
+		slotRow.BackgroundColor3 = Color3.fromRGB(22,20,36)
+		slotRow.BorderSizePixel = 0
+		slotRow.LayoutOrder = nextOrder; nextOrder = nextOrder+1
+		slotRow.ZIndex = 12; corner(slotRow, 10)
+		local ss = Instance.new("UIStroke", slotRow); ss.Thickness=1.5; ss.Color=C.stroke
 
 		mkLabel(slotRow, "ASSIGN TO HOTBAR SLOT",
-			Enum.Font.GothamBlack, 10, C.dim, Enum.TextXAlignment.Left,
-			UDim2.new(0,12,0,6), UDim2.new(1,-24,0,14)).ZIndex = 13
+			Enum.Font.GothamBlack, 12, C.dim, Enum.TextXAlignment.Center,
+			UDim2.new(0,0,0,6), UDim2.new(1,0,0,16)).ZIndex = 13
 
 		local btnRow = Instance.new("Frame", slotRow)
-		btnRow.Size = UDim2.new(1,-16,0,30)
-		btnRow.Position = UDim2.new(0,8,0,22)
+		btnRow.Size = UDim2.new(1,-16,0,36); btnRow.Position = UDim2.new(0,8,0,26)
 		btnRow.BackgroundTransparency = 1; btnRow.ZIndex = 13
 		local bLL = Instance.new("UIListLayout", btnRow)
 		bLL.FillDirection = Enum.FillDirection.Horizontal
-		bLL.Padding = UDim.new(0,3)
+		bLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		bLL.Padding = UDim.new(0,4)
 
 		for si = 1, 10 do
-			local key      = si == 10 and "0" or tostring(si)
+			local key = si == 10 and "0" or tostring(si)
 			local isActive = si == origIndex
+			local hasItem = localInventory[si] ~= nil and si ~= origIndex
 			local b = Instance.new("TextButton", btnRow)
-			b.Text = key; b.Font = Enum.Font.GothamBlack; b.TextSize = 12
-			b.TextColor3 = isActive and C.white or C.dim
-			b.BackgroundColor3 = isActive
-				and Color3.fromRGB(80,30,30)
-				or Color3.fromRGB(35,33,52)
-			b.BorderSizePixel = 0; b.AutoButtonColor = false
-			b.Size = UDim2.new(0,0,1,0); b.AutomaticSize = Enum.AutomaticSize.X
-			b.ZIndex = 14; b.Parent = btnRow; corner(b, 5)
-			local pad = Instance.new("UIPadding", b)
-			pad.PaddingLeft=UDim.new(0,8); pad.PaddingRight=UDim.new(0,8)
+			b.Text = key; b.Font = Enum.Font.GothamBlack; b.TextSize = 15
+			b.TextColor3 = isActive and C.white or (hasItem and C.gold or C.dim)
+			b.BackgroundColor3 = isActive and Color3.fromRGB(80,20,20)
+				or (hasItem and Color3.fromRGB(40,30,8) or Color3.fromRGB(28,26,44))
+			b.BorderSizePixel=0; b.AutoButtonColor=false
+			b.Size=UDim2.new(0,0,1,0); b.AutomaticSize=Enum.AutomaticSize.X
+			b.ZIndex=14; b.Parent=btnRow; corner(b,6)
+			local pad=Instance.new("UIPadding",b)
+			pad.PaddingLeft=UDim.new(0,10); pad.PaddingRight=UDim.new(0,10)
+			mkStroke(b, 1.5, isActive and C.red or (hasItem and C.gold or C.stroke))
 
-			local capSi = si; local capOrig = origIndex
+			local capSi=si; local capOrig=origIndex
 			b.MouseButton1Click:Connect(function()
-				-- Swap slots
-				local a = localInventory[capOrig]
-				local bItem = localInventory[capSi]
-				localInventory[capOrig] = bItem
-				localInventory[capSi]   = a
-				if selectedSlot == capOrig then selectedSlot = capSi
-				elseif selectedSlot == capSi then selectedSlot = capOrig end
-				if _G.Chompers.SetSelectedSlot then
-					_G.Chompers.SetSelectedSlot(selectedSlot)
+				if capSi == capOrig then return end
+				-- Fire to server — server does the authoritative move, no holes
+				if ReorderRemote then ReorderRemote:FireServer(capOrig, capSi) end
+				-- Optimistic local update so UI feels instant (server will re-sync)
+				local moved = table.remove(localInventory, capOrig)
+				if moved then
+					local target = math.clamp(capSi, 1, #localInventory+1)
+					table.insert(localInventory, target, moved)
 				end
 				syncHotbar()
-				selectedItem = localInventory[capSi]  -- track moved item
+				selectedItem = localInventory[math.clamp(capSi,1,#localInventory)]
 				rebuildPanel()
 			end)
 		end
@@ -540,7 +555,7 @@ local function buildLeftList()
 
 		-- Re-highlight previously selected
 		if selectedItem and selectedItem.name==item.name
-			and selectedItem.emoji==item.emoji then
+		and selectedItem.emoji==item.emoji then
 			selectedListBtn=row
 			row.BackgroundColor3=Color3.fromRGB(35,33,54)
 			rowStroke.Thickness=2; rowStroke.Color=C.red
