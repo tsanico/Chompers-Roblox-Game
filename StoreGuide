@@ -113,8 +113,8 @@ local EMOJI = {
     ["Wagyu Burger"]="🍔",["Poke Deluxe"]="🍣",["Guacamole Bomb"]="🥑",
     ["Golden Glaze"]="✨",["Fondant Collapse"]="🎂",["Million Dollar Steak"]="🥩",
 }
-local ZONE_EMJ = { Produce="🥦",Bakery="🥐",Dairy="🥛",Freezer="🧊",
-    Meat="🥩",Aisles="🏪",Stockroom="📦" }
+local ZONE_EMJ = { Produce="🥬", Bakery="🧁", ["Dry Goods"]="🥫",
+    Freezer="❄️", Neutral="⬜", Stockroom="📦" }
 local function emj(name, zone) return EMOJI[name] or ZONE_EMJ[zone] or "🍽" end
 
 -- ── State ─────────────────────────────────────────────────────
@@ -437,7 +437,7 @@ addRuleSection("🚽 Bathroom Breaks — 3 Per Match, Choose Wisely", Color3.fro
 })
 addRuleSection("⚠️ Allergy & ⭐ Favourite — Know Thyself", Color3.fromRGB(226,75,74), {
     "Set both in Preferences BEFORE Gathering starts. They lock the moment Gathering begins. Plan ahead.",
-    "⚠️ ALLERGY: your allergen hits you → ×1.75 CL damage. Everything else → ×0.75. Egg counts as Dairy. Don\'t ask why.",
+    "⚠️ ALLERGY: pick your zone weakness. Allergen hits → ×1.75 CL. All other hits → ×0.75. Produce (cheap raw threat) / Bakery (cooked threat) / Dry Goods (widest cooked coverage) / Freezer (raw + cooked threat — most dangerous).",
     "⭐ FAVOURITE: throw your favourite at ANYONE and deal +min(BaseCL × 50%, 30) bonus CL on top of normal damage.",
     "   Example numbers: Tomato (6 CL) → +3 bonus. Mapo Tofu (38 CL) → +19 bonus. Million Dollar Steak (70 CL) → +30 (capped).",
     "   Self-consume your favourite recipe → buffs from that recipe last ×1.5 longer. Feed yourself well.",
@@ -457,7 +457,7 @@ addRuleSection("🍳 Cooking — Earning Your CL Damage", Color3.fromRGB(85,210,
 })
 addRuleSection("🎯 Mark, Elemental & Control Effects", Color3.fromRGB(175,95,220), {
     "🔴 MARK — tags a target so your NEXT hit deals bonus CL. One active mark per target at a time, last mark wins.",
-    "   Tomato: +15% CL on next hit. Soy Sauce / Black Garlic: +20%. Stack marks strategically.",
+    "   Tomato: +15% CL on next hit. Soy Sauce: +20%. Use marks to set up big follow-up throws.",
     "⚡ ELEMENTAL — Oil hit, then follow up with a fire recipe within the time window → ×1.6 CL. Powerful. Worth the setup.",
     "🎮 CONTROL — Banana: knockdown. 2× Cheese Block: 1.5s root. Honey: root + sticky floor zone for 5s.",
     "   Blue Cheese: next slow or root applied to that target has +50% duration. Pair with anything.",
@@ -1136,14 +1136,26 @@ end
 
 -- Allergy scroll (RIGHT)
 local ALLERGY_TYPES = {
-    {name="Dairy",   color=Color3.fromRGB(180,220,255), icon="🥛"},
-    {name="Gluten",  color=Color3.fromRGB(230,190,120), icon="🌾"},
-    {name="Produce", color=Color3.fromRGB(100,210,80),  icon="🥦"},
-    {name="Meat",    color=Color3.fromRGB(220,100,80),  icon="🥩"},
-    {name="Seafood", color=Color3.fromRGB(80,160,230),  icon="🦐"},
-    {name="Nuts",    color=Color3.fromRGB(180,130,70),  icon="🥜"},
-    {name="Spicy",   color=Color3.fromRGB(240,90,50),   icon="🌶️"},
-    {name="Soy",     color=Color3.fromRGB(210,185,120), icon="🧃"},
+	{
+		name="Produce",
+		color=Color3.fromRGB(100,210,80), icon="🥬",
+		desc="Far right section. Tomato ($2) makes you a constant mark target from minute one. Cheapest allergy to exploit — brave pick.",
+	},
+	{
+		name="Bakery",
+		color=Color3.fromRGB(255,190,100), icon="🧁",
+		desc="Far left section. Safe from raw throws — exploited through cooking. Fondant, Blue Cheese, and Honey Glazed dishes will wreck you.",
+	},
+	{
+		name="Dry Goods",
+		color=Color3.fromRGB(210,180,130), icon="🥫",
+		desc="Mid-left aisles. Widest cooked-dish coverage in the game — Rice and Pasta appear in most recipes. High gamble, high payoff if enemies skip cooking.",
+	},
+	{
+		name="Freezer",
+		color=Color3.fromRGB(100,180,255), icon="❄️",
+		desc="Mid-right aisles. Raw Chicken ($5) punishes you immediately AND Rare cooking punishes you hard. The most dangerous allergy pick.",
+	},
 }
 
 local AllergyScroll = mkScroll(PrefPanel,scrollH,UDim2.new(0.5,PAD/2,0,scrollY),C.warn)
@@ -1152,14 +1164,21 @@ AllergyScroll.Name = "AllergyScroll"
 local selAllergyBtn = nil
 for _, atype in ipairs(ALLERGY_TYPES) do
     local btn = Instance.new("TextButton", AllergyScroll)
-    btn.Size = UDim2.new(1,0,0,96); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
+    btn.Size = UDim2.new(1,0,0,114); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
     btn.BorderSizePixel = 0; btn.AutoButtonColor = false
     btn.Text = ""; btn.ZIndex = 10; corner(btn,10)
+    -- Left accent bar
     local accent = Instance.new("Frame",btn)
     accent.Size=UDim2.new(0,6,1,-14); accent.Position=UDim2.new(0,6,0,7)
     accent.BackgroundColor3=atype.color; accent.BorderSizePixel=0; corner(accent,3)
-    mkLabel(btn,atype.icon.."  "..atype.name,Enum.Font.GothamBold,26,atype.color,
-        Enum.TextXAlignment.Left,UDim2.new(0,18,0,0),UDim2.new(1,-22,1,0)).ZIndex=11
+    -- Zone icon + name
+    mkLabel(btn, atype.icon.."  "..atype.name, Enum.Font.GothamBlack, 22, atype.color,
+        Enum.TextXAlignment.Left, UDim2.new(0,18,0,8), UDim2.new(1,-24,0,28)).ZIndex=11
+    -- Description
+    local dL = mkLabel(btn, atype.desc or "", Enum.Font.Gotham, 12,
+        Color3.fromRGB(155,150,185), Enum.TextXAlignment.Left,
+        UDim2.new(0,18,0,40), UDim2.new(1,-24,0,60))
+    dL.ZIndex=11; dL.TextWrapped=true; dL.LineHeight=1.25
     local capA = atype
     btn.MouseButton1Click:Connect(function()
         if prefsLocked then return end
@@ -1172,7 +1191,6 @@ for _, atype in ipairs(ALLERGY_TYPES) do
         else
             if selAllergyBtn then selAllergyBtn.BackgroundColor3=Color3.fromRGB(24,22,38) end
             Selections.allergy = capA.name
-            -- Show selection: allergen icon + name at same size as section title
             AllergyLabel.Text    = capA.icon.."  "..capA.name
             AllergyLabel.Visible = true
             btn.BackgroundColor3 = Color3.fromRGB(52,16,16); selAllergyBtn = btn
