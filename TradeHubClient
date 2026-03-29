@@ -1,0 +1,547 @@
+-- ============================================================
+-- TradeHubClient — LocalScript · StarterPlayerScripts
+--
+-- Handles all Trade Hub and Dumpster client-side UI:
+--
+-- TRADE HUB MENU (opens when kiosk E pressed):
+--   [💜 Buy Bracelet]  — greyed out if < $12
+--   [🔄 Trade Items]   — opens player select subscreen
+--
+-- TRADE SUBSCREEN:
+--   Player list → click to request trade
+--   Incoming invite popup → Accept / Decline
+--   Trade screen: your inventory + partner inventory (selectable)
+--   Both confirm → trade executes
+--
+-- DUMPSTER HUD:
+--   Small proximity panel (8 studs) shows contents of nearest
+--   dumpster. Lists items with emoji + name. Closes on walk-away.
+--   Refreshes when contents change (DumpsterUpdated remote).
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local function R(n) return Remotes:WaitForChild(n, 10) end
+
+-- ── Colours ───────────────────────────────────────────────────
+local C = {
+    bg      = Color3.fromRGB(14, 12, 24),
+    panel   = Color3.fromRGB(20, 16, 34),
+    card    = Color3.fromRGB(28, 24, 44),
+    stroke  = Color3.fromRGB(60, 54, 100),
+    purple  = Color3.fromRGB(180, 100, 255),
+    gold    = Color3.fromRGB(255, 200, 50),
+    green   = Color3.fromRGB(80, 200, 100),
+    white   = Color3.fromRGB(230, 225, 255),
+    dim     = Color3.fromRGB(120, 110, 160),
+    red     = Color3.fromRGB(220, 70, 70),
+    teal    = Color3.fromRGB(80, 210, 200),
+}
+
+-- ── UI helpers ────────────────────────────────────────────────
+local function corner(f, r) Instance.new("UICorner", f).CornerRadius = UDim.new(0, r or 10) end
+local function stroke(f, col, t) local s=Instance.new("UIStroke",f); s.Color=col; s.Thickness=t or 1.5 end
+local function mkLabel(parent, text, font, size, color, xa, pos, sz)
+    local l = Instance.new("TextLabel", parent)
+    l.BackgroundTransparency=1; l.Text=text; l.Font=font or Enum.Font.GothamBold
+    l.TextSize=size or 16; l.TextColor3=color or C.white; l.TextWrapped=true
+    l.TextXAlignment=xa or Enum.TextXAlignment.Left; l.ZIndex=22
+    if pos then l.Position=pos end
+    if sz  then l.Size=sz end
+    return l
+end
+local function mkBtn(parent, text, size, pos, bg, tc, font)
+    local b = Instance.new("TextButton", parent)
+    b.Size=size; b.Position=pos or UDim2.new(0,0,0,0)
+    b.BackgroundColor3=bg or C.card; b.BorderSizePixel=0
+    b.AutoButtonColor=false; b.Text=text
+    b.Font=font or Enum.Font.GothamBlack; b.TextSize=18
+    b.TextColor3=tc or C.white; b.ZIndex=23
+    corner(b, 8); return b
+end
+
+local function makeSG(name, order)
+    local sg = Instance.new("ScreenGui", playerGui)
+    sg.Name=name; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true
+    sg.DisplayOrder=order or 30; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+    return sg
+end
+
+-- ============================================================
+-- DUMPSTER HUD
+-- ============================================================
+local DumpHudSG = makeSG("DumpsterHUD", 20)
+local DumpPanel = Instance.new("Frame", DumpHudSG)
+DumpPanel.Name              = "DumpPanel"
+DumpPanel.Size              = UDim2.new(0, 260, 0, 0)
+DumpPanel.AutomaticSize     = Enum.AutomaticSize.Y
+DumpPanel.AnchorPoint       = Vector2.new(1, 0.5)
+DumpPanel.Position          = UDim2.new(1, -14, 0.5, 0)
+DumpPanel.BackgroundColor3  = C.panel
+DumpPanel.BorderSizePixel   = 0
+DumpPanel.Visible           = false
+DumpPanel.ZIndex            = 21
+corner(DumpPanel, 12); stroke(DumpPanel, Color3.fromRGB(100,80,40), 1.5)
+
+local DumpLayout = Instance.new("UIListLayout", DumpPanel)
+DumpLayout.SortOrder = Enum.SortOrder.LayoutOrder
+DumpLayout.Padding   = UDim.new(0, 4)
+local DumpPad = Instance.new("UIPadding", DumpPanel)
+DumpPad.PaddingTop=UDim.new(0,8); DumpPad.PaddingBottom=UDim.new(0,10)
+DumpPad.PaddingLeft=UDim.new(0,12); DumpPad.PaddingRight=UDim.new(0,10)
+
+local DumpTitle = mkLabel(DumpPanel, "🗑️  Dumpster", Enum.Font.GothamBlack, 18,
+    Color3.fromRGB(200,160,80), Enum.TextXAlignment.Left,
+    UDim2.new(0,0,0,0), UDim2.new(1,0,0,24))
+DumpTitle.LayoutOrder = 1
+
+local DumpSub = mkLabel(DumpPanel, "Hold E to pick up — +5 CL penalty",
+    Enum.Font.GothamMedium, 12, C.dim, Enum.TextXAlignment.Left,
+    UDim2.new(0,0,0,0), UDim2.new(1,0,0,16))
+DumpSub.LayoutOrder = 2
+
+local dumpItemFrames = {}
+
+local function rebuildDumpHud(items)
+    for _, f in ipairs(dumpItemFrames) do f:Destroy() end
+    dumpItemFrames = {}
+    if not items or #items == 0 then
+        local empty = mkLabel(DumpPanel, "Empty", Enum.Font.GothamBold, 15, C.dim,
+            Enum.TextXAlignment.Left, UDim2.new(0,0,0,0), UDim2.new(1,0,0,20))
+        empty.LayoutOrder = 10
+        table.insert(dumpItemFrames, empty)
+        return
+    end
+    for i, item in ipairs(items) do
+        local row = Instance.new("Frame", DumpPanel)
+        row.Size = UDim2.new(1,0,0,32); row.BackgroundColor3=C.card
+        row.BorderSizePixel=0; row.ZIndex=22; row.LayoutOrder=9+i
+        corner(row, 6)
+        mkLabel(row, (item.emoji or "🍽").."  "..item.name,
+            Enum.Font.GothamBold, 16, C.white, Enum.TextXAlignment.Left,
+            UDim2.new(0,8,0,0), UDim2.new(0.7,0,1,0))
+        mkLabel(row, item.rarity or "", Enum.Font.Gotham, 12, C.dim,
+            Enum.TextXAlignment.Right,
+            UDim2.new(0.7,0,0,0), UDim2.new(0.3,-8,1,0))
+        table.insert(dumpItemFrames, row)
+    end
+end
+
+-- Proximity polling for dumpsters
+local dumpsterParts = {}
+local currentNearDumpster = nil
+local GetDumpsterContents = Remotes:FindFirstChild("GetDumpsterContents")
+    or R("GetDumpsterContents")
+
+task.delay(2, function()
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and desc:GetAttribute("IsTrashBin") == true then
+            table.insert(dumpsterParts, desc)
+        end
+    end
+end)
+
+-- DumpsterUpdated: refresh HUD if we're looking at that dumpster
+local DumpsterUpdated = Remotes:FindFirstChild("DumpsterUpdated") or R("DumpsterUpdated")
+DumpsterUpdated.OnClientEvent:Connect(function(dumpsterPart, newList)
+    if currentNearDumpster == dumpsterPart then
+        rebuildDumpHud(newList)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.35)
+        local char = player.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then currentNearDumpster=nil; DumpPanel.Visible=false; continue end
+
+        local nearest, nearestDist = nil, 9
+        for _, part in ipairs(dumpsterParts) do
+            if part and part.Parent then
+                local d = (hrp.Position - part.Position).Magnitude
+                if d < nearestDist then nearestDist=d; nearest=part end
+            end
+        end
+
+        if nearest and nearest ~= currentNearDumpster then
+            currentNearDumpster = nearest
+            local ok, contents = pcall(function()
+                return GetDumpsterContents:InvokeServer(nearest)
+            end)
+            rebuildDumpHud(ok and contents or {})
+            DumpPanel.Visible = true
+        elseif not nearest then
+            currentNearDumpster = nil
+            DumpPanel.Visible   = false
+        end
+    end
+end)
+
+-- ============================================================
+-- TRADE HUB MENU
+-- ============================================================
+local TradeHudSG = makeSG("TradeHubUI", 35)
+local currentMoney = 0
+local BRACELET_COST = 12
+
+-- ── Main menu panel ───────────────────────────────────────────
+local MenuPanel = Instance.new("Frame", TradeHudSG)
+MenuPanel.Name             = "MenuPanel"
+MenuPanel.Size             = UDim2.new(0, 480, 0, 220)
+MenuPanel.AnchorPoint      = Vector2.new(0.5, 0.5)
+MenuPanel.Position         = UDim2.new(0.5, 0, 0.5, 0)
+MenuPanel.BackgroundColor3 = C.panel
+MenuPanel.BorderSizePixel  = 0
+MenuPanel.Visible          = false
+MenuPanel.ZIndex           = 21
+corner(MenuPanel, 14); stroke(MenuPanel, C.purple, 2)
+
+-- Header
+local menuHdr = Instance.new("Frame", MenuPanel)
+menuHdr.Size=UDim2.new(1,0,0,54); menuHdr.BackgroundColor3=Color3.fromRGB(12,8,24)
+menuHdr.BorderSizePixel=0; menuHdr.ZIndex=22; corner(menuHdr,14)
+local menuHdrFill=Instance.new("Frame",menuHdr)
+menuHdrFill.Size=UDim2.new(1,0,0,18); menuHdrFill.Position=UDim2.new(0,0,1,-18)
+menuHdrFill.BackgroundColor3=Color3.fromRGB(12,8,24); menuHdrFill.BorderSizePixel=0; menuHdrFill.ZIndex=22
+mkLabel(menuHdr,"🤝  Trade Hub",Enum.Font.GothamBlack,22,C.purple,
+    Enum.TextXAlignment.Left,UDim2.new(0,14,0,0),UDim2.new(1,-50,1,0))
+local menuClose = mkBtn(menuHdr,"✕",UDim2.new(0,34,0,34),UDim2.new(1,-42,0.5,-17),
+    Color3.fromRGB(60,20,20),C.red,Enum.Font.GothamBlack)
+menuClose.ZIndex=23
+
+-- Buy bracelet button
+local BuyBtn = mkBtn(MenuPanel,
+    "💜  Buy Bracelet  ($"..BRACELET_COST..")",
+    UDim2.new(0.46,0,0,58),
+    UDim2.new(0,14,0,66),
+    Color3.fromRGB(70,30,120), C.purple)
+BuyBtn.TextSize = 16
+
+local BuyNote = mkLabel(MenuPanel,"",Enum.Font.GothamMedium,13,C.dim,
+    Enum.TextXAlignment.Center,UDim2.new(0,14,0,132),UDim2.new(0.46,0,0,20))
+
+-- Trade items button
+local TradeBtn = mkBtn(MenuPanel,
+    "🔄  Trade Items",
+    UDim2.new(0.46,0,0,58),
+    UDim2.new(0.54,-14,0,66),
+    Color3.fromRGB(30,60,80), C.teal)
+TradeBtn.TextSize = 16
+
+local function refreshMenuButtons()
+    local canBuy = currentMoney >= BRACELET_COST
+    BuyBtn.BackgroundColor3 = canBuy
+        and Color3.fromRGB(70,30,120) or Color3.fromRGB(30,28,44)
+    BuyBtn.TextColor3 = canBuy and C.purple or C.dim
+    BuyNote.Text = canBuy and "" or ("Need $"..(BRACELET_COST-currentMoney).." more")
+end
+
+local function showMenu(money)
+    currentMoney = money or 0
+    refreshMenuButtons()
+    MenuPanel.Visible = true
+end
+
+local function hideMenu() MenuPanel.Visible = false end
+
+menuClose.MouseButton1Click:Connect(hideMenu)
+BuyBtn.MouseButton1Click:Connect(function()
+    if currentMoney < BRACELET_COST then return end
+    Remotes:FindFirstChild("BuyBracelet"):FireServer()
+    hideMenu()
+end)
+
+-- ── Player select subscreen ───────────────────────────────────
+local PlayerSelectPanel = Instance.new("Frame", TradeHudSG)
+PlayerSelectPanel.Name             = "PlayerSelectPanel"
+PlayerSelectPanel.Size             = UDim2.new(0, 500, 0, 380)
+PlayerSelectPanel.AnchorPoint      = Vector2.new(0.5, 0.5)
+PlayerSelectPanel.Position         = UDim2.new(0.5, 0, 0.5, 0)
+PlayerSelectPanel.BackgroundColor3 = C.panel
+PlayerSelectPanel.BorderSizePixel  = 0
+PlayerSelectPanel.Visible          = false
+PlayerSelectPanel.ZIndex           = 31
+corner(PlayerSelectPanel, 14); stroke(PlayerSelectPanel, C.teal, 2)
+
+local psHdr = Instance.new("Frame", PlayerSelectPanel)
+psHdr.Size=UDim2.new(1,0,0,50); psHdr.BackgroundColor3=Color3.fromRGB(8,20,26)
+psHdr.BorderSizePixel=0; psHdr.ZIndex=32; corner(psHdr,14)
+local psHdrFill=Instance.new("Frame",psHdr)
+psHdrFill.Size=UDim2.new(1,0,0,16); psHdrFill.Position=UDim2.new(0,0,1,-16)
+psHdrFill.BackgroundColor3=Color3.fromRGB(8,20,26); psHdrFill.BorderSizePixel=0; psHdrFill.ZIndex=32
+mkLabel(psHdr,"Select a player to trade with",Enum.Font.GothamBlack,19,C.teal,
+    Enum.TextXAlignment.Left,UDim2.new(0,14,0,0),UDim2.new(1,-50,1,0))
+local psClose=mkBtn(psHdr,"✕",UDim2.new(0,34,0,34),UDim2.new(1,-42,0.5,-17),
+    Color3.fromRGB(60,20,20),C.red)
+psClose.ZIndex=33
+psClose.MouseButton1Click:Connect(function() PlayerSelectPanel.Visible=false end)
+
+local psScroll = Instance.new("ScrollingFrame", PlayerSelectPanel)
+psScroll.Size=UDim2.new(1,-20,1,-64); psScroll.Position=UDim2.new(0,10,0,56)
+psScroll.BackgroundTransparency=1; psScroll.BorderSizePixel=0
+psScroll.ScrollBarThickness=4; psScroll.ScrollBarImageColor3=C.teal
+psScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; psScroll.CanvasSize=UDim2.new(0,0,0,0)
+psScroll.ZIndex=32
+local psLL=Instance.new("UIListLayout",psScroll); psLL.Padding=UDim.new(0,6)
+
+local function populatePlayerList()
+    for _, c in ipairs(psScroll:GetChildren()) do
+        if not c:IsA("UIListLayout") then c:Destroy() end
+    end
+    local GetTradable = Remotes:FindFirstChild("GetTradablePlayers")
+    if not GetTradable then return end
+    local ok, playerList = pcall(function() return GetTradable:InvokeServer() end)
+    if not ok or not playerList then return end
+
+    if #playerList == 0 then
+        mkLabel(psScroll, "No other players available.",
+            Enum.Font.GothamBold, 16, C.dim, Enum.TextXAlignment.Center,
+            UDim2.new(0,0,0,0), UDim2.new(1,0,0,40))
+        return
+    end
+
+    for _, pInfo in ipairs(playerList) do
+        local row = mkBtn(psScroll,
+            "👤  " .. pInfo.name,
+            UDim2.new(1,0,0,46), UDim2.new(0,0,0,0),
+            C.card, C.white, Enum.Font.GothamBold)
+        row.TextSize = 18
+        stroke(row, C.stroke)
+        local capId = pInfo.userId
+        row.MouseButton1Click:Connect(function()
+            Remotes:FindFirstChild("RequestTrade"):FireServer(capId)
+            PlayerSelectPanel.Visible = false
+        end)
+    end
+end
+
+TradeBtn.MouseButton1Click:Connect(function()
+    hideMenu()
+    populatePlayerList()
+    PlayerSelectPanel.Visible = true
+end)
+
+-- ── Trade invite popup ────────────────────────────────────────
+local InvitePanel = Instance.new("Frame", TradeHudSG)
+InvitePanel.Name             = "InvitePanel"
+InvitePanel.Size             = UDim2.new(0, 380, 0, 130)
+InvitePanel.AnchorPoint      = Vector2.new(0.5, 0)
+InvitePanel.Position         = UDim2.new(0.5, 0, 0, 80)
+InvitePanel.BackgroundColor3 = C.panel
+InvitePanel.BorderSizePixel  = 0
+InvitePanel.Visible          = false
+InvitePanel.ZIndex           = 40
+corner(InvitePanel, 12); stroke(InvitePanel, C.gold, 2)
+
+local inviteLabel = mkLabel(InvitePanel,"",Enum.Font.GothamBlack,18,C.gold,
+    Enum.TextXAlignment.Center,UDim2.new(0,10,0,10),UDim2.new(1,-20,0,36))
+local AcceptBtn = mkBtn(InvitePanel,"✅  Accept",UDim2.new(0.45,0,0,38),
+    UDim2.new(0,10,0,54),Color3.fromRGB(30,70,30),C.green)
+local DeclineBtn = mkBtn(InvitePanel,"❌  Decline",UDim2.new(0.45,0,0,38),
+    UDim2.new(0.55,-10,0,54),Color3.fromRGB(70,20,20),C.red)
+
+local currentInviterUserId = nil
+
+AcceptBtn.MouseButton1Click:Connect(function()
+    Remotes:FindFirstChild("RespondTrade"):FireServer(true)
+    InvitePanel.Visible = false
+end)
+DeclineBtn.MouseButton1Click:Connect(function()
+    Remotes:FindFirstChild("RespondTrade"):FireServer(false)
+    InvitePanel.Visible = false
+end)
+
+-- ── Trade screen (both players confirmed invite) ──────────────
+local TradeScreen = Instance.new("Frame", TradeHudSG)
+TradeScreen.Name             = "TradeScreen"
+TradeScreen.Size             = UDim2.new(0, 700, 0, 480)
+TradeScreen.AnchorPoint      = Vector2.new(0.5, 0.5)
+TradeScreen.Position         = UDim2.new(0.5, 0, 0.5, 0)
+TradeScreen.BackgroundColor3 = C.panel
+TradeScreen.BorderSizePixel  = 0
+TradeScreen.Visible          = false
+TradeScreen.ZIndex           = 45
+corner(TradeScreen, 16); stroke(TradeScreen, C.teal, 2)
+
+local tsHdr = Instance.new("Frame", TradeScreen)
+tsHdr.Size=UDim2.new(1,0,0,52); tsHdr.BackgroundColor3=Color3.fromRGB(8,20,26)
+tsHdr.BorderSizePixel=0; tsHdr.ZIndex=46; corner(tsHdr,16)
+local tsHdrFill=Instance.new("Frame",tsHdr); tsHdrFill.Size=UDim2.new(1,0,0,18)
+tsHdrFill.Position=UDim2.new(0,0,1,-18); tsHdrFill.BackgroundColor3=Color3.fromRGB(8,20,26)
+tsHdrFill.BorderSizePixel=0; tsHdrFill.ZIndex=46
+local tsTitle = mkLabel(tsHdr,"🔄  Trading with ...",Enum.Font.GothamBlack,20,C.teal,
+    Enum.TextXAlignment.Left,UDim2.new(0,14,0,0),UDim2.new(1,-14,1,0))
+tsTitle.ZIndex=47
+
+-- My inventory (left)
+mkLabel(TradeScreen,"Your items (click to select)",Enum.Font.GothamBold,15,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0,12,0,58),UDim2.new(0.5,-16,0,20)).ZIndex=46
+local myScroll = Instance.new("ScrollingFrame", TradeScreen)
+myScroll.Size=UDim2.new(0.5,-14,1,-138); myScroll.Position=UDim2.new(0,10,0,80)
+myScroll.BackgroundTransparency=1; myScroll.BorderSizePixel=0
+myScroll.ScrollBarThickness=4; myScroll.ScrollBarImageColor3=C.teal
+myScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; myScroll.CanvasSize=UDim2.new(0,0,0,0)
+myScroll.ZIndex=46
+local myLL=Instance.new("UIListLayout",myScroll); myLL.Padding=UDim.new(0,4)
+
+-- Partner inventory (right)
+local partnerNameLabel = mkLabel(TradeScreen,"Their items",Enum.Font.GothamBold,15,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0.5,4,0,58),UDim2.new(0.5,-16,0,20))
+partnerNameLabel.ZIndex=46
+local partnerScroll = Instance.new("ScrollingFrame", TradeScreen)
+partnerScroll.Size=UDim2.new(0.5,-14,1,-138); partnerScroll.Position=UDim2.new(0.5,4,0,80)
+partnerScroll.BackgroundTransparency=1; partnerScroll.BorderSizePixel=0
+partnerScroll.ScrollBarThickness=4; partnerScroll.ScrollBarImageColor3=C.purple
+partnerScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; partnerScroll.CanvasSize=UDim2.new(0,0,0,0)
+partnerScroll.ZIndex=46
+local partnerLL=Instance.new("UIListLayout",partnerScroll); partnerLL.Padding=UDim.new(0,4)
+
+-- Confirm button
+local ConfirmBtn = mkBtn(TradeScreen,"✅  Confirm Trade",
+    UDim2.new(0.46,0,0,44),UDim2.new(0,10,1,-54),
+    Color3.fromRGB(30,70,30),C.green)
+ConfirmBtn.ZIndex=47
+
+local CancelTradeBtn = mkBtn(TradeScreen,"❌  Cancel",
+    UDim2.new(0.46,0,0,44),UDim2.new(0.54,-10,1,-54),
+    Color3.fromRGB(70,20,20),C.red)
+CancelTradeBtn.ZIndex=47
+
+local selectedSlots = {}
+
+local function buildInventoryList(scroll, inventory, isMyItems)
+    for _, c in ipairs(scroll:GetChildren()) do
+        if not c:IsA("UIListLayout") then c:Destroy() end
+    end
+    selectedSlots = {}
+    if not inventory or #inventory == 0 then
+        mkLabel(scroll,"(empty)",Enum.Font.GothamBold,15,C.dim,
+            Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(1,0,0,36)).ZIndex=47
+        return
+    end
+    for i, item in ipairs(inventory) do
+        if not item then continue end
+        local row = Instance.new("Frame", scroll)
+        row.Size=UDim2.new(1,0,0,44); row.BackgroundColor3=C.card
+        row.BorderSizePixel=0; row.ZIndex=47; corner(row,8)
+        stroke(row, C.stroke)
+        mkLabel(row,(item.emoji or "🍽").."  "..(item.name or "?"),
+            Enum.Font.GothamBold,16,C.white,Enum.TextXAlignment.Left,
+            UDim2.new(0,8,0,0),UDim2.new(0.72,0,1,0)).ZIndex=48
+        mkLabel(row,item.rarity or "",Enum.Font.Gotham,13,C.dim,
+            Enum.TextXAlignment.Right,UDim2.new(0.72,0,0,0),UDim2.new(0.28,-8,1,0)).ZIndex=48
+
+        if isMyItems then
+            local capI = i
+            row.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+                local si = table.find(selectedSlots, capI)
+                if si then
+                    table.remove(selectedSlots, si)
+                    row.BackgroundColor3 = C.card
+                    local s=row:FindFirstChildWhichIsA("UIStroke"); if s then s.Color=C.stroke end
+                else
+                    table.insert(selectedSlots, capI)
+                    row.BackgroundColor3 = Color3.fromRGB(20,50,30)
+                    local s=row:FindFirstChildWhichIsA("UIStroke"); if s then s.Color=C.green end
+                end
+                local SubmitR = Remotes:FindFirstChild("SubmitTradeItems")
+                if SubmitR then SubmitR:FireServer(selectedSlots) end
+            end)
+        end
+    end
+end
+
+ConfirmBtn.MouseButton1Click:Connect(function()
+    local ConfR = Remotes:FindFirstChild("ConfirmTrade")
+    if ConfR then ConfR:FireServer() end
+    ConfirmBtn.Text = "⏳  Waiting for partner…"
+    ConfirmBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+end)
+CancelTradeBtn.MouseButton1Click:Connect(function()
+    local CancelR = Remotes:FindFirstChild("RespondTrade")
+    if CancelR then CancelR:FireServer(false) end
+    TradeScreen.Visible = false
+end)
+
+-- ============================================================
+-- REMOTE LISTENERS
+-- ============================================================
+
+R("OpenTradeHubMenu").OnClientEvent:Connect(function(money, cost)
+    BRACELET_COST = cost or BRACELET_COST
+    showMenu(money)
+end)
+
+R("TradeInvite").OnClientEvent:Connect(function(inviterUserId, inviterName)
+    currentInviterUserId = inviterUserId
+    inviteLabel.Text = inviterName .. " wants to trade!"
+    InvitePanel.Visible = true
+end)
+
+R("TradeOpen").OnClientEvent:Connect(function(partnerInfo)
+    InvitePanel.Visible = false
+    tsTitle.Text = "🔄  Trading with " .. (partnerInfo.name or "?")
+    partnerNameLabel.Text = partnerInfo.name .. "'s items"
+    local myState = player.Character and {}  -- will be filled from inv
+    -- Build my own inventory list from _G.Chompers if available, else empty
+    local myInv = {}
+    if _G.Chompers and _G.Chompers.GetInventory then
+        myInv = _G.Chompers.GetInventory() or {}
+    end
+    buildInventoryList(myScroll, myInv, true)
+    buildInventoryList(partnerScroll, partnerInfo.inventory or {}, false)
+    ConfirmBtn.Text = "✅  Confirm Trade"
+    ConfirmBtn.BackgroundColor3 = Color3.fromRGB(30,70,30)
+    TradeScreen.Visible = true
+end)
+
+R("TradeCancelled").OnClientEvent:Connect(function(reason)
+    TradeScreen.Visible   = false
+    InvitePanel.Visible   = false
+    if _G.Chompers and _G.Chompers.Announce and reason then
+        _G.Chompers.Announce(reason, Color3.fromRGB(220,80,60), 3)
+    end
+end)
+
+R("TradeComplete").OnClientEvent:Connect(function(receivedItems)
+    TradeScreen.Visible = false
+    if receivedItems and #receivedItems > 0 then
+        local names = {}
+        for _, item in ipairs(receivedItems) do
+            if item and item.name then table.insert(names, item.name) end
+        end
+        if _G.Chompers and _G.Chompers.Announce then
+            _G.Chompers.Announce(
+                "✅  Received: " .. table.concat(names, ", "),
+                Color3.fromRGB(100,220,100), 4)
+        end
+    end
+end)
+
+-- Keep money display in sync for the Buy Bracelet button
+local updateMoneyR = Remotes:FindFirstChild("UpdateMoney")
+if updateMoneyR then
+    updateMoneyR.OnClientEvent:Connect(function(v)
+        currentMoney = v or 0
+        refreshMenuButtons()
+    end)
+end
+
+-- ESC closes all trade UI
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.Escape then
+        MenuPanel.Visible         = false
+        PlayerSelectPanel.Visible = false
+        TradeScreen.Visible       = false
+        InvitePanel.Visible       = false
+    end
+end)
