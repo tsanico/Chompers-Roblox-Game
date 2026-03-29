@@ -69,40 +69,33 @@ end
 
 -- ── Emoji lookup ─────────────────────────────────────────────
 local EMOJI = {
-    -- ── Phase 1 Ingredients ───────────────────────────────────
     -- Produce
-    Tomato="🍅", Egg="🥚", Truffle="🍄",
+    Tomato="🍅", Egg="🥚", Garlic="🧄", Onion="🧅", Avocado="🥑", Truffle="🍄",
     -- Bakery
-    Flour="🌾", Milk="🥛", ["Cheese Block"]="🧀", Honey="🍯",
-    ["Blue Cheese"]="🧀", Fondant="🎂",
+    Flour="🌾", Milk="🥛", Butter="🧈", Sugar="🍬",
+    ["Cheese Block"]="🧀", Honey="🍯", ["Blue Cheese"]="🧀", Fondant="🎂",
     -- Dry Goods
     Rice="🍚", Pasta="🍝", Noodles="🍜", ["Soy Sauce"]="🍶",
     ["Chili Powder"]="🌶", Saffron="🌸",
     -- Freezer
-    Chicken="🍗", Shrimp="🦐", ["Ice Cream"]="🍦",
+    Chicken="🍗", Tuna="🐟", Beef="🥩", Pork="🥩", Shrimp="🦐", ["Ice Cream"]="🍦",
     -- Neutral
-    Oil="🫙", ["Wagyu Beef"]="🥩", Caviar="🐟",
-
-    -- ── Phase 1 Recipes ───────────────────────────────────────
-    ["Tomato Toss"]="🍅",
-    ["Egg Splat"]="🥚",
-    ["Chicken Rice"]="🍗",
-    ["Spaghetti Surprise"]="🍝",
-    ["Mac and Cheese"]="🧀",
-    ["Chili Fried Rice"]="🍳",
-    ["Noodle Bowl"]="🍜",
-    ["Soy Chicken"]="🍗",
-    ["Honey Glazed Chicken"]="🍯",
-    ["Shrimp Noodles"]="🦐",
-    ["Blue Cheese Pasta"]="🧀",
-    ["Truffle Pasta"]="🍄",
-    ["Saffron Rice"]="🌸",
-    ["Lobster Bisque"]="🦐",
-    ["Ice Cream Shake"]="🍦",
-    ["Honey Fondant Cake"]="🎂",
+    Oil="🫙", ["Wagyu Beef"]="🥩", Caviar="🫧",
+    -- Recipes — Common
+    ["Tomato Toss"]="🍅", ["Egg Splat"]="🥚", ["Onion Soup"]="🧅",
+    ["Chunky Guac"]="🥑", ["Spaghetti Surprise"]="🍝", ["Chicken Rice"]="🍗",
+    -- Recipes — Uncommon
+    ["Mac and Cheese"]="🧀", ["Chili Fried Rice"]="🍳", ["Noodle Bowl"]="🍜",
+    ["Soy Chicken"]="🍗", ["Garlic Chicken"]="🧄", ["Tuna Noodles"]="🐟",
+    -- Recipes — Rare
+    ["Honey Glazed Chicken"]="🍯", ["Shrimp Noodles"]="🦐",
+    ["Blue Cheese Pasta"]="🧀", ["Beef Fried Rice"]="🥩", ["BBQ Pork Bowl"]="🥩",
+    -- Recipes — UltraRare
+    ["Truffle Pasta"]="🍄", ["Saffron Rice"]="🌸", ["Lobster Bisque"]="🦐",
+    ["Ice Cream Shake"]="🍦", ["Honey Fondant Cake"]="🎂",
+    -- Recipes — Legendary
     ["Million Dollar Steak"]="🥩",
-
-    -- ── Loot ──────────────────────────────────────────────────
+    -- Loot
     ["Loose Cash"]="💵", ["Cash Stack"]="💵", ["Big Stack"]="💵",
     Napkin="🧻", ["Alliance Bracelet"]="💜",
 }
