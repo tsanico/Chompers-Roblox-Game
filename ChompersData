@@ -156,11 +156,12 @@ ChompersData.Constants = {
 		ArcPeak             = 8,     -- studs peak at full charge (unchanged)
 		EffectiveGravity    = 175,   -- studs/s² experienced by projectile
 		GravityCounterPct   = 0.108, -- BodyForce counteracts 10.8% of workspace.Gravity
-		                             -- → effective G = 196.2 × (1-0.108) ≈ 175 studs/s²
-		Cooldown            = 0.8,   -- seconds between throws
-		MinCharge           = 0.3,   -- seconds (tap)
-		MaxCharge           = 1.5,   -- seconds (full)
-		GracePeriod         = 0.25,  -- seconds held-at-cap before auto-fire
+		Cooldown            = 0.8,   -- seconds — clock starts at HOLD START, not release
+		MinCharge           = 0.3,   -- seconds — must hold at least this to throw
+		MaxCharge           = 1.5,   -- seconds — full power reached, bar starts flashing
+		MaxHoldTime         = 2.0,   -- seconds — auto-fire at this point (0.5s grace window)
+		AimSpeedMult        = 0.80,  -- walk speed multiplier while charging (20% penalty)
+		AimSpeedRamp        = 0.30,  -- seconds to tween into the speed debuff
 		HitRadius = {
 			Light  = 1.2,            -- wt 1–2
 			Normal = 1.5,            -- wt 3–4
@@ -665,6 +666,81 @@ function ChompersData.ResolveCleanlinessHit(baseCL, ingredientCount, allergyMatc
 		return math.round(raw * D.SoftCap2Efficiency)
 	else
 		return math.round(raw * D.SoftCap3Efficiency)
+	end
+end
+
+-- ============================================================
+-- EMOJI LOOKUP — single source of truth for all ingredient
+-- and recipe emojis. Used by IngredientSpawner, CookingServer,
+-- StoreGuide, and InventoryClient.
+-- Note: 🫛 🫑 🫓 🫙 🥭 🌰 🦞 do NOT render in Roblox — replaced.
+-- ============================================================
+
+local EMOJI_TABLE = {
+	-- Produce
+	Apple="🍎",Banana="🍌",Tomato="🍅",Lettuce="🥬",Onion="🧅",Carrot="🥕",
+	Spinach="🌿",Peas="🌿",Egg="🥚",Potato="🥔",Basil="🌿",
+	["Bell Pepper"]="🌶️",Corn="🌽",Mango="🍊",Avocado="🥑",Garlic="🧄",
+	Tofu="⬜",Pineapple="🍍",Plantain="🍌",Beet="❤️",Kimchi="🌶️",
+	Coconut="🥥",Truffle="🍄",
+	-- Bakery
+	Bun="🍞",["Bread Loaf"]="🍞",Flour="🌾",Sugar="🍬",Naan="🍞",
+	Dough="🍞",Chocolate="🍫",Honey="🍯",Croissant="🥐",Fondant="🎂",
+	-- Dairy
+	Milk="🥛",Yogurt="🍶",Cream="🥛",["Cheese Block"]="🧀",Butter="🧈",
+	Mayonnaise="🥛",["Blue Cheese"]="🧀",["Ice Cream"]="🍦",
+	-- Freezer / Meat
+	Chicken="🍗",Beef="🥩",Pork="🥩",Sausage="🌭",["Wagyu Beef"]="🥩",
+	Shrimp="🦐",Crab="🦀",Lobster="🦀",Tuna="🐟",
+	-- Aisles
+	Rice="🍚",Pasta="🍝",Noodles="🍜",Salt="🧂",Oil="🧴",
+	["Soy Sauce"]="🍶",["Curry Powder"]="🌶️",["Chili Powder"]="🌶️",
+	Peanut="🥜",Almond="🥜",["Black Garlic"]="🧄",Saffron="🌸",
+	["Miso Paste"]="🟤",Tortilla="🥙",Caviar="🔵",
+	-- Recipes
+	Burger="🍔",Taco="🌮",Fries="🍟",["Egg Splat"]="🥚",
+	["Caprese Skewer"]="🍢",["Tofu Scramble"]="🥣",["Pound Cake"]="🎂",
+	["Mac and Cheese"]="🧀",["Sausage Sandwich"]="🌭",["Hummus Plate"]="🥗",
+	Roti="🥙",Samosa="🥟",Crepe="🥞",["Grilled Cheese"]="🧀",
+	["Chocolate Banana"]="🍫",["Pizza Slice"]="🍕",Quesadilla="🥙",
+	Burrito="🌯",["Stir Fry"]="🥘",["Chow Mein"]="🍜",Dumplings="🥟",
+	["Fried Rice"]="🍳",["Naan Wrap"]="🥙",["Spaghetti Pomodoro"]="🍝",
+	["Tofu Stir Fry"]="🥘",["Plantain Chips"]="🍌",["Garlic Bread"]="🥖",
+	["Poke Bowl"]="🍣",["Sushi Roll"]="🍱",Shawarma="🌯",["Jollof Rice"]="🍚",
+	["Kimchi Fried Rice"]="🍳",["Pad Thai"]="🍜",Elote="🌽",
+	["Mango Lassi"]="🍹",Milkshake="🥤",["Banana Pancakes"]="🥞",
+	["Shrimp Cocktail"]="🦐",Borscht="🍲",["Miso Soup"]="🍵",
+	["Crab Rangoon"]="🦀",Callaloo="🌿",["Tuna Melt"]="🐟",
+	["Chicken Curry"]="🍛",["Vegetable Curry"]="🥘",["Baked Potato"]="🥔",
+	["BBQ Ribs"]="🍖",["Crispy Tofu Bowl"]="🥣",["Mapo Tofu"]="🌶️",
+	Tamale="🌽",["Groundnut Soup"]="🥜",Paella="🍛",["Pepper Shrimp"]="🦐",
+	["Inferno Skewer"]="🔥",["Almond Croissant"]="🥐",["Ice Cream Sundae"]="🍨",
+	["Honey Glazed Ribs"]="🍖",["Blue Cheese Pasta"]="🍝",
+	["Lobster Bisque"]="🦀",["Chicken-Peanut Stew"]="🍲",
+	["Truffle Pasta"]="🍝",["Coconut Curry"]="🥥",["Saffron Rice"]="🍚",
+	["Wagyu Burger"]="🍔",["Poke Deluxe"]="🍣",["Guacamole Bomb"]="🥑",
+	["Golden Glaze"]="✨",["Fondant Collapse"]="🎂",["Million Dollar Steak"]="🥩",
+}
+local ZONE_EMOJI = {
+	Produce="🥦",Bakery="🥐",Dairy="🥛",Freezer="🧊",
+	Meat="🥩",Aisles="🏪",Stockroom="📦",
+}
+
+-- GetEmoji(name, zone?) → emoji string. Falls back to zone emoji, then 🍽
+function ChompersData.GetEmoji(name, zone)
+	return EMOJI_TABLE[name] or (zone and ZONE_EMOJI[zone]) or "🍽"
+end
+
+-- Attach emoji to all ingredients and recipes at startup
+-- so code that holds a data ref gets .emoji automatically
+for _, ing in ipairs(ChompersData.Ingredients or {}) do
+	if not ing.emoji then
+		ing.emoji = ChompersData.GetEmoji(ing.name, ing.zone)
+	end
+end
+for _, rec in ipairs(ChompersData.Recipes or {}) do
+	if not rec.emoji then
+		rec.emoji = ChompersData.GetEmoji(rec.name)
 	end
 end
 
