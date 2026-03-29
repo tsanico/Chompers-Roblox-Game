@@ -261,20 +261,14 @@ Players.PlayerRemoving:Connect(function(player)
     end
 end)
 
--- ── Match reset — restore breaks at Prelobby ─────────────────
-local PhaseChanged = Remotes:FindFirstChild("PhaseChanged")
-if PhaseChanged then
-    PhaseChanged.OnClientEvent = nil  -- server-side only; listen via server event instead
-end
-
--- Listen for GameManager phase signal (BindableEvent pattern)
-local PhaseEvent = game:GetService("ServerScriptService"):FindFirstChild("PhaseChangedEvent")
-    and game:GetService("ServerScriptService").PhaseChangedEvent
-if PhaseEvent then
-    PhaseEvent.Event:Connect(function(phase)
+-- ── Match reset — restore session state at Prelobby ──────────
+-- Listen to GameManager's BindableEvent (same pattern as IngredientSpawner)
+local ServerScriptService = game:GetService("ServerScriptService")
+local PhaseChangedEvent   = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
+if PhaseChangedEvent then
+    PhaseChangedEvent.Event:Connect(function(phase)
         if phase == "Prelobby" then
-            -- Clear all active sessions at match end/reset
-            for player, _ in pairs(playerStall) do
+            for player, _ in pairs(table.clone(playerStall)) do
                 clearPlayerSession(player)
             end
         end
