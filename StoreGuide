@@ -2106,9 +2106,19 @@ _G.Chompers.RefreshBillboard = updateBillboard
 _G.Chompers.EquipTitle       = function(t)
     Selections.equippedTitle = t; updateBillboard()
 end
-_G.Chompers.tabPanels  = tabPanels
-_G.Chompers.switchTab  = switchTab
+_G.Chompers.tabPanels   = tabPanels
+_G.Chompers.switchTab   = switchTab
 _G.Chompers.ContentArea = ContentArea
+-- Expose container switch so server-triggered dispensary prompts can call it
+_G.Chompers.SelectContainer = function(choice) selectCart(choice, true) end
+
+-- ContainerSwitch remote — fired by dispensary ProximityPrompts (server-side)
+local ContainerSwitchR = Remotes:FindFirstChild("ContainerSwitch")
+if ContainerSwitchR then
+    ContainerSwitchR.OnClientEvent:Connect(function(choice)
+        selectCart(choice, true)   -- fromDispensary=true bypasses UI lock
+    end)
+end
 
 -- ============================================================
 -- INITIAL STATE — one-time auto-open on first join only
