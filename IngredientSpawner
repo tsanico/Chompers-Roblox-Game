@@ -201,31 +201,17 @@ local LOOT_WEIGHTS = { Common = 65, Uncommon = 25, Rare = 8, UltraRare = 2 }
 -- INGREDIENT POOLS (built from ChompersData — no hardcoding)
 -- ============================================================
 
--- Build per-zone pool from ChompersData.Ingredients
--- Deli pool = Dairy + Freezer + mid-tier Produce (Uncommon+)
+-- Build per-zone ingredient pools from ChompersData
 local function buildPools()
 	local pools = {}
 
-	-- Standard zones
-	for _, zoneName in ipairs({"Produce","Bakery","Dairy","Freezer","Aisles"}) do
+	-- Zone pools matching Phase 1 store layout
+	for _, zoneName in ipairs({"Produce","Bakery","Dry Goods","Freezer","Neutral"}) do
 		pools[zoneName] = ChompersData.GetIngredientsByZone(zoneName)
 	end
 
-	-- Stockroom = all 65 ingredients
+	-- Stockroom = all 21 Phase 1 ingredients (full range, jackpot zone)
 	pools.Stockroom = ChompersData.Ingredients
-
-	-- Deli = mid-tier mix: Dairy + Freezer Uncommon+, Produce Uncommon+
-	-- (lower CL common ingredients excluded — deli is a "mid-tier loot node")
-	pools.Deli = {}
-	for _, ing in ipairs(ChompersData.Ingredients) do
-		local zone = ing.zone
-		local rarity = ing.rarity
-		if (zone == "Dairy" or zone == "Freezer") and rarity ~= "UltraRare" and rarity ~= "Legendary" then
-			table.insert(pools.Deli, ing)
-		elseif zone == "Produce" and (rarity == "Uncommon" or rarity == "Rare") then
-			table.insert(pools.Deli, ing)
-		end
-	end
 
 	return pools
 end
@@ -411,32 +397,40 @@ end
 -- SPAWN OUTDOOR LOOT (cash, napkins)
 -- ============================================================
 
--- Loot pool built inline — these aren't ingredients, just economy items
-local function pickLoot()
+-- Loot pool — economy items that spawn outdoors AND in stockroom
+local function pickLoot(allowBracelet)
 	local lootTypes = {
-		{ name="Loose Cash",  emoji="💵", rarity="Common",    type="cash",   value=math.random(1,3),   color=Color3.fromRGB(75,205,60)  },
-		{ name="Cash Stack",  emoji="💵", rarity="Uncommon",  type="cash",   value=math.random(10,15), color=Color3.fromRGB(55,165,45)  },
-		{ name="Big Stack",   emoji="💵", rarity="Rare",      type="cash",   value=math.random(18,25), color=Color3.fromRGB(239,159,39) },
-		{ name="Napkin",      emoji="🧻", rarity="UltraRare", type="napkin", value=1,                  color=Color3.fromRGB(100,180,255) },
+		{ name="Loose Cash",        emoji="💵", rarity="Common",    type="cash",     value=math.random(1,3),   color=Color3.fromRGB(75,205,60)   },
+		{ name="Cash Stack",        emoji="💵", rarity="Uncommon",  type="cash",     value=math.random(10,15), color=Color3.fromRGB(55,165,45)   },
+		{ name="Big Stack",         emoji="💵", rarity="Rare",      type="cash",     value=math.random(18,25), color=Color3.fromRGB(239,159,39)  },
+		{ name="Napkin",            emoji="🧻", rarity="UltraRare", type="napkin",   value=1,                  color=Color3.fromRGB(100,180,255) },
+		{ name="Alliance Bracelet", emoji="💜", rarity="UltraRare", type="bracelet", value=1,                  color=Color3.fromRGB(180,90,255)  },
 	}
+	-- Filter bracelet if not allowed (some spawn zones exclude it)
+	local pool = {}
+	for _, lt in ipairs(lootTypes) do
+		if lt.type ~= "bracelet" or allowBracelet then
+			table.insert(pool, lt)
+		end
+	end
 	local total = 0
 	local weighted = {}
-	for _, lt in ipairs(lootTypes) do
+	for _, lt in ipairs(pool) do
 		local w = LOOT_WEIGHTS[lt.rarity] or 1
 		total = total + w
-		table.insert(weighted, { lt = lt, cumulative = total })
+		table.insert(weighted, { lt=lt, cumulative=total })
 	end
 	local roll = math.random() * total
 	for _, entry in ipairs(weighted) do
 		if roll <= entry.cumulative then return entry.lt end
 	end
-	return lootTypes[1]
+	return pool[1]
 end
 
-local function spawnLootAt(worldX, worldZ, y)
+local function spawnLootAt(worldX, worldZ, y, allowBracelet)
 	if not LiveFolder then return end
 
-	local loot = pickLoot()
+	local loot = pickLoot(allowBracelet ~= false)
 
 	local part = Instance.new("Part")
 	part.Name     = loot.name
@@ -497,15 +491,16 @@ local function spawnLootAt(worldX, worldZ, y)
 
 	part.Parent = LiveFolder
 
-	-- Loot respawn (napkins/bracelets: never)
+	-- Loot respawn: cash respawns, napkins/bracelets never respawn
 	local rt = loot.type == "cash"
 		and (loot.rarity == "Common" and C.Respawn.Cash_Small or C.Respawn.Cash_Stack)
-		or 0  -- napkins never respawn
+		or 0
 	if rt > 0 then
 		table.insert(respawnQueue, {
-			isLoot = true,
-			worldX = worldX, worldZ = worldZ, y = y,
-			respawnAt = os.clock() + rt,
+			isLoot       = true,
+			worldX       = worldX, worldZ = worldZ, y = y,
+			allowBracelet = false,   -- respawned cash slots never become bracelets
+			respawnAt    = os.clock() + rt,
 		})
 	end
 end
@@ -554,16 +549,40 @@ end
 -- MAIN SPAWN — outdoor loot
 -- ============================================================
 
+local STOCKROOM_LOOT_COUNT = 8   -- cash + napkins + bracelets scattered on stockroom floor
+
 local function spawnAllLoot()
 	local totalSpawned = 0
+
+	-- Outdoor car park loot (cash, napkins — no bracelets outdoors)
 	for _, zone in ipairs(LOOT_ZONES) do
 		for _ = 1, zone.count do
 			local rx = zone.minX + math.random() * (zone.maxX - zone.minX)
 			local rz = zone.minZ + math.random() * (zone.maxZ - zone.minZ)
-			spawnLootAt(rx, rz, zone.y)
+			spawnLootAt(rx, rz, zone.y, false)   -- no bracelets outdoors
 			totalSpawned = totalSpawned + 1
 		end
 	end
+
+	-- Stockroom floor loot (cash + napkins + alliance bracelets)
+	-- Bracelets are rare (UltraRare weight) and only spawn here + outdoor rarely
+	local stockroomSurfaces = ZONE_SURFACES.Stockroom
+	if stockroomSurfaces and #stockroomSurfaces > 0 then
+		for _ = 1, STOCKROOM_LOOT_COUNT do
+			-- Pick a random crate surface to place the loot on
+			local surface = stockroomSurfaces[math.random(#stockroomSurfaces)]
+			local folder  = getFolder(surface.folder)
+			local part    = folder and folder:FindFirstChild(surface.name)
+			if part then
+				local pos = part.Position
+				local jX  = (math.random() - 0.5) * (part.Size.X * 0.7)
+				local jZ  = (math.random() - 0.5) * (part.Size.Z * 0.7)
+				spawnLootAt(pos.X + jX, pos.Z + jZ, surface.surfaceTop, true)  -- bracelets allowed
+				totalSpawned = totalSpawned + 1
+			end
+		end
+	end
+
 	return totalSpawned
 end
 
@@ -582,7 +601,8 @@ task.spawn(function()
 		for _, entry in ipairs(respawnQueue) do
 			if now >= entry.respawnAt then
 				if entry.isLoot then
-					spawnLootAt(entry.worldX, entry.worldZ, entry.y)
+					spawnLootAt(entry.worldX, entry.worldZ, entry.y,
+						entry.allowBracelet or false)
 				elseif entry.surfacePart and entry.surfacePart.Parent then
 					-- Add random jitter so respawned items don't stack on the original position
 					local jX = (math.random() - 0.5) * 2.8
