@@ -324,6 +324,7 @@ for i=1,NUM_SLOTS do
 	sl.MouseLeave:Connect(function()
 		TooltipFrame.Visible = false
 	end)
+end   -- end for i=1,NUM_SLOTS
 
 local function highlightSlot(i)
 	for j,sl in ipairs(slots) do
