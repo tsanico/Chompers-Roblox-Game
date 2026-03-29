@@ -172,9 +172,11 @@ end
 
 function PlayerState.GetWeightLimit(player)
 	local s = _state[player]
-	if not s then return 35 end
-	local cfg = C.Containers[s.container] or C.Containers.Basket
-	return cfg.weightLimit
+	if not s then return C.Economy.BasketWeightLimit end
+	if s.container == "Cart" then
+		return C.Economy.CartWeightLimit
+	end
+	return C.Economy.BasketWeightLimit
 end
 
 -- Slot limit is always 10 regardless of container (Bible Part 35)
@@ -213,8 +215,10 @@ function PlayerState.GetSpeedMult(player)
 	local mult = 1.0
 
 	-- Container base speed modifier
-	local cfg = C.Containers[s.container] or C.Containers.Basket
-	mult = mult * cfg.speedMod
+	local containerMod = (s.container == "Cart")
+		and (1 - C.Economy.CartSpeedPenalty)
+		or  (1 + C.Economy.BasketSpeedBonus)
+	mult = mult * containerMod
 
 	-- Overweight penalty: every +10wt over limit = −10%
 	local wt = PlayerState.GetTotalWeight(player)
