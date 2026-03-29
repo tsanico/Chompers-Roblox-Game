@@ -1,0 +1,174 @@
+-- ============================================================
+-- CheckoutServer — Script
+-- Location: ServerScriptService
+--
+-- Two register types (tagged by Attribute on BasePart in workspace):
+--   IsCheckoutSelf   = true  → Self-checkout (fast, scan each item, 0.6s/item)
+--   IsCheckoutStaff  = true  → Staffed register (slower flat hold, auto-pays all)
+--
+-- Flow:
+--   1. Player walks up, ProximityPrompt appears
+--   2. Player holds E → server fires CheckoutStart to client (progress bar)
+--   3. Hold completes → server validates cost vs money, marks all items paid,
+--      deducts money, fires CheckoutComplete (success/fail) to client
+--   4. Points awarded: IngredientPaidCheckout per item paid
+--
+-- Fires:  CheckoutStart (Server → Client)
+--         CheckoutComplete (Server → Client)
+-- Reads:  PlayerState (inventory, money, DeductMoney, MarkAllUnpaidAsPaid)
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local ServerScriptService = game:GetService("ServerScriptService")
+local PlayerState  = require(ServerScriptService:WaitForChild("PlayerState"))
+local ChompersData = require(ReplicatedStorage:WaitForChild("ChompersData"))
+
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
+local CheckoutStart    = Remotes:WaitForChild("CheckoutStart")
+local CheckoutComplete = Remotes:WaitForChild("CheckoutComplete")
+
+local C = ChompersData.Constants
+
+-- ── Checkout timing (seconds) ─────────────────────────────────
+local SELF_TIME_PER_ITEM = 0.6   -- 0.6s per unpaid item (max ~10 items = 6s)
+local SELF_MIN_TIME      = 1.0   -- minimum hold even with 1 item
+local STAFF_HOLD_TIME    = 3.0   -- flat hold for staffed register (slower but hands-free)
+local MAX_CHECKOUT_TIME  = 8.0   -- hard cap regardless of item count
+
+-- ── Active checkout sessions (prevent double-checkout) ────────
+local activeCheckouts = {}  -- [player] = true
+
+-- ── Helper: count and cost unpaid items ───────────────────────
+local function getUnpaidInfo(player)
+	local s = PlayerState.Get(player)
+	if not s then return 0, 0 end
+	local count, cost = 0, 0
+	for _, item in ipairs(s.inventory) do
+		if not item.paid then
+			count = count + 1
+			cost  = cost + (item.cost or 0)
+		end
+	end
+	return count, cost
+end
+
+-- ── Setup a checkout ProximityPrompt ─────────────────────────
+local function setupCheckoutPrompt(part, isSelf)
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ActionText     = isSelf and "Self-Checkout" or "Pay Here"
+	prompt.ObjectText     = isSelf and "🖥 Register" or "🧑 Cashier"
+	prompt.KeyboardKeyCode= Enum.KeyCode.E
+	prompt.HoldDuration   = 0   -- we compute hold dynamically; ProximityPrompt just triggers
+	prompt.MaxActivationDistance = 8
+	prompt.RequiresLineOfSight   = false
+	prompt.Parent = part
+
+	prompt.Triggered:Connect(function(player)
+		-- Guard: already checking out
+		if activeCheckouts[player] then return end
+
+		local s = PlayerState.Get(player)
+		if not s or s.isEliminated then return end
+
+		local itemCount, cost = getUnpaidInfo(player)
+		if itemCount == 0 then
+			-- Nothing to pay — brief feedback only
+			CheckoutComplete:FireClient(player, false, 0, 0, "nothing")
+			return
+		end
+		if not PlayerState.GetMoney(player) or PlayerState.GetMoney(player) < cost then
+			-- Can't afford it — tell client immediately
+			CheckoutComplete:FireClient(player, false, itemCount, cost, "broke")
+			return
+		end
+
+		-- Compute hold time
+		local holdTime
+		if isSelf then
+			holdTime = math.clamp(itemCount * SELF_TIME_PER_ITEM, SELF_MIN_TIME, MAX_CHECKOUT_TIME)
+		else
+			holdTime = STAFF_HOLD_TIME
+		end
+
+		activeCheckouts[player] = true
+
+		-- Tell client to start progress bar
+		CheckoutStart:FireClient(player, holdTime, cost)
+
+		-- Wait for hold to complete (server-side timer mirrors client bar)
+		task.delay(holdTime, function()
+			activeCheckouts[player] = nil
+
+			-- Re-validate (player could have been hit/eliminated during checkout)
+			local s2 = PlayerState.Get(player)
+			if not s2 or s2.isEliminated then
+				CheckoutComplete:FireClient(player, false, itemCount, cost, "eliminated")
+				return
+			end
+
+			-- Re-check cost in case inventory changed (item thrown/dropped mid-checkout)
+			local _, finalCost = getUnpaidInfo(player)
+			if finalCost == 0 then
+				-- Items already gone (thrown while unpaid — shouldn't normally happen)
+				CheckoutComplete:FireClient(player, false, 0, 0, "nothing")
+				return
+			end
+
+			if not PlayerState.DeductMoney(player, finalCost) then
+				-- Ran out of money during checkout (someone stole cash? edge case)
+				CheckoutComplete:FireClient(player, false, itemCount, finalCost, "broke")
+				return
+			end
+
+			-- Mark all as paid
+			PlayerState.MarkAllUnpaidAsPaid(player)
+
+			-- Award points per item paid
+			PlayerState.AddPoints(player,
+				itemCount * (C.Points.IngredientPaidCheckout or 3))
+
+			-- Announce: cheap and noisy items stay quiet, Legendaries or big batches shout
+			if itemCount >= 5 or finalCost >= 25 then
+				local Announce = Remotes:FindFirstChild("Announce")
+				if Announce then
+					Announce:FireClient(player,
+						"🧾 Checked out "..itemCount.." items for $"..finalCost.."!",
+						Color3.fromRGB(75,205,60), 3)
+				end
+			end
+
+			CheckoutComplete:FireClient(player, true, itemCount, finalCost)
+		end)
+	end)
+end
+
+-- ── Scan workspace for tagged checkout parts ──────────────────
+local function setupAll()
+	local found = 0
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			if desc:GetAttribute("IsCheckoutSelf") == true then
+				setupCheckoutPrompt(desc, true)
+				found = found + 1
+			elseif desc:GetAttribute("IsCheckoutStaff") == true then
+				setupCheckoutPrompt(desc, false)
+				found = found + 1
+			end
+		end
+	end
+	print(string.format("[CheckoutServer] Registered %d checkout terminal(s)", found))
+end
+
+-- ── Cancel active checkout if player leaves or is eliminated ──
+Players.PlayerRemoving:Connect(function(player)
+	activeCheckouts[player] = nil
+end)
+
+-- GameManager fires elimination events; we listen via PlayerState.Eliminate.
+-- Elimination already sets isEliminated=true, so the re-validate inside
+-- task.delay will catch it cleanly.
+
+setupAll()
+print("[CheckoutServer] Ready")
