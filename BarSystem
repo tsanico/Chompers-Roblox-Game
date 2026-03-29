@@ -1,0 +1,112 @@
+-- ============================================================
+-- BarSystem — ModuleScript
+-- Location: ServerScriptService
+--
+-- Owns all cooking-related CL/FL calculation rules.
+-- Extracted from PlayerState so cooking logic stays separate.
+-- ThrowServer also reads cook-depth bonuses from here.
+--
+-- Does NOT own: mark/oil/freeze status (still in PlayerState),
+--               raw bar state (still in PlayerState._state),
+--               allergy/elemental multipliers (still in ThrowServer).
+-- ============================================================
+
+local BarSystem = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ChompersData = require(ReplicatedStorage:WaitForChild("ChompersData"))
+local C = ChompersData.Constants
+
+-- ── Cook time by rarity (Part 10 — locked) ───────────────────
+local COOK_TIMES = {
+	Common    = 2,
+	Uncommon  = 4,
+	Rare      = 7,
+	UltraRare = 12,
+	Legendary = 20,
+}
+
+function BarSystem.GetCookTime(rarity)
+	return COOK_TIMES[rarity] or 4
+end
+
+-- ── Cook depth bonus (Part 10 — locked) ──────────────────────
+-- Used both here and by ThrowServer for damage calculation.
+function BarSystem.GetCookDepthBonus(numIngredients)
+	local D = C.Damage
+	if numIngredients >= 4 then return D.CookDepth4Bonus or 0.15
+	elseif numIngredients == 3 then return D.CookDepth3Bonus or 0.10
+	elseif numIngredients == 2 then return D.CookDepth2Bonus or 0.05
+	end
+	return 0
+end
+
+-- ── Heat bar zone boundaries ──────────────────────────────────
+-- Needle oscillates 0→1 using abs(sin). Zone is the position when E is pressed.
+-- Cold:    0.00 – 0.32
+-- Perfect: 0.32 – 0.68
+-- Hot:     0.68 – 1.00
+function BarSystem.EvaluateHeatZone(needlePos)
+	needlePos = math.clamp(needlePos or 0, 0, 1)
+	if needlePos < 0.32 then return "Cold"
+	elseif needlePos <= 0.68 then return "Perfect"
+	else return "Hot"
+	end
+end
+
+-- ── Apply cook result to a dish item (modifies in place) ──────
+-- zone:       "Perfect" | "Cold" | "Hot"
+-- sousChef:   boolean (true = sous-chef contributed = +5% DUO COOK BONUS)
+-- Returns modified dish.
+function BarSystem.ApplyCookResult(dish, zone, sousChef)
+	local baseCL = dish.cl or 0
+
+	if zone == "Perfect" then
+		dish.cookStatus = "Cooked"
+		dish.cooked     = true
+		dish.burned     = false
+		dish.cl         = math.floor(baseCL * 1.10)  -- +10% CL (Part 10)
+		dish.cookZone   = "Perfect"
+
+	elseif zone == "Hot" then
+		dish.cookStatus = "Burned"
+		dish.cooked     = true
+		dish.burned     = true
+		dish.cl         = math.floor(baseCL * 0.80)  -- −20% CL (Part 10)
+		dish.statusMult = 1.30                         -- +30% status duration (Part 10)
+		dish.cookZone   = "Burned"
+
+	else  -- Cold (missed window — extra cook time already handled in CookingServer)
+		dish.cookStatus = "Cooked"
+		dish.cooked     = true
+		dish.burned     = false
+		dish.cl         = baseCL                       -- no bonus (Part 10)
+		dish.cookZone   = "Cold"
+	end
+
+	-- Sous-chef DUO COOK BONUS: +5% (Part 10)
+	if sousChef then
+		dish.cl      = math.floor(dish.cl * 1.05)
+		dish.duoCook = true
+	end
+
+	return dish
+end
+
+-- ── Finish window bonus (+5% CL) ─────────────────────────────
+-- Applied by ThrowServer when a freshly cooked dish is thrown within 0.8s.
+-- ThrowServer checks dish.cookFinishedAt against tick().
+function BarSystem.ApplyFinishBonus(dish)
+	dish.cl = math.floor((dish.cl or 0) * 1.05)
+	return dish
+end
+
+-- ── Servings by rarity (Part 10) ─────────────────────────────
+local SERVINGS = {
+	Common = 3, Uncommon = 2, Rare = 1, UltraRare = 1, Legendary = 1
+}
+function BarSystem.GetServings(rarity)
+	return SERVINGS[rarity] or 1
+end
+
+return BarSystem
