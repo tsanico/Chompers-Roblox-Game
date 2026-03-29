@@ -1980,7 +1980,8 @@ _G.Chompers.ContentArea = ContentArea
 switchTab("PREFERENCES")
 task.spawn(function()
     task.wait(1.5)
-    -- Only open if this is the player's first time in (hasAutoOpened guard)
+    -- Don't auto-open if WelcomeScreen is handling onboarding
+    if _G.Chompers and _G.Chompers.WelcomeScreenActive then return end
     if not hasAutoOpened and not isOpen then
         hasAutoOpened = true
         openGuide("PREFERENCES")
