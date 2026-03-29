@@ -1,0 +1,286 @@
+-- ============================================================
+-- BathroomSystem — ServerScript
+-- Location: ServerScriptService > BathroomSystem
+--
+-- Manages bathroom interaction for all 4 bathrooms.
+--
+-- Studio setup required (one-time):
+--   • Tag each sink fixture Part:    Attribute "IsBathroomSink"   = true
+--   • Tag each toilet fixture Part:  Attribute "IsBathroomToilet" = true
+--   • Tag each bathroom door Part:   Attribute "IsBathroomDoor"   = true
+--     (optional — toggled transparent when stall is occupied)
+--
+-- Flow:
+--   Player activates Sink ProximityPrompt
+--   → EnterBathroom (validates 80% threshold + has breaks)
+--   → UseSink (reset CL, costs 1 break)
+--   → UpdateBreaks fired to client
+--   → 10s forced exit timer starts
+--   → ExitBathroom at timer or on player leave
+--
+-- Bible constants (Part 7, locked):
+--   80%  — minimum CL or FL required to enter
+--   3    — potty breaks per match
+--   10s  — max stay (forced eject)
+--   1    — break cost per fixture used
+-- ============================================================
+
+local Players         = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local PlayerState = require(game:GetService("ServerScriptService")
+    :WaitForChild("PlayerState"))
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
+
+-- ── Remote helpers ────────────────────────────────────────────
+local function getOrCreate(name)
+    local r = Remotes:FindFirstChild(name)
+    if not r then
+        r = Instance.new("RemoteEvent")
+        r.Name   = name
+        r.Parent = Remotes
+    end
+    return r
+end
+
+local UpdateBreaks   = getOrCreate("UpdateBreaks")
+local BathroomEnterR = getOrCreate("BathroomEnter")   -- → client: player entered
+local BathroomExitR  = getOrCreate("BathroomExit")    -- → client: player exited
+local BathroomTimerR = getOrCreate("BathroomTimer")   -- → client: seconds remaining
+
+local AnnounceRemote = Remotes:FindFirstChild("Announce")
+
+-- ── Constants ─────────────────────────────────────────────────
+local MAX_STAY_SECONDS = 10
+local BATHROOM_THRESHOLD = 80   -- min CL or FL % to enter
+
+-- ── Occupancy tracking ────────────────────────────────────────
+-- stall (BasePart) → player currently using it (or nil)
+local stallOccupant  = {}   -- [stall] = player
+local playerTimer    = {}   -- [player] = task thread handle
+local playerStall    = {}   -- [player] = stall part currently using
+
+-- ── Door reference lookup ─────────────────────────────────────
+-- Each bathroom door part is adjacent to sink/toilet parts.
+-- We find doors by shared parent folder.
+local doorsByStall = {}   -- [stall] = door BasePart (optional)
+
+-- ── Utilities ────────────────────────────────────────────────
+local function fireBreaks(player)
+    local s = PlayerState.Get(player)
+    if s then UpdateBreaks:FireClient(player, s.pottyBreaks) end
+end
+
+local function setDoor(stall, occupied)
+    local door = doorsByStall[stall]
+    if not door then return end
+    -- Occupied: make door semi-transparent red, unoccupied: clear
+    door.Transparency    = occupied and 0.6 or 0.9
+    door.BrickColor      = occupied
+        and BrickColor.new("Bright red")
+        or  BrickColor.new("Institutional white")
+end
+
+local function clearPlayerSession(player)
+    local stall = playerStall[player]
+    if stall then
+        stallOccupant[stall] = nil
+        setDoor(stall, false)
+    end
+    playerStall[player] = nil
+
+    -- Cancel forced-exit timer if still running
+    if playerTimer[player] then
+        task.cancel(playerTimer[player])
+        playerTimer[player] = nil
+    end
+
+    PlayerState.ExitBathroom(player)
+    BathroomExitR:FireClient(player)
+    fireBreaks(player)
+end
+
+-- ── Force exit after MAX_STAY_SECONDS ────────────────────────
+local function startExitTimer(player, stall)
+    if playerTimer[player] then
+        task.cancel(playerTimer[player])
+    end
+
+    playerTimer[player] = task.spawn(function()
+        local remaining = MAX_STAY_SECONDS
+        while remaining > 0 do
+            task.wait(1)
+            remaining = remaining - 1
+            BathroomTimerR:FireClient(player, remaining)
+        end
+        -- Time's up — eject
+        clearPlayerSession(player)
+        if AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "⏰  Time's up — you've been ejected from the bathroom.",
+                Color3.fromRGB(230,160,50), 3)
+        end
+    end)
+end
+
+-- ── Core interaction handler ──────────────────────────────────
+local function handleUse(player, stall, isSink)
+    local s = PlayerState.Get(player)
+    if not s then return end
+    if s.isEliminated then return end
+
+    -- Stall occupancy check
+    if stallOccupant[stall] and stallOccupant[stall] ~= player then
+        if AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "🚫  This stall is occupied.",
+                Color3.fromRGB(220,80,60), 2)
+        end
+        return
+    end
+
+    -- Check bars threshold (80% on either bar required)
+    if s.cl < BATHROOM_THRESHOLD and s.fl < BATHROOM_THRESHOLD then
+        if AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "🧼  You don't need the bathroom yet. (Need 80% CL or FL)",
+                Color3.fromRGB(130,120,165), 3)
+        end
+        return
+    end
+
+    -- Breaks check
+    if s.pottyBreaks <= 0 then
+        if AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "🚽  No potty breaks remaining. You're on your own.",
+                Color3.fromRGB(220,80,60), 3)
+        end
+        return
+    end
+
+    -- Enter bathroom if not already in
+    if not s.inBathroom then
+        local ok = PlayerState.EnterBathroom(player)
+        if not ok then return end
+
+        -- Claim stall
+        stallOccupant[stall] = player
+        playerStall[player]  = stall
+        setDoor(stall, true)
+
+        -- Fire client — entering
+        BathroomEnterR:FireClient(player, s.pottyBreaks)
+
+        -- Start 10s forced exit timer
+        startExitTimer(player, stall)
+    end
+
+    -- Use fixture
+    local success = false
+    if isSink then
+        success = PlayerState.UseSink(player)
+        if success and AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "🚿  Sink used — Cleanliness reset!",
+                Color3.fromRGB(65,185,235), 2)
+        end
+    else
+        success = PlayerState.UseToilet(player)
+        if success and AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "🚽  Toilet used — Fullness reset!",
+                Color3.fromRGB(235,155,35), 2)
+        end
+    end
+
+    if success then
+        fireBreaks(player)
+        -- If both bars now 0 and timer still running, let timer finish naturally
+        -- (player might still want to use the other fixture)
+    end
+end
+
+-- ── Stall setup ───────────────────────────────────────────────
+local function setupStall(part, isSink)
+    local label  = isSink and "🚿 Use Sink" or "🚽 Use Toilet"
+    local subText= isSink
+        and "Resets Cleanliness (1 potty break)"
+        or  "Resets Fullness (1 potty break)"
+
+    local prompt = Instance.new("ProximityPrompt")
+    prompt.ObjectText      = label
+    prompt.ActionText      = subText
+    prompt.HoldDuration    = 0
+    prompt.MaxActivationDistance = 8
+    prompt.RequiresLineOfSight   = false
+    prompt.Exclusivity     = Enum.ProximityPromptExclusivity.OneGlobally
+    prompt.Parent          = part
+
+    -- Try to find an adjacent door in the same parent folder
+    local parentFolder = part.Parent
+    if parentFolder then
+        for _, sibling in ipairs(parentFolder:GetChildren()) do
+            if sibling:IsA("BasePart")
+            and sibling:GetAttribute("IsBathroomDoor") == true then
+                doorsByStall[part] = sibling
+                break
+            end
+        end
+    end
+
+    prompt.Triggered:Connect(function(player)
+        handleUse(player, part, isSink)
+    end)
+
+    stallOccupant[part] = nil
+end
+
+-- ── Scan workspace for tagged bathroom parts ──────────────────
+local function scanAll()
+    local nSink, nToilet = 0, 0
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            if desc:GetAttribute("IsBathroomSink") == true then
+                setupStall(desc, true)
+                nSink = nSink + 1
+            elseif desc:GetAttribute("IsBathroomToilet") == true then
+                setupStall(desc, false)
+                nToilet = nToilet + 1
+            end
+        end
+    end
+    print(string.format("[BathroomSystem] Registered %d sink(s), %d toilet(s)",
+        nSink, nToilet))
+end
+
+-- ── Player disconnect cleanup ─────────────────────────────────
+Players.PlayerRemoving:Connect(function(player)
+    if playerStall[player] then
+        clearPlayerSession(player)
+    end
+end)
+
+-- ── Match reset — restore breaks at Prelobby ─────────────────
+local PhaseChanged = Remotes:FindFirstChild("PhaseChanged")
+if PhaseChanged then
+    PhaseChanged.OnClientEvent = nil  -- server-side only; listen via server event instead
+end
+
+-- Listen for GameManager phase signal (BindableEvent pattern)
+local PhaseEvent = game:GetService("ServerScriptService"):FindFirstChild("PhaseChangedEvent")
+    and game:GetService("ServerScriptService").PhaseChangedEvent
+if PhaseEvent then
+    PhaseEvent.Event:Connect(function(phase)
+        if phase == "Prelobby" then
+            -- Clear all active sessions at match end/reset
+            for player, _ in pairs(playerStall) do
+                clearPlayerSession(player)
+            end
+        end
+    end)
+end
+
+-- ── Boot ──────────────────────────────────────────────────────
+scanAll()
+print("[BathroomSystem] Ready")
