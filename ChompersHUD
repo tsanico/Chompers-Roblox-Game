@@ -180,12 +180,9 @@ NapkinPill.Name="NapkinPill"; NapkinPill.AnchorPoint=Vector2.new(0,1)
 NapkinPill.Active=true
 
 local NapLabel = mkLabel(NapkinPill,"🧻 ×1",
-	Enum.Font.GothamBold,22,C.napkin,Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,4),UDim2.new(1,0,0,30))
-local NapHealTag = mkLabel(NapkinPill,"−25 CL",
-	Enum.Font.Gotham,11,C.dirty,Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,32),UDim2.new(1,0,0,14))
-NapHealTag.Visible=false
+	Enum.Font.GothamBold,24,C.napkin,Enum.TextXAlignment.Center,
+	UDim2.new(0,0,0,0),UDim2.new(1,0,1,-8))
+NapLabel.Name="NapLabel"
 
 local NapCdTrack = mkFrame(NapkinPill,
 	UDim2.new(1,-16,0,5),UDim2.new(0,8,1,-9),
@@ -215,14 +212,12 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
--- Hover highlight
+-- Hover highlight (no tooltip text)
 NapkinPill.MouseEnter:Connect(function()
-	NapHealTag.Visible=true
 	TweenService:Create(NapkinPill,TweenInfo.new(0.1),
 		{BackgroundColor3=Color3.fromRGB(28,36,52)}):Play()
 end)
 NapkinPill.MouseLeave:Connect(function()
-	NapHealTag.Visible=false
 	TweenService:Create(NapkinPill,TweenInfo.new(0.1),{BackgroundColor3=C.bg}):Play()
 end)
 
@@ -257,19 +252,31 @@ local BreaksPill = mkFrame(Gui,
 	C.bg, 12)
 BreaksPill.Name="BreaksPill"; BreaksPill.AnchorPoint=Vector2.new(0,1)
 
-local BreaksLabel = mkLabel(BreaksPill,"🚽🚿🚿",
-	Enum.Font.GothamBold,22,C.white,Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,4),UDim2.new(1,0,0,30))
-mkLabel(BreaksPill,"BREAKS",Enum.Font.GothamBlack,9,C.dim,
-	Enum.TextXAlignment.Center,UDim2.new(0,0,0,36),UDim2.new(1,0,0,12))
+-- Three individual icons, evenly spaced via UIListLayout
+local BrkLL = Instance.new("UIListLayout", BreaksPill)
+BrkLL.FillDirection  = Enum.FillDirection.Horizontal
+BrkLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
+BrkLL.VerticalAlignment   = Enum.VerticalAlignment.Center
+BrkLL.Padding = UDim.new(0, 4)
+
+local breakIcons = {}
+for i = 1, 3 do
+	local l = Instance.new("TextLabel", BreaksPill)
+	l.Size = UDim2.new(0,34,0,38)
+	l.BackgroundTransparency = 1
+	l.Text = "🚽"; l.Font = Enum.Font.GothamBold; l.TextSize = 26
+	l.TextColor3 = C.white; l.TextXAlignment = Enum.TextXAlignment.Center
+	breakIcons[i] = l
+end
 
 _G.Chompers.SetBreaks = function(n)
 	n = n or 3
-	local icons={"🚽","🚿","🚿"}
-	local d=""
-	for i=1,3 do d=d..(i<=n and icons[i] or "✗").." " end
-	BreaksLabel.Text=d:sub(1,-2)
-	BreaksLabel.TextColor3 = n>0 and C.white or C.warn
+	for i = 1, 3 do
+		local active = i <= n
+		breakIcons[i].Text       = active and "🚽" or "✗"
+		breakIcons[i].TextColor3 = active and C.white or C.warn
+		breakIcons[i].TextSize   = active and 26 or 18
+	end
 end
 
 -- ============================================================
@@ -334,20 +341,16 @@ _G.Chompers.GetSlotCount    = function() return NUM_SLOTS end
 -- All use AnchorPoint(1,1) — bottom-right corner at position
 -- ============================================================
 
--- Money pill
+-- Money pill — single centred label
 local MoneyPill = mkFrame(Gui,
 	UDim2.new(0,MONEY_W,0,BAR_H),
 	UDim2.new(1,-R_MONEY,1,-BAR_BOTTOM),
 	C.bg, 12)
 MoneyPill.Name="MoneyPill"; MoneyPill.AnchorPoint=Vector2.new(1,1)
-mkLabel(MoneyPill,"💵",Enum.Font.GothamBold,18,C.money,
-	Enum.TextXAlignment.Center,UDim2.new(0,0,0,4),UDim2.new(0.38,0,0,24))
-local MoneyLabel=mkLabel(MoneyPill,"$15",Enum.Font.GothamBlack,20,C.money,
-	Enum.TextXAlignment.Left,UDim2.new(0.38,0,0,0),UDim2.new(0.62,-8,1,0))
+local MoneyLabel=mkLabel(MoneyPill,"💵  $15",Enum.Font.GothamBlack,22,C.money,
+	Enum.TextXAlignment.Center)
 MoneyLabel.Name="MoneyLabel"
-mkLabel(MoneyPill,"WALLET",Enum.Font.GothamBlack,9,C.dim,
-	Enum.TextXAlignment.Left,UDim2.new(0.38,0,1,-16),UDim2.new(0.62,0,0,14))
-_G.Chompers.SetMoney = function(n) MoneyLabel.Text="$"..tostring(n or 0) end
+_G.Chompers.SetMoney = function(n) MoneyLabel.Text="💵  $"..tostring(n or 0) end
 
 -- Container icon (basket/cart with item count badge)
 local ContainerIcon = Instance.new("TextButton",Gui)
@@ -482,38 +485,45 @@ end)
 
 -- ============================================================
 -- TOP ROW — Player count | Announcements | Phase | Timer
+-- All clustered around screen centre-top
+-- AnnounceBanner: 480px centred → left edge at 0.5 - 240px
+-- PlayerCount:    130px, right edge touches announce left (0.5 - 240 - 8 = 0.5 - 248)
+-- Phase:          190px, left edge touches announce right (0.5 + 240 + 8 = 0.5 + 248)
+-- Timer:          100px, right-aligned under phase
 -- ============================================================
 
-local TOP_Y = 10
+local TOP_Y  = 14
 local PILL_H = 36
+local ANN_W  = 480
+local ANN_HALF = ANN_W / 2   -- 240
 
--- Player count (left)
+-- Player count (left of centre)
 local PlayerCountPill = mkFrame(Gui,
 	UDim2.new(0,130,0,PILL_H),
-	UDim2.new(0,12,0,TOP_Y), C.bg, PILL_H/2)
+	UDim2.new(0.5,-(ANN_HALF+GAP+130),0,TOP_Y), C.bg, PILL_H/2)
 local PlayerCountLabel = mkLabel(PlayerCountPill,"1 player",
 	Enum.Font.GothamBold,14,C.dim)
 
 -- Phase pill (right of centre)
 local PhasePill = mkFrame(Gui,
-	UDim2.new(0,200,0,PILL_H),
-	UDim2.new(1,-214,0,TOP_Y), C.bg, PILL_H/2)
+	UDim2.new(0,190,0,PILL_H),
+	UDim2.new(0.5,ANN_HALF+GAP,0,TOP_Y), C.bg, PILL_H/2)
 PhasePill.Name="PhasePill"
 local PhaseLabel = mkLabel(PhasePill,"PRELOBBY",
 	Enum.Font.GothamBlack,16,C.dim)
 PhaseLabel.Name="PhaseLabel"
 
--- Timer pill (right edge)
+-- Timer pill (below phase, right-aligned with it)
 local TimerPill = mkFrame(Gui,
 	UDim2.new(0,100,0,PILL_H),
-	UDim2.new(1,-112,0,TOP_Y+PILL_H+6), C.bg, PILL_H/2)
+	UDim2.new(0.5,ANN_HALF+GAP+190-100,0,TOP_Y+PILL_H+5), C.bg, PILL_H/2)
 TimerPill.Visible=false; TimerPill.Name="TimerPill"
 local TimerLabel = mkLabel(TimerPill,"3:00",Enum.Font.GothamBlack,18,C.gold)
 
--- Announcements banner (wide, centred between player count and phase)
+-- Announcements banner (centred)
 local AnnounceBanner = mkFrame(Gui,
-	UDim2.new(0,540,0,PILL_H),
-	UDim2.new(0.5,-270,0,TOP_Y),
+	UDim2.new(0,ANN_W,0,PILL_H),
+	UDim2.new(0.5,-ANN_HALF,0,TOP_Y),
 	Color3.fromRGB(14,10,26), PILL_H/2)
 AnnounceBanner.Name="AnnounceBanner"; AnnounceBanner.Visible=false
 local AnnounceLabel = mkLabel(AnnounceBanner,"",
@@ -579,11 +589,11 @@ local function buildMeter(isLeft, baseCol, warnCol, labelText)
 	container.Name=labelText.."Meter"
 	container.Size=UDim2.new(0,METER_W+18,0,METER_H+90)
 	container.BackgroundTransparency=1
-	-- AnchorPoint top-left on left side, top-right on right side, centered vertically
+	-- AnchorPoint centre-Y: left meter left-anchored, right meter right-anchored
 	container.AnchorPoint = Vector2.new(isLeft and 0 or 1, 0.5)
 	container.Position = UDim2.new(
 		isLeft and 0 or 1, isLeft and 8 or -8,
-		0.5, -(METER_H/2+20))
+		0.5, 0)   -- true vertical screen centre
 
 	local track=mkFrame(container,
 		UDim2.new(0,METER_W,0,METER_H),
@@ -601,20 +611,25 @@ local function buildMeter(isLeft, baseCol, warnCol, labelText)
 	warnOverlay.BackgroundColor3=warnCol; warnOverlay.BackgroundTransparency=1
 	warnOverlay.BorderSizePixel=0; corner(warnOverlay,8)
 
+	-- container width = METER_W+18 = 48px. Track width = METER_W = 30px at x=8.
+	-- Track centre = 8+15 = 23px. Container centre = 24px. Centre pctBg accordingly.
+	-- pctBg width = METER_W+4 = 34px → x = (48-34)/2 = 7px to centre under track.
 	local pctBg=mkFrame(container,
-		UDim2.new(0,METER_W+4,0,24),
-		UDim2.new(0,-2,0,METER_H+8),
+		UDim2.new(0,METER_W+4,0,26),
+		UDim2.new(0,7,0,METER_H+6),
 		Color3.fromRGB(30,10,10),6,true)
-	local pctL=mkLabel(pctBg,"0%",Enum.Font.GothamBlack,14,Color3.fromRGB(255,80,80))
+	local pctL=mkLabel(pctBg,"0%",Enum.Font.GothamBlack,15,Color3.fromRGB(255,80,80))
 	pctL.Name="PctLabel"
 
-	mkLabel(container,labelText,Enum.Font.GothamBlack,13,C.white,
+	-- FULL / DIRTY label centred under pctBg
+	mkLabel(container,labelText,Enum.Font.GothamBlack,14,C.dim,
 		Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,METER_H+36),UDim2.new(1,0,0,18))
+		UDim2.new(0,0,0,METER_H+38),UDim2.new(1,0,0,20))
 
-	local bathIcon=mkLabel(container,isLeft and "🚽" or "🚿",
-		Enum.Font.GothamBold,22,C.warn,Enum.TextXAlignment.Center,
-		UDim2.new(0,0,0,METER_H+14),UDim2.new(1,0,0,22))
+	-- Bath icon (both sides show toilet emoji — 🚽)
+	local bathIcon=mkLabel(container,"🚽",
+		Enum.Font.GothamBold,24,C.warn,Enum.TextXAlignment.Center,
+		UDim2.new(0,0,0,METER_H+60),UDim2.new(1,0,0,26))
 	bathIcon.Visible=false
 
 	return fill, pctL, warnOverlay, bathIcon
