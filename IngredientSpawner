@@ -202,15 +202,38 @@ local LOOT_WEIGHTS = { Common = 65, Uncommon = 25, Rare = 8, UltraRare = 2 }
 -- ============================================================
 
 -- Build per-zone ingredient pools from ChompersData
+-- Physical store surface → ChompersData zone mapping:
+--   Produce  → Produce pool
+--   Bakery   → Bakery pool
+--   Dairy    → Bakery pool (Row1 freezer bank; Milk/Cheese/Butter physically here)
+--   Freezer  → Freezer pool (Row2-3 freezer banks)
+--   Aisles   → Dry Goods pool (Row4-6 shelves)
+--   Deli     → Mixed: Bakery + Freezer Uncommon+ (mid-tier loot node)
+--   Stockroom → all 27 ingredients
 local function buildPools()
 	local pools = {}
 
-	-- Zone pools matching Phase 1 store layout
-	for _, zoneName in ipairs({"Produce","Bakery","Dry Goods","Freezer","Neutral"}) do
+	-- Direct zone pools
+	for _, zoneName in ipairs({"Produce","Bakery","Freezer"}) do
 		pools[zoneName] = ChompersData.GetIngredientsByZone(zoneName)
 	end
 
-	-- Stockroom = all 21 Phase 1 ingredients (full range, jackpot zone)
+	-- Physical "Dairy" rows spawn Bakery ingredients
+	pools.Dairy = ChompersData.GetIngredientsByZone("Bakery")
+
+	-- Physical "Aisles" rows spawn Dry Goods ingredients
+	pools.Aisles = ChompersData.GetIngredientsByZone("Dry Goods")
+
+	-- Deli counter = Bakery + Freezer Uncommon+ (no Common filler)
+	pools.Deli = {}
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if (ing.zone == "Bakery" or ing.zone == "Freezer")
+		and ing.rarity ~= "Common" then
+			table.insert(pools.Deli, ing)
+		end
+	end
+
+	-- Stockroom = all 27 ingredients (full range jackpot zone)
 	pools.Stockroom = ChompersData.Ingredients
 
 	return pools
