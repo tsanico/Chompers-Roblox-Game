@@ -30,6 +30,8 @@ local function R(name) return Remotes:WaitForChild(name) end
 local PhaseChangedRemote    = R("PhaseChanged")
 local TransitionToStore     = R("TransitionToStore")
 local UpdateLobbyState      = R("UpdateLobbyState")
+local TimerUpdateRemote     = R("TimerUpdate")
+local AnnounceRemote        = R("Announce")
 
 -- ── BindableEvent so server systems can listen to phase changes
 -- Create it if it doesn't exist (lives in ServerScriptService)
@@ -38,6 +40,30 @@ if not PhaseChangedEvent then
 	PhaseChangedEvent = Instance.new("BindableEvent")
 	PhaseChangedEvent.Name = "PhaseChangedEvent"
 	PhaseChangedEvent.Parent = ServerScriptService
+end
+
+-- ── Colour shortcuts for phase announcements
+local ANN_GREEN  = Color3.fromRGB(70,195,85)
+local ANN_ORANGE = Color3.fromRGB(235,155,35)
+local ANN_RED    = Color3.fromRGB(218,65,65)
+local ANN_GOLD   = Color3.fromRGB(239,159,39)
+local ANN_DIM    = Color3.fromRGB(105,100,138)
+
+-- Fire a countdown timer loop for a phase (every second while phase is active)
+local function fireTimerLoop(phaseName, duration)
+	task.spawn(function()
+		local startTime = tick()
+		while currentPhase == phaseName do
+			local remaining = math.max(0, math.ceil(duration - (tick() - startTime)))
+			TimerUpdateRemote:FireAllClients(remaining)
+			if remaining <= 0 then break end
+			task.wait(1)
+		end
+		-- Hide timer when phase ends
+		if currentPhase ~= phaseName then
+			TimerUpdateRemote:FireAllClients(nil)
+		end
+	end)
 end
 
 -- ============================================================
@@ -202,14 +228,15 @@ startGathering = function()
 	end
 
 	setPhase(PHASE.GATHERING)
-
-	-- TransitionToStore tells clients to move their cameras into the store
 	TransitionToStore:FireAllClients()
 
+	-- Announce + start countdown
+	AnnounceRemote:FireAllClients(
+		"🛒  Gathering phase — go shop!", ANN_GREEN, 5)
+	fireTimerLoop(PHASE.GATHERING, C.Phase.Gathering)
+
 	phaseTimer = task.delay(C.Phase.Gathering, function()
-		if currentPhase == PHASE.GATHERING then
-			startCooking()
-		end
+		if currentPhase == PHASE.GATHERING then startCooking() end
 	end)
 end
 
@@ -218,13 +245,18 @@ startCooking = function()
 	cancelTimer()
 	setPhase(PHASE.COOKING)
 
+	AnnounceRemote:FireAllClients(
+		"🍳  Cooking phase — make your recipes!", ANN_ORANGE, 5)
+	fireTimerLoop(PHASE.COOKING, C.Phase.Cooking)
+
 	phaseTimer = task.delay(C.Phase.Cooking, function()
 		if currentPhase == PHASE.COOKING then
-			-- 10s grace for active cooks to finish
 			print("[GameManager] Cooking phase ending — 10s grace for active cooks")
-			setPhase(PHASE.COOKING)    -- re-fire so UI shows grace countdown
+			AnnounceRemote:FireAllClients(
+				"⏱  Cooking grace — 10 seconds left!", ANN_ORANGE, 4)
 			PhaseChangedRemote:FireAllClients("CookingGrace")
 			PhaseChangedEvent:Fire("CookingGrace")
+			fireTimerLoop("CookingGrace", C.Phase.CookingGrace)
 			task.wait(C.Phase.CookingGrace)
 			startFoodFight()
 		end
@@ -235,6 +267,10 @@ end
 startFoodFight = function()
 	cancelTimer()
 	setPhase(PHASE.FOODFIGHT)
+
+	AnnounceRemote:FireAllClients(
+		"💥  FOOD FIGHT! Let the chaos begin!", ANN_RED, 5)
+	fireTimerLoop(PHASE.FOODFIGHT, C.Phase.FoodFight)
 
 	-- Poll for early-end condition every 2 seconds
 	-- Hard cap: 6 minutes
