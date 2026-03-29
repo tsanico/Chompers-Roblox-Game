@@ -1,0 +1,233 @@
+-- ============================================================
+-- TradeHubSystem — ServerScript
+-- Location: ServerScriptService > TradeHubSystem
+--
+-- Manages the Trade Hub: a safe zone where players can buy
+-- Friendship Bracelets during Gathering and Cooking phases.
+--
+-- Studio setup (one-time):
+--   • Tag every BasePart that forms the hub floor/zone:
+--       Attribute "IsTradeHubZone" = true
+--   • Tag the bracelet kiosk surface:
+--       Attribute "IsBraceletKiosk" = true
+--
+-- Locked design constants (Bible Part 12):
+--   Bracelet cost:     $12
+--   Available phases:  Gathering, Cooking, CookingGrace
+--   Safe zone:         no damage (ThrowServer checks inTradeHub)
+--   Decline announce:  broadcast to all players
+--   Max allies:        1–19 players = 1, 20–29 = 2, 30–40 = 3
+-- ============================================================
+
+local Players             = game:GetService("Players")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local PlayerState = require(ServerScriptService:WaitForChild("PlayerState"))
+local Remotes     = ReplicatedStorage:WaitForChild("ChompersRemotes")
+
+-- ── Remote helpers ────────────────────────────────────────────
+local function getOrCreate(name)
+    local r = Remotes:FindFirstChild(name)
+    if not r then
+        r = Instance.new("RemoteEvent")
+        r.Name = name; r.Parent = Remotes
+    end
+    return r
+end
+
+local AnnounceRemote  = Remotes:FindFirstChild("Announce")
+local TradeHubEnterR  = getOrCreate("TradeHubEnter")   -- → client on entry
+local TradeHubExitR   = getOrCreate("TradeHubExit")    -- → client on exit
+
+-- ── Constants ─────────────────────────────────────────────────
+local BRACELET_COST   = 12
+local ACTIVE_PHASES   = { Gathering=true, Cooking=true, CookingGrace=true }
+
+-- ── Phase tracking ────────────────────────────────────────────
+local currentPhase = "Prelobby"
+
+local PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
+if PhaseChangedEvent then
+    PhaseChangedEvent.Event:Connect(function(phase)
+        currentPhase = phase
+        -- Clear all hub flags on Prelobby reset
+        if phase == "Prelobby" then
+            for _, player in ipairs(Players:GetPlayers()) do
+                local s = PlayerState.Get(player)
+                if s then s.inTradeHub = false end
+            end
+        end
+    end)
+end
+
+-- ── Player count helper (for max-ally cap) ────────────────────
+local function getAllyCap()
+    local n = #Players:GetPlayers()
+    if n >= 30 then return 3
+    elseif n >= 20 then return 2
+    else return 1 end
+end
+
+-- ── Zone management ───────────────────────────────────────────
+-- Track players inside zone parts to handle overlapping parts cleanly
+local playerZoneTouches = {}   -- [player] = count of zone parts currently touching
+
+local function playerEnterHub(player)
+    local s = PlayerState.Get(player)
+    if not s or s.inTradeHub then return end
+    s.inTradeHub = true
+    TradeHubEnterR:FireClient(player)
+    if AnnounceRemote then
+        AnnounceRemote:FireClient(player,
+            "🤝  Trade Hub — safe zone. Bracelet Kiosk nearby.",
+            Color3.fromRGB(100,210,255), 2.5)
+    end
+end
+
+local function playerExitHub(player)
+    local s = PlayerState.Get(player)
+    if not s or not s.inTradeHub then return end
+    s.inTradeHub = false
+    TradeHubExitR:FireClient(player)
+end
+
+local function getPlayerFromCharacter(character)
+    return Players:GetPlayerFromCharacter(character)
+end
+
+local function setupZonePart(part)
+    part.Touched:Connect(function(hit)
+        local char = hit.Parent
+        local player = getPlayerFromCharacter(char)
+        if not player then return end
+        playerZoneTouches[player] = (playerZoneTouches[player] or 0) + 1
+        if playerZoneTouches[player] == 1 then
+            playerEnterHub(player)
+        end
+    end)
+
+    part.TouchEnded:Connect(function(hit)
+        local char = hit.Parent
+        local player = getPlayerFromCharacter(char)
+        if not player then return end
+        playerZoneTouches[player] = math.max(0,
+            (playerZoneTouches[player] or 1) - 1)
+        if playerZoneTouches[player] == 0 then
+            playerExitHub(player)
+        end
+    end)
+end
+
+-- ── Bracelet kiosk ────────────────────────────────────────────
+local function setupKiosk(part)
+    local prompt = Instance.new("ProximityPrompt")
+    prompt.ObjectText            = "🤝 Friendship Bracelet Kiosk"
+    prompt.ActionText            = "Buy Alliance Bracelet ($" .. BRACELET_COST .. ")"
+    prompt.HoldDuration          = 0.5
+    prompt.MaxActivationDistance = 8
+    prompt.RequiresLineOfSight   = false
+    prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
+    prompt.Parent                = part
+
+    prompt.Triggered:Connect(function(player)
+        local s = PlayerState.Get(player)
+        if not s then return end
+        if s.isEliminated then return end
+
+        -- Phase gate
+        if not ACTIVE_PHASES[currentPhase] then
+            if AnnounceRemote then
+                AnnounceRemote:FireClient(player,
+                    "🤝  Bracelets only sold during Gathering and Cooking phases.",
+                    Color3.fromRGB(160,120,160), 2.5)
+            end
+            return
+        end
+
+        -- Ally cap check (already at max for this server size)
+        local cap = getAllyCap()
+        local allyCount = 0
+        if s.allyUserId  and s.allyUserId  ~= 0 then allyCount += 1 end
+        if s.allyUserId2 and s.allyUserId2 ~= 0 then allyCount += 1 end
+        if allyCount >= cap then
+            if AnnounceRemote then
+                AnnounceRemote:FireClient(player,
+                    "🤝  You already have the maximum number of allies for this server size.",
+                    Color3.fromRGB(220,80,60), 2.5)
+            end
+            return
+        end
+
+        -- Money check
+        if (s.money or 0) < BRACELET_COST then
+            if AnnounceRemote then
+                AnnounceRemote:FireClient(player,
+                    "💸  Not enough money. Bracelet costs $" .. BRACELET_COST .. ".",
+                    Color3.fromRGB(220,80,60), 2.5)
+            end
+            return
+        end
+
+        -- Check if player already has a bracelet in inventory
+        for _, item in ipairs(s.inventory or {}) do
+            if item and item.name == "Friendship Bracelet" then
+                if AnnounceRemote then
+                    AnnounceRemote:FireClient(player,
+                        "🤝  You already have a Friendship Bracelet.",
+                        Color3.fromRGB(100,210,255), 2)
+                end
+                return
+            end
+        end
+
+        -- Purchase
+        PlayerState.AddMoney(player, -BRACELET_COST)
+        PlayerState.AddItem(player, {
+            name    = "Friendship Bracelet",
+            rarity  = "Uncommon",
+            wt      = 1,
+            cost    = BRACELET_COST,
+            emoji   = "💜",
+            allergy = "None",
+            zone    = "Neutral",
+            cl      = 0,
+            paid    = true,
+        })
+
+        if AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "💜  Friendship Bracelet purchased! Press E near another player to offer.",
+                Color3.fromRGB(180,100,255), 3)
+        end
+    end)
+end
+
+-- ── Scan workspace ────────────────────────────────────────────
+local function scanAll()
+    local nZone, nKiosk = 0, 0
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            if desc:GetAttribute("IsTradeHubZone") == true then
+                setupZonePart(desc)
+                nZone = nZone + 1
+            elseif desc:GetAttribute("IsBraceletKiosk") == true then
+                setupKiosk(desc)
+                nKiosk = nKiosk + 1
+            end
+        end
+    end
+    print(string.format("[TradeHubSystem] Registered %d zone part(s), %d kiosk(s)",
+        nZone, nKiosk))
+end
+
+-- ── Player cleanup on disconnect ──────────────────────────────
+Players.PlayerRemoving:Connect(function(player)
+    playerZoneTouches[player] = nil
+    local s = PlayerState.Get(player)
+    if s then s.inTradeHub = false end
+end)
+
+-- ── Boot ──────────────────────────────────────────────────────
+scanAll()
+print("[TradeHubSystem] Ready")
