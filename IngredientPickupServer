@@ -97,13 +97,17 @@ local function onIngredientPickup(part, player)
 	local ok, reason = PlayerState.AddItem(player, itemData)
 	if not ok then
 		if reason == "slots_full" then
-			-- Fire an announcement to the client so the failure is visible
-			local Announce = ReplicatedStorage:WaitForChild("ChompersRemotes",5)
-				and ReplicatedStorage.ChompersRemotes:FindFirstChild("Announce")
-			if Announce then
-				Announce:FireClient(player,
-					"🎒 Inventory full! Drop or throw something first.",
-					Color3.fromRGB(220,60,60), 2.5)
+			-- 10-slot cap is a UI limit, not a gameplay failure — don't alert.
+			-- Only announce if the player is so overweight they're at 0% speed.
+			local speedMult = PlayerState.GetSpeedMult and PlayerState.GetSpeedMult(player) or 1
+			if speedMult <= 0 then
+				local Announce = ReplicatedStorage:WaitForChild("ChompersRemotes",5)
+					and ReplicatedStorage.ChompersRemotes:FindFirstChild("Announce")
+				if Announce then
+					Announce:FireClient(player,
+						"🎒 Completely overloaded! Drop something — can't move.",
+						Color3.fromRGB(220,60,60), 2.5)
+				end
 			end
 		end
 		return
