@@ -538,7 +538,10 @@ AnnounceLabel.TextTruncate=Enum.TextTruncate.SplitWord
 -- Announce API: shows message for `duration` seconds (default 4)
 local currentAnnounce = nil
 _G.Chompers.Announce = function(msg, color, duration)
-	if currentAnnounce then task.cancel(pcall(task.cancel, currentAnnounce)) end
+	if currentAnnounce then
+		pcall(task.cancel, currentAnnounce)
+		currentAnnounce = nil
+	end
 	AnnounceLabel.Text = msg
 	AnnounceLabel.TextColor3 = color or C.gold
 	local stroke = AnnounceBanner:FindFirstChildWhichIsA("UIStroke")
