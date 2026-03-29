@@ -1044,26 +1044,25 @@ div.BackgroundColor3=Color3.fromRGB(38,36,52); div.BorderSizePixel=0
 
 -- Section headers
 local secY = divY+8
-mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBold,20,C.gold,
+mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBlack,28,C.gold,
     Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,secY),UDim2.new(0.5,-PAD-4,0,26))
 local fDesc=mkLabel(PrefPanel,
-    "Deals bonus CL when thrown. Enemies that hit you with your own favourite food spike your Fullness ×2.",
-    Enum.Font.GothamMedium,14,Color3.fromRGB(180,165,130),Enum.TextXAlignment.Left,
-    UDim2.new(0,PAD,0,secY+30),UDim2.new(0.5,-PAD-4,0,56))
-fDesc.TextWrapped=true; fDesc.LineHeight=1.3
+    "Deals bonus CL when thrown at anyone. If an enemy hits you with your own favourite food, your Fullness spikes ×2.",
+    Enum.Font.GothamBold,20,Color3.fromRGB(210,190,155),Enum.TextXAlignment.Left,
+    UDim2.new(0,PAD,0,secY+28),UDim2.new(0.5,-PAD-4,0,110))
+fDesc.TextWrapped=true; fDesc.LineHeight=1.25
 
-mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,20,Color3.fromRGB(226,75,74),
+mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBlack,28,Color3.fromRGB(226,75,74),
     Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,secY),UDim2.new(0.5,-PAD-4,0,26))
 local aDesc=mkLabel(PrefPanel,
-    "Hits from your zone deal ×1.75 CL. Everything else deals ×0.75. Choose your weakness wisely.",
-    Enum.Font.GothamMedium,14,Color3.fromRGB(185,150,150),Enum.TextXAlignment.Left,
-    UDim2.new(0.5,PAD/2,0,secY+30),UDim2.new(0.5,-PAD-4,0,56))
-aDesc.TextWrapped=true; aDesc.LineHeight=1.3
+    "Your zone weakness. Ingredients and recipes from that section deal ×1.75 CL. Everything else deals ×0.75.",
+    Enum.Font.GothamBold,20,Color3.fromRGB(215,175,175),Enum.TextXAlignment.Left,
+    UDim2.new(0.5,PAD/2,0,secY+28),UDim2.new(0.5,-PAD-4,0,110))
+aDesc.TextWrapped=true; aDesc.LineHeight=1.25
 
-local selY = secY+92  -- tight below description, well above scrolls
+local selY = secY+148  -- below description, above scrolls
 
--- Selection display labels — 13px GothamBold (same as original subicon size).
--- Hidden until player makes a selection. Show emoji + name when selected.
+-- Selection display labels — 13px matching original subicon size
 local FavLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,13,C.gold,
     Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,18))
 FavLabel.Name = "FavSelected"
@@ -1157,21 +1156,26 @@ AllergyScroll.Name = "AllergyScroll"
 local selAllergyBtn = nil
 for _, atype in ipairs(ALLERGY_TYPES) do
     local btn = Instance.new("TextButton", AllergyScroll)
-    btn.Size = UDim2.new(1,0,0,114); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
+    btn.Size = UDim2.new(1,0,0,96); btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
     btn.BorderSizePixel = 0; btn.AutoButtonColor = false
     btn.Text = ""; btn.ZIndex = 10; corner(btn,10)
     -- Left accent bar
     local accent = Instance.new("Frame",btn)
     accent.Size=UDim2.new(0,6,1,-14); accent.Position=UDim2.new(0,6,0,7)
     accent.BackgroundColor3=atype.color; accent.BorderSizePixel=0; corner(accent,3)
-    -- Zone icon + name
-    mkLabel(btn, atype.icon.."  "..atype.name, Enum.Font.GothamBlack, 22, atype.color,
-        Enum.TextXAlignment.Left, UDim2.new(0,18,0,8), UDim2.new(1,-24,0,28)).ZIndex=11
-    -- Description
-    local dL = mkLabel(btn, atype.desc or "", Enum.Font.Gotham, 12,
-        Color3.fromRGB(155,150,185), Enum.TextXAlignment.Left,
-        UDim2.new(0,18,0,40), UDim2.new(1,-24,0,60))
-    dL.ZIndex=11; dL.TextWrapped=true; dL.LineHeight=1.25
+    -- Large emoji (matches fav food card — 48px)
+    mkLabel(btn, atype.icon, Enum.Font.GothamBold, 48, atype.color,
+        Enum.TextXAlignment.Center,
+        UDim2.new(0,14,0,0), UDim2.new(0,60,1,0)).ZIndex=11
+    -- Zone name (22px GothamBlack, same as fav food name)
+    mkLabel(btn, atype.name, Enum.Font.GothamBlack, 22, atype.color,
+        Enum.TextXAlignment.Left,
+        UDim2.new(0,78,0,8), UDim2.new(1,-84,0,28)).ZIndex=11
+    -- Description (17px GothamBold, same as fav food rarity line)
+    local dL = mkLabel(btn, atype.desc or "", Enum.Font.GothamBold, 17,
+        Color3.fromRGB(175,170,205), Enum.TextXAlignment.Left,
+        UDim2.new(0,78,0,40), UDim2.new(1,-84,0,48))
+    dL.ZIndex=11; dL.TextWrapped=true; dL.LineHeight=1.2; dL.TextScaled=false
     local capA = atype
     btn.MouseButton1Click:Connect(function()
         if prefsLocked then return end
