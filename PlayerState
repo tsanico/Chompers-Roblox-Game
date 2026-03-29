@@ -93,6 +93,7 @@ local function defaultState()
 		allyUserId = nil,         -- single ally userId (or nil)
 		allyUserId2 = nil,        -- second ally (3-person alliances, large servers)
 		allianceConfirmed = false,
+		inTradeHub = false,        -- true while inside Trade Hub safe zone
 
 		-- ── Points ────────────────────────────────────────────
 		points = 0,
