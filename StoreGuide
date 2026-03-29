@@ -1006,19 +1006,9 @@ end)
 local PrefPanel = makePanel("PrefPanel","PREFERENCES")
 local PAD = 14
 
--- Lock overlay (visible during Gathering / Cooking / FoodFight)
-local PrefLock = Instance.new("Frame", PrefPanel)
-PrefLock.Name = "PrefLock"
-PrefLock.Size = UDim2.new(1,0,1,0)
-PrefLock.BackgroundColor3 = Color3.fromRGB(8,6,16)
-PrefLock.BackgroundTransparency = 0.35
-PrefLock.BorderSizePixel = 0; PrefLock.ZIndex = 50; PrefLock.Visible = false
-corner(PrefLock,12)
-local lockL = mkLabel(PrefLock,
-    "🔒  Preferences Locked — Match in Progress\n\nYou can view your selections\nbut cannot change them until the match ends.",
-    Enum.Font.GothamBold,18,C.white,Enum.TextXAlignment.Center,
-    UDim2.new(0.1,0,0.15,0),UDim2.new(0.8,0,0.5,0))
-lockL.TextWrapped=true; lockL.LineHeight=1.4
+-- Scroll-level lock overlays are created after scrolls below.
+-- prefsLocked boolean still gates all click handlers.
+-- (Full-panel overlay removed — headers, descriptions, and selection displays stay readable during match)
 
 -- Container selection
 mkLabel(PrefPanel,"Choose your container",Enum.Font.GothamMedium,16,C.dim,
@@ -1076,13 +1066,19 @@ local aDesc=mkLabel(PrefPanel,
 aDesc.TextWrapped=true; aDesc.LineHeight=1.25
 
 local selY = secY+148  -- pushed down to account for larger description text
-local FavLabel = mkLabel(PrefPanel,"None selected",Enum.Font.GothamMedium,13,C.gold,
-    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,18))
-FavLabel.Name = "FavSelected"
 
-local AllergyLabel = mkLabel(PrefPanel,"None selected",Enum.Font.GothamMedium,13,
-    Color3.fromRGB(210,78,78),Enum.TextXAlignment.Left,
-    UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,18))
+-- Selection display labels — 20px GothamBold, same size as section titles.
+-- Hidden until player makes a selection. Show emoji + name when selected.
+local FavLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,20,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,26))
+FavLabel.Name = "FavSelected"
+FavLabel.Visible = false   -- appears when something is selected
+
+local AllergyLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,20,
+    Color3.fromRGB(226,75,74),Enum.TextXAlignment.Left,
+    UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,26))
+AllergyLabel.Name = "AllergySelected"
+AllergyLabel.Visible = false   -- appears when something is selected
 
 local scrollY = selY+20
 local scrollH = UDim2.new(0.5,-PAD-4,1,-(scrollY+62))
@@ -1127,7 +1123,9 @@ for i, item in ipairs(rSort(Data.Recipes)) do
         if ss then ss.Color = C.purple end
         selFavBtn = row
         Selections.favourite = capItem.name
-        FavLabel.Text = "✓ "..capItem.name
+        -- Show selection: emoji + name at same size as section title
+        FavLabel.Text    = emj(capItem.name).."  "..capItem.name
+        FavLabel.Visible = true
         updateBillboard()
         local rv = Remotes and Remotes:FindFirstChild("PlayerSelectFavourite")
         if rv then rv:FireServer(capItem.name) end
@@ -1165,13 +1163,16 @@ for _, atype in ipairs(ALLERGY_TYPES) do
         if prefsLocked then return end
         if Selections.allergy == capA.name then
             Selections.allergy = nil
-            AllergyLabel.Text = "None selected"
+            AllergyLabel.Text    = ""
+            AllergyLabel.Visible = false
             btn.BackgroundColor3 = Color3.fromRGB(24,22,38)
             selAllergyBtn = nil
         else
             if selAllergyBtn then selAllergyBtn.BackgroundColor3=Color3.fromRGB(24,22,38) end
             Selections.allergy = capA.name
-            AllergyLabel.Text = "✓ "..capA.name
+            -- Show selection: allergen icon + name at same size as section title
+            AllergyLabel.Text    = capA.icon.."  "..capA.name
+            AllergyLabel.Visible = true
             btn.BackgroundColor3 = Color3.fromRGB(52,16,16); selAllergyBtn = btn
         end
         local rv = Remotes and Remotes:FindFirstChild("PlayerSelectAllergy")
@@ -1180,7 +1181,31 @@ for _, atype in ipairs(ALLERGY_TYPES) do
     end)
 end
 
--- Confirm button
+-- ── Scroll-level lock overlays ────────────────────────────────
+-- Appear over just the two selection scrolls during match phases.
+-- Headers, descriptions, and selection display labels remain fully visible.
+local function makeScrollLock(parent, pos, sz, labelText)
+    local f = Instance.new("Frame", parent)
+    f.Size = sz; f.Position = pos
+    f.BackgroundColor3 = Color3.fromRGB(10,8,20)
+    f.BackgroundTransparency = 0.22
+    f.BorderSizePixel = 0; f.ZIndex = 50; f.Visible = false
+    corner(f, 12)
+    local lk = Instance.new("TextLabel", f)
+    lk.Size = UDim2.new(1,0,1,0); lk.BackgroundTransparency = 1
+    lk.Text = "🔒  "..labelText; lk.Font = Enum.Font.GothamBold
+    lk.TextSize = 18; lk.TextColor3 = Color3.fromRGB(130,125,165)
+    lk.TextXAlignment = Enum.TextXAlignment.Center
+    lk.TextYAlignment = Enum.TextYAlignment.Center; lk.ZIndex = 51
+    return f
+end
+
+local FavScrollLock = makeScrollLock(PrefPanel,
+    UDim2.new(0,PAD,0,scrollY), scrollH,
+    "Selection locked during match")
+local AllergyScrollLock = makeScrollLock(PrefPanel,
+    UDim2.new(0.5,PAD/2,0,scrollY), scrollH,
+    "Selection locked during match")
 local ConfirmBtn = Instance.new("TextButton", PrefPanel)
 ConfirmBtn.Name = "ConfirmButton"
 ConfirmBtn.Size = UDim2.new(1,-PAD*2,0,46); ConfirmBtn.Position = UDim2.new(0,PAD,1,-54)
@@ -1864,14 +1889,18 @@ end)
 local prefBufferTimer = nil
 
 local function lockPrefs()
-    prefsLocked = true; PrefLock.Visible = true
-    -- If player has the guide open on Preferences, redirect to the phase-appropriate tab
+    prefsLocked = true
+    FavScrollLock.Visible     = true
+    AllergyScrollLock.Visible = true
+    -- If player has guide open on Preferences, redirect to phase-appropriate tab
     if isOpen and activeTab == "PREFERENCES" then
         switchTab(defaultTab(currentPhase))
     end
 end
 local function unlockPrefs()
-    prefsLocked = false; PrefLock.Visible = false
+    prefsLocked = false
+    FavScrollLock.Visible     = false
+    AllergyScrollLock.Visible = false
 end
 
 local PhaseRemote = Remotes and Remotes:FindFirstChild("PhaseChanged")
