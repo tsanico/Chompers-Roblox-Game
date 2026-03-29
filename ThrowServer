@@ -151,7 +151,7 @@ local function applyDamage(attacker, target, itemData, itemName)
 	local tState = PlayerState.Get(target)
 	local aState = PlayerState.Get(attacker)
 	if not tState or not aState then return end
-	if tState.isEliminated or tState.inBathroom or tState.inTradeHub then return end
+	if tState.isEliminated or tState.inBathroom then return end
 
 	local baseCL      = itemData.cl or 0
 	local itemAllergy = getItemAllergy(itemName, itemData)
@@ -242,7 +242,7 @@ local function processHit(proj, hitPart, attacker, itemData, itemName, hitProces
 	local target = playerFromHit(hitPart)
 	if not target or target == attacker then return false end
 	local tState = PlayerState.Get(target)
-	if not tState or tState.isEliminated or tState.inBathroom or tState.inTradeHub then return false end
+	if not tState or tState.isEliminated or tState.inBathroom then return false end
 	hitProcessed[1] = true
 	proj:Destroy()
 	applyDamage(attacker, target, itemData, itemName)
@@ -258,7 +258,7 @@ end
 R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, horizSpeed, targetPos)
 	local s = PlayerState.Get(player)
 	if not s then return end
-	if s.isEliminated or s.inBathroom or s.inTradeHub then return end
+	if s.isEliminated or s.inBathroom then return end
 
 	local now = tick()
 	if lastThrowTime[player] and (now - lastThrowTime[player]) < C.Throw.Cooldown then return end
