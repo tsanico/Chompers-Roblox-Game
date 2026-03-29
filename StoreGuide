@@ -69,49 +69,42 @@ end
 
 -- ── Emoji lookup ─────────────────────────────────────────────
 local EMOJI = {
+    -- ── Phase 1 Ingredients ───────────────────────────────────
     -- Produce
-    Apple="🍎",Banana="🍌",Tomato="🍅",Lettuce="🥬",Onion="🧅",Carrot="🥕",
-    Spinach="🌿",Peas="🌿",Egg="🥚",Potato="🥔",Basil="🌿",
-    ["Bell Pepper"]="🌶️",Corn="🌽",Mango="🍊",Avocado="🥑",Garlic="🧄",
-    Tofu="⬜",Pineapple="🍍",Plantain="🍌",Beet="❤️",Kimchi="🌶️",
-    Coconut="🥥",Truffle="🍄",
+    Tomato="🍅", Egg="🥚", Truffle="🍄",
     -- Bakery
-    Bun="🍞",["Bread Loaf"]="🍞",Flour="🌾",Sugar="🍬",Naan="🍞",
-    Dough="🍞",Chocolate="🍫",Honey="🍯",Croissant="🥐",Fondant="🎂",
-    -- Dairy
-    Milk="🥛",Yogurt="🍶",Cream="🥛",["Cheese Block"]="🧀",Butter="🧈",
-    Mayonnaise="🥛",["Blue Cheese"]="🧀",["Ice Cream"]="🍦",
-    -- Freezer / Meat
-    Chicken="🍗",Beef="🥩",Pork="🥩",Sausage="🌭",["Wagyu Beef"]="🥩",
-    Shrimp="🦐",Crab="🦀",Lobster="🦀",Tuna="🐟",
-    -- Aisles
-    Rice="🍚",Pasta="🍝",Noodles="🍜",Salt="🧂",Oil="🧴",
-    ["Soy Sauce"]="🍶",["Curry Powder"]="🌶️",["Chili Powder"]="🌶️",
-    Peanut="🥜",Almond="🥜",["Black Garlic"]="🧄",Saffron="🌸",
-    ["Miso Paste"]="🟤",Tortilla="🥙",Caviar="🔵",
-    -- Recipes
-    Burger="🍔",Taco="🌮",Fries="🍟",["Egg Splat"]="🥚",
-    ["Caprese Skewer"]="🍢",["Tofu Scramble"]="🥣",["Pound Cake"]="🎂",
-    ["Mac and Cheese"]="🧀",["Sausage Sandwich"]="🌭",["Hummus Plate"]="🥗",
-    Roti="🥙",Samosa="🥟",Crepe="🥞",["Grilled Cheese"]="🧀",
-    ["Chocolate Banana"]="🍫",["Pizza Slice"]="🍕",Quesadilla="🥙",
-    Burrito="🌯",["Stir Fry"]="🥘",["Chow Mein"]="🍜",Dumplings="🥟",
-    ["Fried Rice"]="🍳",["Naan Wrap"]="🥙",["Spaghetti Pomodoro"]="🍝",
-    ["Tofu Stir Fry"]="🥘",["Plantain Chips"]="🍌",["Garlic Bread"]="🥖",
-    ["Poke Bowl"]="🍣",["Sushi Roll"]="🍱",Shawarma="🌯",["Jollof Rice"]="🍚",
-    ["Kimchi Fried Rice"]="🍳",["Pad Thai"]="🍜",Elote="🌽",
-    ["Mango Lassi"]="🍹",Milkshake="🥤",["Banana Pancakes"]="🥞",
-    ["Shrimp Cocktail"]="🦐",Borscht="🍲",["Miso Soup"]="🍵",
-    ["Crab Rangoon"]="🦀",Callaloo="🌿",["Tuna Melt"]="🐟",
-    ["Chicken Curry"]="🍛",["Vegetable Curry"]="🥘",["Baked Potato"]="🥔",
-    ["BBQ Ribs"]="🍖",["Crispy Tofu Bowl"]="🥣",["Mapo Tofu"]="🌶️",
-    Tamale="🌽",["Groundnut Soup"]="🥜",Paella="🍛",["Pepper Shrimp"]="🦐",
-    ["Inferno Skewer"]="🔥",["Almond Croissant"]="🥐",["Ice Cream Sundae"]="🍨",
-    ["Honey Glazed Ribs"]="🍖",["Blue Cheese Pasta"]="🍝",
-    ["Lobster Bisque"]="🦀",["Chicken-Peanut Stew"]="🍲",
-    ["Truffle Pasta"]="🍝",["Coconut Curry"]="🥥",["Saffron Rice"]="🍚",
-    ["Wagyu Burger"]="🍔",["Poke Deluxe"]="🍣",["Guacamole Bomb"]="🥑",
-    ["Golden Glaze"]="✨",["Fondant Collapse"]="🎂",["Million Dollar Steak"]="🥩",
+    Flour="🌾", Milk="🥛", ["Cheese Block"]="🧀", Honey="🍯",
+    ["Blue Cheese"]="🧀", Fondant="🎂",
+    -- Dry Goods
+    Rice="🍚", Pasta="🍝", Noodles="🍜", ["Soy Sauce"]="🍶",
+    ["Chili Powder"]="🌶", Saffron="🌸",
+    -- Freezer
+    Chicken="🍗", Shrimp="🦐", ["Ice Cream"]="🍦",
+    -- Neutral
+    Oil="🫙", ["Wagyu Beef"]="🥩", Caviar="🐟",
+
+    -- ── Phase 1 Recipes ───────────────────────────────────────
+    ["Tomato Toss"]="🍅",
+    ["Egg Splat"]="🥚",
+    ["Chicken Rice"]="🍗",
+    ["Spaghetti Surprise"]="🍝",
+    ["Mac and Cheese"]="🧀",
+    ["Chili Fried Rice"]="🍳",
+    ["Noodle Bowl"]="🍜",
+    ["Soy Chicken"]="🍗",
+    ["Honey Glazed Chicken"]="🍯",
+    ["Shrimp Noodles"]="🦐",
+    ["Blue Cheese Pasta"]="🧀",
+    ["Truffle Pasta"]="🍄",
+    ["Saffron Rice"]="🌸",
+    ["Lobster Bisque"]="🦐",
+    ["Ice Cream Shake"]="🍦",
+    ["Honey Fondant Cake"]="🎂",
+    ["Million Dollar Steak"]="🥩",
+
+    -- ── Loot ──────────────────────────────────────────────────
+    ["Loose Cash"]="💵", ["Cash Stack"]="💵", ["Big Stack"]="💵",
+    Napkin="🧻", ["Alliance Bracelet"]="💜",
 }
 local ZONE_EMJ = { Produce="🥬", Bakery="🧁", ["Dry Goods"]="🥫",
     Freezer="❄️", Neutral="⬜", Stockroom="📦" }
@@ -1054,35 +1047,35 @@ local secY = divY+8
 mkLabel(PrefPanel,"⭐ Favourite Food",Enum.Font.GothamBold,20,C.gold,
     Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,secY),UDim2.new(0.5,-PAD-4,0,26))
 local fDesc=mkLabel(PrefPanel,
-    "Your signature weapon. Throwing it deals bonus CL damage. If it\'s a consumable, its effects last longer. Getting hit by your own favourite? You get way more Full.",
-    Enum.Font.GothamBold,20,Color3.fromRGB(210,190,155),Enum.TextXAlignment.Left,
-    UDim2.new(0,PAD,0,secY+28),UDim2.new(0.5,-PAD-4,0,110))
-fDesc.TextWrapped=true; fDesc.LineHeight=1.25
+    "Deals bonus CL when thrown. Enemies that hit you with your own favourite food spike your Fullness ×2.",
+    Enum.Font.GothamMedium,14,Color3.fromRGB(180,165,130),Enum.TextXAlignment.Left,
+    UDim2.new(0,PAD,0,secY+30),UDim2.new(0.5,-PAD-4,0,56))
+fDesc.TextWrapped=true; fDesc.LineHeight=1.3
 
 mkLabel(PrefPanel,"⚠ Your Allergy",Enum.Font.GothamBold,20,Color3.fromRGB(226,75,74),
     Enum.TextXAlignment.Left,UDim2.new(0.5,PAD/2,0,secY),UDim2.new(0.5,-PAD-4,0,26))
 local aDesc=mkLabel(PrefPanel,
-    "Pick your poison. You take more CL damage from your allergen — but everything else hits you less.",
-    Enum.Font.GothamBold,20,Color3.fromRGB(215,175,175),Enum.TextXAlignment.Left,
-    UDim2.new(0.5,PAD/2,0,secY+28),UDim2.new(0.5,-PAD-4,0,110))
-aDesc.TextWrapped=true; aDesc.LineHeight=1.25
+    "Hits from your zone deal ×1.75 CL. Everything else deals ×0.75. Choose your weakness wisely.",
+    Enum.Font.GothamMedium,14,Color3.fromRGB(185,150,150),Enum.TextXAlignment.Left,
+    UDim2.new(0.5,PAD/2,0,secY+30),UDim2.new(0.5,-PAD-4,0,56))
+aDesc.TextWrapped=true; aDesc.LineHeight=1.3
 
-local selY = secY+136  -- sits comfortably below description, above scroll
+local selY = secY+92  -- tight below description, well above scrolls
 
--- Selection display labels — 20px GothamBold, same size as section titles.
+-- Selection display labels — 13px GothamBold (same as original subicon size).
 -- Hidden until player makes a selection. Show emoji + name when selected.
-local FavLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,20,C.gold,
-    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,26))
+local FavLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,13,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,PAD,0,selY),UDim2.new(0.5,-PAD-4,0,18))
 FavLabel.Name = "FavSelected"
-FavLabel.Visible = false   -- appears when something is selected
+FavLabel.Visible = false
 
-local AllergyLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,20,
+local AllergyLabel = mkLabel(PrefPanel,"",Enum.Font.GothamBold,13,
     Color3.fromRGB(226,75,74),Enum.TextXAlignment.Left,
-    UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,26))
+    UDim2.new(0.5,PAD/2,0,selY),UDim2.new(0.5,-PAD-4,0,18))
 AllergyLabel.Name = "AllergySelected"
-AllergyLabel.Visible = false   -- appears when something is selected
+AllergyLabel.Visible = false
 
-local scrollY = selY+20
+local scrollY = selY+22
 local scrollH = UDim2.new(0.5,-PAD-4,1,-(scrollY+62))
 
 -- Favourite scroll (LEFT) — all 69 recipes
