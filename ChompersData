@@ -440,9 +440,9 @@ local EMOJI_TABLE = {
 	Flour="🌾", Milk="🥛", ["Cheese Block"]="🧀", Honey="🍯",
 	["Blue Cheese"]="🧀", Fondant="🎂",
 	Rice="🍚", Pasta="🍝", Noodles="🍜", ["Soy Sauce"]="🍶",
-	["Chili Powder"]="🌶️", Saffron="🌸",
+	["Chili Powder"]="🌶", Saffron="🌸",
 	Chicken="🍗", Shrimp="🦐", ["Ice Cream"]="🍦",
-	Oil="🧴", ["Wagyu Beef"]="🥩", Caviar="🔵",
+	Oil="🫙", ["Wagyu Beef"]="🥩", Caviar="🐟",
 	-- Phase 1 recipes
 	["Tomato Toss"]="🍅", ["Egg Splat"]="🥚",
 	["Chicken Rice"]="🍗", ["Spaghetti Surprise"]="🍝",
