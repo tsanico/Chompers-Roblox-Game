@@ -57,24 +57,12 @@ local function playerFromHit(part)
 	return Players:GetPlayerFromCharacter(char)
 end
 
--- ── Cook depth bonus (how many ingredients in the recipe) ─────
-local function getCookDepthBonus(itemName)
-	local rec = recByName[itemName]
-	if not rec or not rec.ingredients then return 0 end
-	local n = #rec.ingredients
-	if n >= 4 then return C.Damage.CookDepth4Bonus
-	elseif n == 3 then return C.Damage.CookDepth3Bonus
-	elseif n == 2 then return C.Damage.CookDepth2Bonus
-	end
-	return 0
-end
-
 -- ── Is this item an Oil ingredient? ───────────────────────────
 local function isOilIngredient(itemName)
 	return itemName == "Oil"
 end
 
--- ── Is this item one of the fire recipes? ─────────────────────
+-- ── Is this item a fire recipe? ───────────────────────────────
 local function isFireRecipe(itemName)
 	for _, name in ipairs(C.Elemental.FireRecipes) do
 		if name == itemName then return true end
@@ -88,7 +76,6 @@ local function getItemAllergy(itemName, itemData)
 	local ing = ingByName[itemName]
 	if ing then return ing.allergy or "None" end
 	local rec = recByName[itemName]
-	-- Recipes inherit allergy from primary/first ingredient
 	if rec and rec.ingredients and #rec.ingredients > 0 then
 		local firstIng = ingByName[rec.ingredients[1]]
 		return firstIng and firstIng.allergy or "None"
@@ -177,44 +164,42 @@ local function applyDamage(attacker, target, itemData, itemName)
 	end
 	local clAfterAllergy = baseCL * allergyMult
 
-	-- 2. Cook depth
-	local clAfterDepth = clAfterAllergy * (1 + getCookDepthBonus(itemName))
-
-	-- 3. Elemental
+	-- 2. Elemental (cook depth bonus removed — Part 45)
 	local elementalMult = 1.0
 	if isFireRecipe(itemName) and PlayerState.IsOilPrimed(target) then
 		elementalMult = C.Elemental.OilFireMultiplier
 		PlayerState.ClearOilPrimer(target)
 	end
-	local clAfterElemental = clAfterDepth * elementalMult
+	local clAfterElemental = clAfterAllergy * elementalMult
 
-	-- 4. Mark bonus (read BEFORE applying new mark)
+	-- 3. Mark bonus (read BEFORE applying new mark)
 	local mark = PlayerState.GetActiveMark(target)
 	local markBonus = 0
 	if mark and tick() < mark.expiresAt then
 		markBonus = clAfterElemental * mark.bonus
 	end
 	local clAfterMark = clAfterElemental + markBonus
-	local markIngredients = { Tomato=true, ["Soy Sauce"]=true, ["Black Garlic"]=true }
+	-- Phase 1 mark ingredients: Tomato (+15%) and Soy Sauce (+20%)
+	local markIngredients = { Tomato=true, ["Soy Sauce"]=true }
 	if markIngredients[itemName] then
 		PlayerState.ApplyMarkToTarget(target, { name=itemName })
 	end
 
-	-- 5. Favourite bonus
+	-- 4. Favourite bonus
 	local favBonus = 0
 	if aState.favourite and aState.favourite == itemName then
 		favBonus = math.min(baseCL * C.Favourite.ThrowBonusMultiplier, C.Favourite.ThrowBonusCap)
 	end
 	local finalCL = math.max(0, clAfterMark + favBonus)
 
-	-- 6. Apply CL
+	-- 5. Apply CL
 	if finalCL > 0 then
 		PlayerState.ModifyCL(target, finalCL)
 		PlayerState.RecordCLDealt(attacker, finalCL)
 		PlayerState.AddPoints(attacker, finalCL * C.Points.DirectHitPerCL)
 	end
 
-	-- 7. Apply FL
+	-- 6. Apply FL
 	local isCooked = itemData.cooked == true
 	local flDelta  = isCooked and C.FLPerHit.Cooked or C.FLPerHit.RawCold
 	if tState.favourite and tState.favourite == itemName then
@@ -223,22 +208,22 @@ local function applyDamage(attacker, target, itemData, itemName)
 	PlayerState.ModifyFL(target, flDelta)
 	if flDelta > 0 then PlayerState.RecordFLDealt(attacker, flDelta) end
 
-	-- 8. Oil primer
+	-- 7. Oil primer
 	if isOilIngredient(itemName) then PlayerState.ApplyOilPrimer(target) end
 
-	-- 9. Hit-reveal
+	-- 8. Hit-reveal
 	if _G.InspectCheckHitReveal then
 		_G.InspectCheckHitReveal(attacker, target, itemName, itemAllergy)
 	end
 
-	-- 10. Elimination
+	-- 9. Elimination
 	local tState2 = PlayerState.Get(target)
 	if tState2 and tState2.cl >= 100 then
 		PlayerState.EliminatePlayer(target, attacker)
 		PlayerState.AddPoints(attacker, C.Points.DownEnemy)
 	end
 
-	-- 11. Big-hit announcement
+	-- 10. Big-hit announcement
 	local Announce = Remotes:FindFirstChild("Announce")
 	if Announce and finalCL >= 60 then
 		local atkName = attacker.DisplayName or attacker.Name
