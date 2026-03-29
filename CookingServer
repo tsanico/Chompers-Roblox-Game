@@ -579,7 +579,7 @@ function resolveCook(player, part, zone, missedWindow)
 	HideCookUI:FireClient(player)
 
 	print(string.format("[CookingServer] %s cooked %s → %s (CL=%d)",
-		player.Name, finalDish.name, finalZone, finalDish.cl))
+		player.Name, finalDish.name, finalDish.cookZone or finalZone, finalDish.cl))
 end
 
 -- StopHeatBar: client pressed E with their needle position
