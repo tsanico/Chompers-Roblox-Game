@@ -138,6 +138,7 @@ local charging           = false
 local holdStart          = 0
 local chargeBlockedUntil = 0
 local preChargeSpeed     = nil
+local smoothedAimPoint   = nil   -- lerped aim for preview stability
 
 -- ── Helpers ────────────────────────────────────────────────────
 local function isBlocked()
@@ -148,6 +149,27 @@ local function isBlocked()
 	local hum  = char and char:FindFirstChildOfClass("Humanoid")
 	if not hum or hum.Health <= 0 then return true end
 	return false
+end
+
+-- Clamp raw aim point to charge-based max range (flat horizontal)
+local function clampAimPoint(origin, rawTarget, horizSpeed)
+	local minRange = C.MinRange or 20
+	local maxRange = C.MaxRange or 50
+	local alpha    = math.clamp(
+		(horizSpeed - (C.MinSpeed or 66)) / math.max((C.MaxSpeed or 85) - (C.MinSpeed or 66), 1),
+		0, 1)
+	local allowed  = minRange + (maxRange - minRange) * alpha
+
+	local flat = Vector3.new(rawTarget.X - origin.X, 0, rawTarget.Z - origin.Z)
+	local dist = flat.Magnitude
+	if dist < 0.001 then
+		local look = camera.CFrame.LookVector
+		flat = Vector3.new(look.X, 0, look.Z)
+		dist = math.max(flat.Magnitude, 0.001)
+	end
+	local clamped = flat.Unit * math.min(dist, allowed)
+	local y = math.clamp(rawTarget.Y, origin.Y - 8, origin.Y + 12)
+	return Vector3.new(origin.X, 0, origin.Z) + clamped + Vector3.new(0, y, 0)
 end
 
 local function getHumanoid()
@@ -230,16 +252,11 @@ end
 -- ── Throw — fires after delivery delay ─────────────────────────
 local function doThrow(horizSpeed)
 	local origin = getOrigin(); if not origin then return end
-	local aimPt  = getAimPoint()
-	-- Clamp aim to range for this charge level
-	local flat  = Vector3.new(aimPt.X - origin.X, 0, aimPt.Z - origin.Z)
-	local range = C.MinRange + (C.MaxRange - C.MinRange) *
-		math.clamp((horizSpeed - C.MinSpeed) / math.max(C.MaxSpeed - C.MinSpeed, 1), 0, 1)
-	if flat.Magnitude > range then
-		aimPt = origin + (flat.Unit * range) + Vector3.new(0, aimPt.Y - origin.Y, 0)
-	end
+	local rawAim = smoothedAimPoint or getAimPoint()
+	local aimPt  = clampAimPoint(origin, rawAim, horizSpeed)
 	local slot = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
 	ThrowFood:FireServer(slot, horizSpeed, aimPt)
+	smoothedAimPoint = nil   -- reset after throw
 end
 
 -- ── End charge (release or auto-fire) ─────────────────────────
@@ -291,10 +308,16 @@ RunService.Heartbeat:Connect(function()
 		local origin = getOrigin()
 		if origin then
 			local horizSpeed = getChargeParams(elapsed)
-			local aimPt      = getAimPoint()
+			local rawAim     = getAimPoint()
+
+			-- Smooth aim point to kill shift-lock jitter (0.12s lerp)
+			if not smoothedAimPoint then smoothedAimPoint = rawAim end
+			smoothedAimPoint = smoothedAimPoint:Lerp(rawAim, 0.18)
+
+			-- Clamp to charge-based range BEFORE preview so arc matches throw
+			local aimPt = clampAimPoint(origin, smoothedAimPoint, horizSpeed)
 
 			-- During grace overdraw: add Perlin drift to PREVIEW only
-			-- Actual throw aim is locked at release — this is purely visual
 			if inGrace then
 				local driftT   = math.clamp((elapsed - MAX_CHARGE) / (MAX_HOLD - MAX_CHARGE), 0, 1)
 				local driftMag = driftT * DRIFT_MAX
@@ -308,6 +331,7 @@ RunService.Heartbeat:Connect(function()
 		end
 	else
 		hideArcDots()
+		smoothedAimPoint = nil   -- reset so next charge starts fresh
 	end
 
 	-- Before minimum — bar hidden, hint label visible
