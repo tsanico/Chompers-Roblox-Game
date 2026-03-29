@@ -213,7 +213,7 @@ startPrelobby = function()
 
 	-- Maximum wait: 90s
 	-- Will also start early if 8+ ready
-	phaseTimer = task.delay(C.Phase.PreglobbyMaxWait, function()
+	phaseTimer = task.delay(C.Phase.Prelobby, function()
 		if currentPhase == PHASE.PRELOBBY then
 			if #Players:GetPlayers() >= C.Phase.PreglobbyMinPlayers then
 				startGathering()
