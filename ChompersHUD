@@ -1110,6 +1110,73 @@ onR("TimerUpdate",       function(secs)
 	TimerLabel.Text=m..":"..(s<10 and "0" or "")..s
 	TimerLabel.TextColor3=secs<=30 and C.warn or C.gold
 end)
+
+-- ── Bathroom overlay ──────────────────────────────────────────
+-- Small pill that appears when player is inside a bathroom stall.
+-- Shows a countdown timer and which fixtures are available.
+local BathroomOverlay = Instance.new("Frame", Gui)
+BathroomOverlay.Name              = "BathroomOverlay"
+BathroomOverlay.Size              = UDim2.new(0, 260, 0, 64)
+BathroomOverlay.AnchorPoint       = Vector2.new(0.5, 0)
+BathroomOverlay.Position          = UDim2.new(0.5, 0, 0, 14)
+BathroomOverlay.BackgroundColor3  = Color3.fromRGB(14, 12, 24)
+BathroomOverlay.BorderSizePixel   = 0
+BathroomOverlay.Visible           = false
+BathroomOverlay.ZIndex            = 18
+do
+    local c = Instance.new("UICorner", BathroomOverlay)
+    c.CornerRadius = UDim.new(0, 10)
+    local s = Instance.new("UIStroke", BathroomOverlay)
+    s.Color = Color3.fromRGB(60, 160, 220); s.Thickness = 1.5
+end
+local BathroomIcon = Instance.new("TextLabel", BathroomOverlay)
+BathroomIcon.Size               = UDim2.new(0, 48, 1, 0)
+BathroomIcon.BackgroundTransparency = 1
+BathroomIcon.Text               = "🚽"
+BathroomIcon.Font               = Enum.Font.GothamBold
+BathroomIcon.TextSize           = 32
+BathroomIcon.ZIndex             = 19
+
+local BathroomLabel = Instance.new("TextLabel", BathroomOverlay)
+BathroomLabel.Size              = UDim2.new(1, -52, 0, 28)
+BathroomLabel.Position          = UDim2.new(0, 50, 0, 6)
+BathroomLabel.BackgroundTransparency = 1
+BathroomLabel.Text              = "In the bathroom"
+BathroomLabel.Font              = Enum.Font.GothamBlack
+BathroomLabel.TextSize          = 17
+BathroomLabel.TextColor3        = Color3.fromRGB(100, 200, 255)
+BathroomLabel.TextXAlignment    = Enum.TextXAlignment.Left
+BathroomLabel.ZIndex            = 19
+
+local BathroomTimerLabel = Instance.new("TextLabel", BathroomOverlay)
+BathroomTimerLabel.Size         = UDim2.new(1, -52, 0, 22)
+BathroomTimerLabel.Position     = UDim2.new(0, 50, 0, 36)
+BathroomTimerLabel.BackgroundTransparency = 1
+BathroomTimerLabel.Text         = "10s remaining"
+BathroomTimerLabel.Font         = Enum.Font.GothamBold
+BathroomTimerLabel.TextSize     = 14
+BathroomTimerLabel.TextColor3   = Color3.fromRGB(170, 160, 200)
+BathroomTimerLabel.TextXAlignment = Enum.TextXAlignment.Left
+BathroomTimerLabel.ZIndex       = 19
+
+onR("BathroomEnter", function(breaksLeft)
+    BathroomLabel.Text = "In the bathroom  ("..tostring(breaksLeft).." break"..(breaksLeft==1 and "" or "s").." left)"
+    BathroomTimerLabel.Text = "10s remaining — Use Sink 🚿 or Toilet 🚽"
+    BathroomOverlay.Visible = true
+end)
+onR("BathroomExit", function()
+    BathroomOverlay.Visible = false
+end)
+onR("BathroomTimer", function(secsLeft)
+    if secsLeft <= 0 then
+        BathroomOverlay.Visible = false
+        return
+    end
+    BathroomTimerLabel.Text = secsLeft.."s remaining"
+    BathroomTimerLabel.TextColor3 = secsLeft <= 3
+        and Color3.fromRGB(220, 80, 60)
+        or  Color3.fromRGB(170, 160, 200)
+end)
 -- Scoreboard data — route to _G.Chompers.UpdateScoreboard (implemented by StoreGuide)
 onR("UpdateScoreboard", function(data) _G.Chompers.UpdateScoreboard(data) end)
 onR("ScoreboardData",   function(data) _G.Chompers.UpdateScoreboard(data) end)
