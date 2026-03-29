@@ -644,9 +644,9 @@ function PlayerState.EnterBathroom(player)
 	local s = _state[player]
 	if not s then return false end
 	if s.pottyBreaks <= 0 then return false end
-	if s.cl < C.CL.BathroomThreshold and s.fl < C.FL.BathroomThreshold then
-		return false  -- neither bar at 80%+
-	end
+	-- Bathroom requires CL ≥ 80% OR FL ≥ 80% (or forced at 100% FL)
+	if s.cl < 80 and s.fl < 80 then return false end
+	if s.inBathroom then return false end   -- already inside
 	s.inBathroom = true
 	s.bathroomResetTime = nil
 	return true
