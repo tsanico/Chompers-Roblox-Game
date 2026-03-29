@@ -1,248 +1,372 @@
 -- ============================================================
--- CharacterController — LocalScript
--- Location: StarterPlayerScripts > CharacterController
+-- WelcomeScreen — LocalScript · StarterPlayerScripts
 --
--- Owns all client-side character movement feel:
---   • Jump power: 40 (Bible-spec — floaty but not broken)
---   • Low air control: 0.2s cooldown before direction change mid-air
---   • Speed: driven by UpdateSpeed remote from PlayerState
---   • Applies speed multiplier from server without trusting the client
+-- Shows once per session on first character spawn.
+-- Gates shift-lock until both this screen and StoreGuide
+-- are dismissed by the player.
 --
--- The server (PlayerState) owns the authoritative speed value.
--- This script receives it and applies it to the Humanoid.
--- It never calculates speed itself — that stays server-side.
+-- _G.Chompers.WelcomeScreenActive = true  → blocks StoreGuide auto-open
+-- CONFIRM pressed                         → opens StoreGuide to PREFERENCES
+-- StoreGuide closed                       → 
 -- ============================================================
 
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService  = game:GetService("UserInputService")
-local RunService        = game:GetService("RunService")
+local Players      = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
 
 local player    = Players.LocalPlayer
-local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes")
+local playerGui = player:WaitForChild("PlayerGui")
 
--- ── Config ──────────────────────────────────────────────────
-local BASE_WALK_SPEED   = 16
-local JUMP_POWER        = 40
-local AIR_CONTROL_DELAY = 0.2
-local CAMERA_OFFSET     = Vector3.new(1.75, 0, 0)   -- shift-lock right-offset
+-- Block StoreGuide auto-open and shift-lock immediately
+_G.Chompers                      = _G.Chompers or {}
+_G.Chompers.WelcomeScreenActive  = true
 
--- ── State ───────────────────────────────────────────────────
-local currentSpeedMult  = 1.0
-local isAirborne        = false
-local airTime           = 0
-local lastGroundedTime  = tick()
 
--- ============================================================
--- CHARACTER SETUP
--- Runs every time the character spawns (respawn safe)
--- ============================================================
+-- Session state — persists across respawns
+local dontShowAgain  = false
+local onboardingDone = false
 
-local function setupCharacter(character)
-	local humanoid = character:WaitForChild("Humanoid")
-	local hrp      = character:WaitForChild("HumanoidRootPart")
+-- ── Palette ───────────────────────────────────────────────
+local C = {
+	bg      = Color3.fromRGB(12, 10, 20),
+	panel   = Color3.fromRGB(22, 18, 38),
+	card    = Color3.fromRGB(18, 14, 30),
+	stroke  = Color3.fromRGB(70, 60, 110),
+	gold    = Color3.fromRGB(255, 200, 50),
+	white   = Color3.fromRGB(230, 225, 255),
+	muted   = Color3.fromRGB(130, 120, 165),
+	confirm = Color3.fromRGB(65, 180, 90),
+	confirmH= Color3.fromRGB(85, 210, 110),
+	red     = Color3.fromRGB(226, 75, 74),
+}
 
-	-- Base stats — AutoRotate starts true (normal mode during onboarding UI)
-	-- Shift-lock (AutoRotate=false, mouse lock, camera offset) activates
-	-- only after _G.Chompers.ShiftLockReady = true (set by WelcomeScreen flow)
-	humanoid.JumpPower    = JUMP_POWER
-	humanoid.WalkSpeed    = BASE_WALK_SPEED * currentSpeedMult
-	humanoid.AutoRotate   = true
-	humanoid.CameraOffset = Vector3.new(0, 0, 0)
+-- ── UI helpers ────────────────────────────────────────────
+local function corner(inst, r)
+	Instance.new("UICorner", inst).CornerRadius = UDim.new(0, r or 10)
+end
+local function mkStroke(inst, col, t)
+	local s = Instance.new("UIStroke", inst)
+	s.Color = col; s.Thickness = t or 1.5
+end
 
-	-- ── Air control: dampen direction input while airborne ──
-	local stateConn
-	stateConn = humanoid.StateChanged:Connect(function(_, newState)
-		if newState == Enum.HumanoidStateType.Jumping
-		or newState == Enum.HumanoidStateType.Freefall then
-			isAirborne = true
-			airTime    = tick()
+-- ── Card builder (matches allergen tab style) ─────────────
+-- emoji 48px left | title 22px GothamBlack | body 17px GothamBold
+local function makeCard(parent, emoji, title, body, accentColor, order)
+	local card = Instance.new("Frame", parent)
+	card.Size             = UDim2.new(1, 0, 0, 114)
+	card.BackgroundColor3 = C.card
+	card.BorderSizePixel  = 0
+	card.LayoutOrder      = order or 0
+	card.ZIndex           = 6
+	corner(card, 12)
 
-		elseif newState == Enum.HumanoidStateType.Landed
-		or newState == Enum.HumanoidStateType.Running
-		or newState == Enum.HumanoidStateType.RunningNoPhysics
-		or newState == Enum.HumanoidStateType.StrafingNoPhysics then
-			isAirborne       = false
-			lastGroundedTime = tick()
-		end
+	-- Left accent bar
+	local bar = Instance.new("Frame", card)
+	bar.Size             = UDim2.new(0, 6, 1, -16)
+	bar.Position         = UDim2.new(0, 8, 0, 8)
+	bar.BackgroundColor3 = accentColor
+	bar.BorderSizePixel  = 0
+	bar.ZIndex           = 7
+	corner(bar, 3)
+
+	-- Large emoji column
+	local emojiL = Instance.new("TextLabel", card)
+	emojiL.Size               = UDim2.new(0, 64, 1, 0)
+	emojiL.Position           = UDim2.new(0, 16, 0, 0)
+	emojiL.BackgroundTransparency = 1
+	emojiL.Text               = emoji
+	emojiL.Font               = Enum.Font.GothamBold
+	emojiL.TextSize           = 48
+	emojiL.TextXAlignment     = Enum.TextXAlignment.Center
+	emojiL.TextYAlignment     = Enum.TextYAlignment.Center
+	emojiL.ZIndex             = 7
+
+	-- Title
+	local titleL = Instance.new("TextLabel", card)
+	titleL.Size           = UDim2.new(1, -96, 0, 30)
+	titleL.Position       = UDim2.new(0, 84, 0, 12)
+	titleL.BackgroundTransparency = 1
+	titleL.Text           = title
+	titleL.Font           = Enum.Font.GothamBlack
+	titleL.TextSize       = 22
+	titleL.TextColor3     = accentColor
+	titleL.TextXAlignment = Enum.TextXAlignment.Left
+	titleL.ZIndex         = 7
+
+	-- Body
+	local bodyL = Instance.new("TextLabel", card)
+	bodyL.Size            = UDim2.new(1, -96, 0, 62)
+	bodyL.Position        = UDim2.new(0, 84, 0, 44)
+	bodyL.BackgroundTransparency = 1
+	bodyL.Text            = body
+	bodyL.Font            = Enum.Font.GothamBold
+	bodyL.TextSize        = 17
+	bodyL.TextColor3      = C.white
+	bodyL.TextXAlignment  = Enum.TextXAlignment.Left
+	bodyL.TextWrapped     = true
+	bodyL.LineHeight      = 1.25
+	bodyL.ZIndex          = 7
+
+	return card
+end
+
+-- ── Build the full welcome GUI ────────────────────────────
+local function buildWelcomeGui()
+	local sg = Instance.new("ScreenGui")
+	sg.Name           = "WelcomeScreen"
+	sg.ResetOnSpawn   = false
+	sg.IgnoreGuiInset = true
+	sg.DisplayOrder   = 50
+	sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	sg.Parent         = playerGui
+
+	-- Dim overlay
+	local overlay = Instance.new("Frame", sg)
+	overlay.Name                  = "Overlay"
+	overlay.Size                  = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3      = Color3.fromRGB(0, 0, 0)
+	overlay.BackgroundTransparency = 0.38
+	overlay.BorderSizePixel       = 0
+	overlay.ZIndex                = 2
+
+	-- Main panel — large, percentage-based
+	local panel = Instance.new("Frame", sg)
+	panel.Name              = "Panel"
+	panel.Size              = UDim2.new(0, 860, 0, 780)
+	panel.AnchorPoint       = Vector2.new(0.5, 0.5)
+	panel.Position          = UDim2.new(0.5, 0, 0.5, 0)
+	panel.BackgroundColor3  = C.panel
+	panel.BorderSizePixel   = 0
+	panel.ZIndex            = 3
+	corner(panel, 18)
+	mkStroke(panel, C.stroke, 2)
+
+	-- ── Title bar ──────────────────────────────────────────
+	local titleBar = Instance.new("Frame", panel)
+	titleBar.Size             = UDim2.new(1, 0, 0, 90)
+	titleBar.BackgroundColor3 = Color3.fromRGB(16, 12, 28)
+	titleBar.BorderSizePixel  = 0
+	titleBar.ZIndex           = 4
+	corner(titleBar, 18)
+	-- Fill bottom corners of title bar
+	local tbFill = Instance.new("Frame", titleBar)
+	tbFill.Size             = UDim2.new(1, 0, 0, 20)
+	tbFill.Position         = UDim2.new(0, 0, 1, -20)
+	tbFill.BackgroundColor3 = Color3.fromRGB(16, 12, 28)
+	tbFill.BorderSizePixel  = 0
+	tbFill.ZIndex           = 4
+
+	local mainTitle = Instance.new("TextLabel", titleBar)
+	mainTitle.Size               = UDim2.new(1, -28, 0, 46)
+	mainTitle.Position           = UDim2.new(0, 14, 0, 10)
+	mainTitle.BackgroundTransparency = 1
+	mainTitle.Text               = "🛒  CHOMPERS' FRESH MARKET"
+	mainTitle.Font               = Enum.Font.GothamBlack
+	mainTitle.TextSize           = 32
+	mainTitle.TextColor3         = C.gold
+	mainTitle.TextXAlignment     = Enum.TextXAlignment.Left
+	mainTitle.ZIndex             = 5
+
+	local subTitle = Instance.new("TextLabel", titleBar)
+	subTitle.Size               = UDim2.new(1, -28, 0, 22)
+	subTitle.Position           = UDim2.new(0, 14, 0, 60)
+	subTitle.BackgroundTransparency = 1
+	subTitle.Text               = "Official Briefing — read this before you throw anything."
+	subTitle.Font               = Enum.Font.GothamMedium
+	subTitle.TextSize           = 16
+	subTitle.TextColor3         = C.muted
+	subTitle.TextXAlignment     = Enum.TextXAlignment.Left
+	subTitle.ZIndex             = 5
+
+	-- ── Scrollable content ─────────────────────────────────
+	local scroll = Instance.new("ScrollingFrame", panel)
+	scroll.Name                    = "Content"
+	scroll.Size                    = UDim2.new(1, -32, 0, 566)
+	scroll.Position                = UDim2.new(0, 16, 0, 100)
+	scroll.BackgroundTransparency  = 1
+	scroll.BorderSizePixel         = 0
+	scroll.ScrollBarThickness      = 5
+	scroll.ScrollBarImageColor3    = C.stroke
+	scroll.CanvasSize              = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize     = Enum.AutomaticSize.Y
+	scroll.ZIndex                  = 4
+
+	local layout = Instance.new("UIListLayout", scroll)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding   = UDim.new(0, 10)
+
+	local pad = Instance.new("UIPadding", scroll)
+	pad.PaddingTop    = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+
+	-- ── Cards ──────────────────────────────────────────────
+	local green  = Color3.fromRGB(80,  200, 100)
+	local orange = Color3.fromRGB(255, 150, 50)
+	local blue   = Color3.fromRGB(80,  160, 255)
+	local purple = Color3.fromRGB(180, 100, 255)
+	local teal   = Color3.fromRGB(60,  200, 180)
+
+	makeCard(scroll, "1️⃣",
+		"GATHER",
+		"Explore the store and grab ingredients from the shelves. Find extra cash outside in the car park. Nothing leaves unpaid — visit Checkout before cooking.",
+		green, 1)
+
+	makeCard(scroll, "2️⃣",
+		"COOK",
+		"Take paid ingredients to the Prep Table, then finish them at the Stovetop. Perfect heat = more damage. Burned dishes hit softer but make status effects nastier.",
+		orange, 2)
+
+	makeCard(scroll, "3️⃣",
+		"FOOD FIGHT",
+		"Throw food at other players to raise their Cleanliness. Last Chef Standing earns the Golden Apron. Cooked dishes hit much harder than raw ingredients.",
+		C.red, 3)
+
+	makeCard(scroll, "🧼",
+		"CLEANLINESS",
+		"Your health bar. Enemies raise it by hitting you with food. Hit 100% and you drop everything in a full-blown grocery disaster.",
+		blue, 4)
+
+	makeCard(scroll, "🍔",
+		"FULLNESS",
+		"Your pressure bar. Rises as food hits you. Too much Fullness makes you bigger and slower. Hit 100% — same humiliation as Cleanliness.",
+		purple, 5)
+
+	makeCard(scroll, "🚽",
+		"BATHROOMS",
+		"Resets your bars. Sink clears Cleanliness. Stall clears Fullness. Each Chef only gets 3 Potty Breaks per match. Spend them like they matter.",
+		teal, 6)
+
+	makeCard(scroll, "🤝",
+		"ALLIANCES",
+		"Buy a Friendship Bracelet during Gathering to team up. At the end of the match, alliances must decide — leave together or fight to the last Chef.",
+		C.gold, 7)
+
+	makeCard(scroll, "🎯",
+		"SHIFT-LOCK (RECOMMENDED)",
+		"Enable Shift-Lock in Roblox settings for easier aiming and throwing. Look for the padlock icon in the bottom-right of your screen while playing. Close this guide first — it makes a big difference.",
+		Color3.fromRGB(160, 160, 255), 8)
+
+	-- ── Bottom bar ─────────────────────────────────────────
+	local btBar = Instance.new("Frame", panel)
+	btBar.Name             = "BottomBar"
+	btBar.Size             = UDim2.new(1, 0, 0, 70)
+	btBar.Position         = UDim2.new(0, 0, 1, -70)
+	btBar.BackgroundColor3 = Color3.fromRGB(14, 11, 24)
+	btBar.BorderSizePixel  = 0
+	btBar.ZIndex           = 4
+	corner(btBar, 18)
+	local btFill2 = Instance.new("Frame", btBar)
+	btFill2.Size             = UDim2.new(1, 0, 0, 22)
+	btFill2.BackgroundColor3 = Color3.fromRGB(14, 11, 24)
+	btFill2.BorderSizePixel  = 0
+	btFill2.ZIndex           = 4
+
+	-- Don't-show checkbox
+	local dontBtn = Instance.new("TextButton", btBar)
+	dontBtn.Size               = UDim2.new(0, 220, 0, 34)
+	dontBtn.Position           = UDim2.new(0, 16, 0, 18)
+	dontBtn.BackgroundColor3   = Color3.fromRGB(28, 22, 45)
+	dontBtn.BorderSizePixel    = 0
+	dontBtn.Text               = "☐  Don't show again"
+	dontBtn.Font               = Enum.Font.GothamMedium
+	dontBtn.TextSize           = 15
+	dontBtn.TextColor3         = C.muted
+	dontBtn.AutoButtonColor    = false
+	dontBtn.ZIndex             = 5
+	corner(dontBtn, 8)
+
+	-- Confirm button
+	local confirmBtn = Instance.new("TextButton", btBar)
+	confirmBtn.Name            = "ConfirmBtn"
+	confirmBtn.Size            = UDim2.new(0, 280, 0, 44)
+	confirmBtn.AnchorPoint     = Vector2.new(1, 0.5)
+	confirmBtn.Position        = UDim2.new(1, -16, 0.5, 0)
+	confirmBtn.BackgroundColor3= C.confirm
+	confirmBtn.BorderSizePixel = 0
+	confirmBtn.Text            = "CHOOSE YOUR PREFERENCES  →"
+	confirmBtn.Font            = Enum.Font.GothamBlack
+	confirmBtn.TextSize        = 17
+	confirmBtn.TextColor3      = Color3.fromRGB(255, 255, 255)
+	confirmBtn.AutoButtonColor = false
+	confirmBtn.ZIndex          = 5
+	corner(confirmBtn, 10)
+
+	-- Checkbox toggle
+	local dontChecked = false
+	dontBtn.MouseButton1Click:Connect(function()
+		dontChecked = not dontChecked
+		dontBtn.Text      = dontChecked and "☑  Don't show again" or "☐  Don't show again"
+		dontBtn.TextColor3 = dontChecked and C.gold or C.muted
 	end)
 
-	-- ── RenderStepped: speed + conditional shift-lock ──────────
-	local camera        = workspace.CurrentCamera
-	local prevShiftLock = nil   -- track transitions to avoid redundant property sets
-	local renderConn
-	renderConn = RunService.RenderStepped:Connect(function()
-		if not humanoid or not humanoid.Parent then
-			renderConn:Disconnect()
-			stateConn:Disconnect()
-			return
+	-- Confirm hover
+	confirmBtn.MouseEnter:Connect(function()
+		confirmBtn.BackgroundColor3 = C.confirmH
+	end)
+	confirmBtn.MouseLeave:Connect(function()
+		confirmBtn.BackgroundColor3 = C.confirm
+	end)
+
+	return sg, confirmBtn, function() return dontChecked end
+end
+
+-- ── Main onboarding flow ──────────────────────────────────
+local function runOnboarding()
+	if onboardingDone then return end
+
+	if dontShowAgain then
+		_G.Chompers.WelcomeScreenActive = false
+		task.wait(0.5)
+		if _G.Chompers.OpenStoreGuide then
+			_G.Chompers.OpenStoreGuide("PREFERENCES")
 		end
+		return
+	end
 
-		-- Shift-lock gate: only active after onboarding is complete
-		local shiftLock = (_G.Chompers and _G.Chompers.ShiftLockReady == true)
+	local sg, confirmBtn, getDontShow = buildWelcomeGui()
 
-		-- On transition (false→true or true→false), update properties
-		if shiftLock ~= prevShiftLock then
-			prevShiftLock         = shiftLock
-			humanoid.AutoRotate   = not shiftLock
-			humanoid.CameraOffset = shiftLock and CAMERA_OFFSET or Vector3.new(0, 0, 0)
+	-- Tween in
+	local panel = sg:FindFirstChild("Panel")
+	if panel then
+		panel.Position = UDim2.new(0.5, 0, 0.6, 0)
+		TweenService:Create(panel,
+			TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
+	end
+
+	confirmBtn.MouseButton1Click:Connect(function()
+		dontShowAgain = getDontShow()
+		onboardingDone = true
+		_G.Chompers.WelcomeScreenActive = false
+
+		if panel then
+			TweenService:Create(panel,
+				TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{Position = UDim2.new(0.5, 0, 0.42, 0)}):Play()
 		end
+		TweenService:Create(sg:FindFirstChild("Overlay"),
+			TweenInfo.new(0.18),
+			{BackgroundTransparency = 1}):Play()
 
-		if shiftLock then
-			-- Shift-lock active: lock mouse + rotate character to face camera
-			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-
-			local camLook  = camera.CFrame.LookVector
-			local flatLook = Vector3.new(camLook.X, 0, camLook.Z)
-			if flatLook.Magnitude > 0.01 then
-				local angle = math.atan2(-flatLook.X, -flatLook.Z)
-				hrp.CFrame  = CFrame.new(hrp.Position)
-					* CFrame.fromEulerAnglesYXZ(0, angle, 0)
+		task.delay(0.22, function()
+			sg:Destroy()
+			if _G.Chompers.OpenStoreGuide then
+				_G.Chompers.OpenStoreGuide("PREFERENCES")
 			end
-		else
-			-- Onboarding UI open: free mouse so player can click buttons
-			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		end
-
-		-- Speed (always)
-		local targetSpeed = BASE_WALK_SPEED * currentSpeedMult
-		if isAirborne then
-			local elapsed = tick() - airTime
-			if elapsed < AIR_CONTROL_DELAY then
-				local alpha = elapsed / AIR_CONTROL_DELAY
-				targetSpeed = humanoid.WalkSpeed + (targetSpeed - humanoid.WalkSpeed) * alpha
-			end
-		end
-		humanoid.WalkSpeed = targetSpeed
-	end)
-
-	-- Clean up on character removal
-	character.AncestryChanged:Connect(function()
-		if not character.Parent then
-			pcall(function() renderConn:Disconnect() end)
-			pcall(function() stateConn:Disconnect() end)
-		end
+		end)
 	end)
 end
 
--- ============================================================
--- SPEED REMOTE — server tells client what multiplier to use
--- ============================================================
-
-Remotes:WaitForChild("UpdateSpeed").OnClientEvent:Connect(function(mult)
-	currentSpeedMult = math.max(mult, 0.35)   -- enforce 35% floor client-side too
-
-	-- Apply immediately to existing character if present
-	local character = player.Character
-	local humanoid  = character and character:FindFirstChild("Humanoid")
-	if humanoid then
-		humanoid.WalkSpeed = BASE_WALK_SPEED * currentSpeedMult
+-- ── Character spawn hook ──────────────────────────────────
+player.CharacterAdded:Connect(function()
+	if not onboardingDone then
+		_G.Chompers.WelcomeScreenActive = true
+		task.wait(0.2)
+		runOnboarding()
 	end
 end)
 
--- ============================================================
--- CL / FL WARN VISUAL FEEDBACK (Part 3)
--- Subtle screen effects when bars approach 100%
--- ============================================================
-
-local function flashScreenEdge(color)
-	-- Simple: tween a full-screen frame briefly
-	local screenGui = player.PlayerGui:FindFirstChild("ChompersHUD")
-	if not screenGui then return end
-	local edgeFrame = screenGui:FindFirstChild("BarWarningFlash")
-	if not edgeFrame then return end
-
-	-- Make visible, fade out over 0.75s
-	edgeFrame.BackgroundColor3 = color
-	edgeFrame.BackgroundTransparency = 0.3
-	task.delay(0.75, function()
-		-- Fade back
-		for i = 1, 10 do
-			task.wait(0.05)
-			edgeFrame.BackgroundTransparency = 0.3 + (0.7 * (i / 10))
-		end
-		edgeFrame.BackgroundTransparency = 1
-	end)
+if player.Character and not onboardingDone then
+	_G.Chompers.WelcomeScreenActive = true
+	task.wait(0.5)
+	runOnboarding()
 end
-
--- ── HitPlayer remote carries multiple signal types ──────────
-Remotes:WaitForChild("HitPlayer").OnClientEvent:Connect(function(signal, ...)
-	if signal == "cl_warn" then
-		-- ~95% CL — red warning slow + screen edge
-		flashScreenEdge(Color3.fromRGB(200, 50, 50))
-		-- 0.75s slow on character
-		local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-		if humanoid then
-			local orig = humanoid.WalkSpeed
-			humanoid.WalkSpeed = orig * 0.40
-			task.delay(0.75, function()
-				humanoid.WalkSpeed = orig
-			end)
-		end
-
-	elseif signal == "fl_warn" then
-		-- ~95% FL — orange warning
-		flashScreenEdge(Color3.fromRGB(220, 120, 30))
-		local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-		if humanoid then
-			local orig = humanoid.WalkSpeed
-			humanoid.WalkSpeed = orig * 0.40
-			task.delay(0.75, function()
-				humanoid.WalkSpeed = orig
-			end)
-		end
-
-	elseif signal == "state100" then
-		-- 0.5s dramatic slow — both bars if applicable
-		local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-		if humanoid then
-			humanoid.WalkSpeed = 0
-			task.delay(0.5, function()
-				-- Speed is re-applied next RenderStepped tick from currentSpeedMult
-				-- which PlayerState already updated via UpdateSpeed
-			end)
-		end
-	end
-end)
-
--- ============================================================
--- PHASE-BASED RESTRICTIONS
--- During Prelobby, keep players in the car park
--- (the map boundaries do this physically but we can also
---  disable jumping in prelobby if needed — for now just note it)
--- ============================================================
-
-Remotes:WaitForChild("PhaseChanged").OnClientEvent:Connect(function(newPhase)
-	local character = player.Character
-	local humanoid  = character and character:FindFirstChild("Humanoid")
-	if not humanoid then return end
-
-	if newPhase == "Prelobby" then
-		-- Normal movement in prelobby
-		humanoid.JumpPower = JUMP_POWER
-
-	elseif newPhase == "Gathering"
-	or newPhase == "Cooking"
-	or newPhase == "CookingGrace"
-	or newPhase == "FoodFight" then
-		-- Full movement in all active phases
-		humanoid.JumpPower = JUMP_POWER
-
-	elseif newPhase == "EndGame"
-	or newPhase == "Accolades" then
-		-- Freeze movement at end of match (cosmetic — players watch accolades)
-		humanoid.WalkSpeed = 0
-		humanoid.JumpPower = 0
-	end
-end)
-
--- ============================================================
--- CONNECT TO PLAYER CHARACTER
--- ============================================================
-
--- Character might already exist if script runs late
-if player.Character then
-	setupCharacter(player.Character)
-end
-
-player.CharacterAdded:Connect(setupCharacter)
