@@ -255,10 +255,10 @@ startFoodFight = function()
 				return
 			end
 
-			-- Hard cap
+			-- Hard cap — timer expiry: no True Winner (Last Chef Standing not awarded)
 			if elapsed >= C.Phase.FoodFight then
-				print("[GameManager] Food Fight hard cap reached")
-				startEndGame(getActivePlayers())
+				print("[GameManager] Food Fight hard cap reached — no True Winner this match")
+				startEndGame(getActivePlayers(), true)  -- timedOut = true
 				return
 			end
 		end
@@ -266,24 +266,35 @@ startFoodFight = function()
 end
 
 -- ── END GAME ─────────────────────────────────────────────────
-startEndGame = function(survivors)
+-- timedOut: if true, the 6-min cap ended the match. True Win (Last Chef Standing)
+-- is NOT awarded. Grand Grocer + Accolades still fire normally.
+startEndGame = function(survivors, timedOut)
 	cancelTimer()
 	setPhase(PHASE.ENDGAME)
 
-	-- Determine winner(s)
+	local trueWinner = nil
+	if not timedOut and #survivors == 1 then
+		trueWinner = survivors[1]   -- single survivor = Last Chef Standing
+	elseif not timedOut and #survivors > 1 then
+		-- Allied pair victory (Together ending) — both are true winners
+		trueWinner = survivors
+	end
+	-- timedOut or zero survivors = no True Winner
+
 	local winnerNames = {}
 	for _, p in ipairs(survivors) do
 		table.insert(winnerNames, p.Name)
 	end
-	print(string.format("[GameManager] Match over — survivors: %s",
+	print(string.format("[GameManager] Match over%s — survivors: %s",
+		timedOut and " (TIMER EXPIRY — no True Winner)" or "",
 		table.concat(winnerNames, ", ")))
 
-	-- Broadcast end-game to clients (shows Together/Fight decision for allies)
-	PhaseChangedRemote:FireAllClients(PHASE.ENDGAME, survivors)
-	PhaseChangedEvent:Fire(PHASE.ENDGAME, survivors)
+	-- Broadcast end-game to clients with timedOut flag
+	-- Client uses timedOut to skip the Golden Apron display
+	PhaseChangedRemote:FireAllClients(PHASE.ENDGAME, survivors, timedOut)
+	PhaseChangedEvent:Fire(PHASE.ENDGAME, survivors, timedOut)
 
-	-- End-game alliance decision window (30s) is handled by AllianceSystem
-	-- After 45s accolades → new prelobby
+	-- After accolades → new prelobby
 	task.delay(C.Phase.Accolades, function()
 		startPrelobby()
 	end)
