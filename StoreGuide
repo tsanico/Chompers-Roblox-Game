@@ -1034,7 +1034,9 @@ local function selectCart(choice)
     BasketBtn.TextColor3       = bActive and Color3.fromRGB(253,248,240) or C.dim
     CartBtn.BackgroundColor3   = bActive and Color3.fromRGB(28,26,44) or C.red
     CartBtn.TextColor3         = bActive and C.dim or Color3.fromRGB(253,248,240)
-    _G.Chompers.SetContainerType(choice=="basket" and "Basket" or "Cart")
+    if _G.Chompers and _G.Chompers.SetContainerType then
+        _G.Chompers.SetContainerType(choice=="basket" and "Basket" or "Cart")
+    end
     local r = Remotes and Remotes:FindFirstChild("PlayerSelectCart")
     if r then r:FireServer(choice) end
 end
@@ -1065,7 +1067,7 @@ local aDesc=mkLabel(PrefPanel,
     UDim2.new(0.5,PAD/2,0,secY+28),UDim2.new(0.5,-PAD-4,0,110))
 aDesc.TextWrapped=true; aDesc.LineHeight=1.25
 
-local selY = secY+148  -- pushed down to account for larger description text
+local selY = secY+136  -- sits comfortably below description, above scroll
 
 -- Selection display labels — 20px GothamBold, same size as section titles.
 -- Hidden until player makes a selection. Show emoji + name when selected.
