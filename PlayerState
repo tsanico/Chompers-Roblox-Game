@@ -955,7 +955,14 @@ R("EquipTitle").OnServerEvent:Connect(function(player, titleStr)
 end)
 
 -- ReorderInventory: client requests a slot-to-slot move (no holes ever created)
-R("ReorderInventory").OnServerEvent:Connect(function(player, fromSlot, toSlot)
+-- Auto-create the remote here so it always exists even if not in ChompersRemotes folder
+local reorderRemote = Remotes:FindFirstChild("ReorderInventory")
+if not reorderRemote then
+	reorderRemote = Instance.new("RemoteEvent")
+	reorderRemote.Name = "ReorderInventory"
+	reorderRemote.Parent = Remotes
+end
+reorderRemote.OnServerEvent:Connect(function(player, fromSlot, toSlot)
 	if type(fromSlot) ~= "number" or type(toSlot) ~= "number" then return end
 	fromSlot = math.floor(fromSlot); toSlot = math.floor(toSlot)
 	PlayerState.MoveItem(player, fromSlot, toSlot)
