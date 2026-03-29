@@ -110,9 +110,9 @@ local Selections = {
 }
 local isOpen      = false
 local prefsLocked = false
-local activeTab   = "PREFERENCES"
+local activeTab   = "OVERVIEW"   -- default for manual opens; WelcomeScreen routes first-join to PREFERENCES
 local currentPhase = "Prelobby"
-local hasAutoOpened = false   -- only auto-open once on first join
+local hasAutoOpened = false
 
 -- Forward declarations (functions defined later in the file)
 local openGuide, closeGuide
@@ -264,11 +264,12 @@ local tabPanels  = {}
 local tabButtons = {}
 
 local TABS = {
-    {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=1},
-    {id="COOKBOOK",    label="📖 Cookbook",    color=Color3.fromRGB(65,48,128),   order=2},
-    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=3},
+    {id="OVERVIEW",    label="🏠 Overview",    color=Color3.fromRGB(50,130,200),  order=1},
+    {id="RULES",       label="📜 Rules",       color=C.red,                       order=2},
+    {id="COOKBOOK",    label="📖 Cookbook",    color=Color3.fromRGB(65,48,128),   order=3},
     {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=4},
-    {id="RULES",       label="📜 Rules",       color=C.red,                       order=5},
+    {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=5},
+    {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=6},
 }
 
 local function switchTab(id)
@@ -288,7 +289,7 @@ end
 for _, tb in ipairs(TABS) do
     local btn = Instance.new("TextButton", TabBar)
     btn.Name = tb.id.."Tab"; btn.LayoutOrder = tb.order
-    btn.Size = UDim2.new(0.2,-2,0,TAB_H-4)
+    btn.Size = UDim2.new(1/#TABS,-2,0,TAB_H-4)
     btn.BackgroundColor3 = Color3.fromRGB(28,26,42); btn.BorderSizePixel = 0
     btn.Font = Enum.Font.GothamBold; btn.TextSize = 18
     btn.TextColor3 = C.dim; btn.Text = tb.label
@@ -338,6 +339,132 @@ local function mkSubBar(parent, h, tabs, onSwitch)
 end
 
 -- ============================================================
+-- OVERVIEW TAB — 3-step game loop, quick reference
+-- ============================================================
+
+local OverviewPanel = makePanel("OverviewPanel","OVERVIEW")
+local ovScroll = mkScroll(OverviewPanel, UDim2.new(1,-16,1,-10),
+    UDim2.new(0,8,0,5), Color3.fromRGB(50,130,200))
+
+-- Overview card builder (large emoji + title + body, matches allergen style)
+local function addOverviewCard(emoji, title, body, accent, order)
+    local card = Instance.new("Frame", ovScroll)
+    card.Size             = UDim2.new(1,0,0,120)
+    card.BackgroundColor3 = C.bgLight
+    card.BorderSizePixel  = 0
+    card.LayoutOrder      = order
+    card.ZIndex           = 11
+    corner(card, 12)
+
+    local bar = Instance.new("Frame", card)
+    bar.Size             = UDim2.new(0,6,1,-16)
+    bar.Position         = UDim2.new(0,8,0,8)
+    bar.BackgroundColor3 = accent
+    bar.BorderSizePixel  = 0
+    bar.ZIndex           = 12
+    corner(bar, 3)
+
+    local emojiL = Instance.new("TextLabel", card)
+    emojiL.Size               = UDim2.new(0,70,1,0)
+    emojiL.Position           = UDim2.new(0,18,0,0)
+    emojiL.BackgroundTransparency = 1
+    emojiL.Text               = emoji
+    emojiL.Font               = Enum.Font.GothamBold
+    emojiL.TextSize           = 48
+    emojiL.TextXAlignment     = Enum.TextXAlignment.Center
+    emojiL.TextYAlignment     = Enum.TextYAlignment.Center
+    emojiL.ZIndex             = 12
+
+    local titleL = Instance.new("TextLabel", card)
+    titleL.Size           = UDim2.new(1,-100,0,30)
+    titleL.Position       = UDim2.new(0,94,0,14)
+    titleL.BackgroundTransparency = 1
+    titleL.Text           = title
+    titleL.Font           = Enum.Font.GothamBlack
+    titleL.TextSize       = 22
+    titleL.TextColor3     = accent
+    titleL.TextXAlignment = Enum.TextXAlignment.Left
+    titleL.ZIndex         = 12
+
+    local bodyL = Instance.new("TextLabel", card)
+    bodyL.Size            = UDim2.new(1,-100,0,66)
+    bodyL.Position        = UDim2.new(0,94,0,48)
+    bodyL.BackgroundTransparency = 1
+    bodyL.Text            = body
+    bodyL.Font            = Enum.Font.GothamBold
+    bodyL.TextSize        = 17
+    bodyL.TextColor3      = C.white
+    bodyL.TextXAlignment  = Enum.TextXAlignment.Left
+    bodyL.TextWrapped     = true
+    bodyL.LineHeight      = 1.25
+    bodyL.ZIndex          = 12
+end
+
+-- Step cards
+addOverviewCard("1️⃣",
+    "GATHER",
+    "Explore the store. Grab ingredients from shelves, find cash in the car park. Pay for everything at Checkout — nothing cooks unpaid.",
+    Color3.fromRGB(80,200,100), 1)
+
+addOverviewCard("2️⃣",
+    "COOK",
+    "Paid ingredients go to the Prep Table, then the Stovetop. Cook timing matters — perfect heat means more damage, burned dishes trade power for nastier status effects.",
+    Color3.fromRGB(255,150,50), 2)
+
+addOverviewCard("3️⃣",
+    "FOOD FIGHT",
+    "Throw food at other players to fill their Cleanliness bar. First to 100% drops everything. Last Chef Standing wins the Golden Apron.",
+    C.red, 3)
+
+-- Separator header
+local ovDiv = Instance.new("TextLabel", ovScroll)
+ovDiv.Size = UDim2.new(1,0,0,28); ovDiv.BackgroundTransparency = 1
+ovDiv.Text = "THE TWO BARS"; ovDiv.Font = Enum.Font.GothamBold; ovDiv.TextSize = 18
+ovDiv.TextColor3 = C.dim; ovDiv.TextXAlignment = Enum.TextXAlignment.Left
+ovDiv.LayoutOrder = 4; ovDiv.ZIndex = 11
+
+addOverviewCard("🧼",
+    "CLEANLINESS",
+    "Your health bar (0–100). Goes up when hit, never down on its own. At 100% you drop items and slow down. Bathrooms reset it — 3 breaks per match.",
+    Color3.fromRGB(80,160,255), 5)
+
+addOverviewCard("🍔",
+    "FULLNESS",
+    "Your pressure bar (0–100). Rises as food hits you, drains naturally over time. High Fullness makes you bigger and slower. Hits 100% — same chaos as Cleanliness.",
+    Color3.fromRGB(180,100,255), 6)
+
+-- Quick tips
+local tipDiv = Instance.new("TextLabel", ovScroll)
+tipDiv.Size = UDim2.new(1,0,0,28); tipDiv.BackgroundTransparency = 1
+tipDiv.Text = "QUICK TIPS"; tipDiv.Font = Enum.Font.GothamBold; tipDiv.TextSize = 18
+tipDiv.TextColor3 = C.dim; tipDiv.TextXAlignment = Enum.TextXAlignment.Left
+tipDiv.LayoutOrder = 7; tipDiv.ZIndex = 11
+
+local tips = {
+    "🍅  Raw ingredients work in a pinch. Cooked dishes hit much harder.",
+    "🧻  Use your Napkin on cooldown — it's free −25 CL healing every use.",
+    "🚽  Bathrooms are immune zones. 3 potty breaks per match. Spend them wisely.",
+    "🛒  Basket = faster. Cart = carries more. Choose in Preferences before Gathering.",
+    "📖  Open the Cookbook tab to browse all recipes and ingredients.",
+}
+for i, tip in ipairs(tips) do
+    local tf = Instance.new("Frame", ovScroll)
+    tf.Size = UDim2.new(1,0,0,0); tf.AutomaticSize = Enum.AutomaticSize.Y
+    tf.BackgroundColor3 = C.bgCard; tf.BorderSizePixel = 0
+    tf.LayoutOrder = 7+i; tf.ZIndex = 11; corner(tf,8)
+    local tp2 = Instance.new("UIPadding",tf)
+    tp2.PaddingTop=UDim.new(0,8);tp2.PaddingBottom=UDim.new(0,8)
+    tp2.PaddingLeft=UDim.new(0,14);tp2.PaddingRight=UDim.new(0,12)
+    local tl = Instance.new("TextLabel",tf)
+    tl.Size=UDim2.new(1,0,0,0); tl.AutomaticSize=Enum.AutomaticSize.Y
+    tl.BackgroundTransparency=1; tl.Text=tip
+    tl.Font=Enum.Font.GothamMedium; tl.TextSize=19
+    tl.TextColor3=Color3.fromRGB(210,208,228)
+    tl.TextXAlignment=Enum.TextXAlignment.Left
+    tl.TextWrapped=true; tl.LineHeight=1.3; tl.ZIndex=12
+end
+
+-- ============================================================
 -- RULES TAB
 -- ============================================================
 
@@ -368,133 +495,95 @@ local function addRuleSection(title, col, rules)
     end
 end
 
-addRuleSection("📋 The Match — How This Works", Color3.fromRGB(160,155,200), {
-    "You start in the Prelobby. Then it goes: Gathering (3 min) → Cooking (3 min + 10s grace) → Food Fight (up to 6 min) → End Game. Total: ~12–13 minutes of chaos.",
-    "8 players minimum to start. Maximum 40 players per match.",
-    "🏆 TRUE WIN — Last Chef Standing: the final survivor (or allied pair) wins the Golden Apron. This is the real victory. All survival pressure — CL, bathroom breaks, inventory drops — exists to make this matter.",
-    "🥇 MATCH MVP — Grand Grocer: highest total Points (CL dealt + eliminations + recipes cooked + assists + gathering). You can earn MVP even after being eliminated. Dying early doesn't end your scoreboard run.",
-    "⭐ TOP 5 ACCOLADES — Head Chef (most CL damage) · Kitchen Master (most recipes) · Clean-Up Crew (most eliminations) · Sous-Chef Supreme (most cooking assists) · Chaos Connoisseur (most environmental mayhem). Every playstyle gets a moment.",
-    "The match ends the second one player (or allied team) is standing. The 6-minute timer is just a safety net.",
+addRuleSection("🏁 How a Match Works", Color3.fromRGB(160,155,200), {
+    "Gathering (2 min) → Cooking (90s + 10s grace) → Food Fight (up to 6 min) → End Game. About 10–11 minutes of structured chaos.",
+    "🏆 TRUE WIN — Last Chef Standing: the final survivor (or allied pair) wins the Golden Apron. All the survival pressure exists to make this matter.",
+    "🥇 GRAND GROCER — Match MVP: highest total Points across CL dealt, eliminations, recipes cooked, assists, and gathering. You can earn MVP even after being eliminated.",
+    "⭐ TOP 5 ACCOLADES — Head Chef · Kitchen Master · Clean-Up Crew · Sous-Chef Supreme · Chaos Connoisseur. Every playstyle gets a moment.",
+    "The match ends the second one player or allied team is left standing. The 6-minute timer is just a safety net.",
 })
-addRuleSection("💰 Economy — Your $15 Life Savings", C.gold, {
-    "Every match starts with $15 and 1 napkin. That\'s it. Make it work.",
-    "Ingredients must be PAID at a Checkout register before you can cook or throw them. Theft is not a mechanic. Unfortunately.",
-    "Unpaid items glow orange in your hotbar. Everyone can see that. It\'s a little embarrassing.",
-    "Self-checkout: faster, scan each item. Staffed register: slower, but it handles payment automatically while you nervously look around.",
-    "💡 Cash stacks ($1–$25) and napkins only spawn OUTSIDE — car park, back alleys, side alleys. The store interior has zero free money. Rude.",
+addRuleSection("💰 Economy", C.gold, {
+    "Every match starts with $20 and 1 napkin. Make it work.",
+    "Ingredients must be PAID at a Checkout register before you can cook or throw them. Unpaid items glow orange in your hotbar. Everyone can see that.",
+    "Self-checkout: scan each item, interruptible. Staffed register: scans automatically, faster once you commit.",
+    "Cash ($1–$25) and napkins spawn OUTSIDE — car park and side alleys only. The store interior has no free money.",
     "Gathering, checkout, and cooking stay open during Food Fight. The store never closes. Neither does the violence.",
 })
-addRuleSection("⚖️ Weight — You Can Only Carry So Much Chaos", Color3.fromRGB(200,160,80), {
-    "🧺 Basket: 35 lb. capacity · +5% speed · normal minimap radius. Light and agile.",
-    "🛒 Cart: 70 lb. capacity · −15% speed · +15% minimap detection radius. Slower, more threatening.",
-    "You can swap containers at the racks on the main floor during Food Fight. Unlimited supply.",
-    "Every +10 lbs OVER your cap: −10% speed penalty. Stacking penalties. It gets bad fast.",
-    "Speed floor: you CANNOT go below 35% base speed. The store physically will not let you become a statue.",
-    "Stacking per slot: Common ×3 · Uncommon ×2 · Rare, Ultra-Rare, Legendary ×1.",
-    "10 hotbar slots, always. Weight is the only limit on how much you can carry — not slot count.",
+addRuleSection("🧺 Containers & Weight", Color3.fromRGB(200,160,80), {
+    "Choose in Preferences before Gathering starts. You can swap at container racks on the main floor anytime.",
+    "🧺 Basket: 35 wt cap · +5% speed. Light and agile.",
+    "🛒 Cart: 70 wt cap · −15% speed. Slower, more threatening.",
+    "Every +10 wt OVER your cap: −10% speed penalty. Stacks fast. Speed floor: you cannot go below 35% base speed.",
+    "10 hotbar slots always. Weight is the only limit on how much you can carry.",
 })
-addRuleSection("🧼 Cleanliness (CL) — Your HP, Basically", Color3.fromRGB(65,185,235), {
-    "CL = how dirty you are, 0–100%. Goes UP when you get hit. Does NOT go down on its own. Your mess is permanent until you deal with it.",
-    "Non-allergen hit: ×0.75 CL damage. Allergen hit: ×1.75 CL damage. Oil+fire combo: ×1.6 CL. Numbers matter.",
-    "80%+ CL: your bathroom icons light up. You can now enter a bathroom. Exciting times.",
-    "~95% CL: 0.75s warning slow + screen edge effect. The game is telling you something.",
-    "100% CL: instant consequence, no grace period. You drop 1 random item and suffer −30% speed.",
-    "Sub-100% grace: any single hit of 40+ CL below 100% gives 1.5s before consequences — protection from rapid multi-hit spam.",
-    "Both bars at 100%: stacked visual effects + −60% speed. You are a walking highlight reel for the other team.",
-    "🧻 Napkin: heals −25 CL · 2s use time (can be interrupted!) · 20s cooldown per napkin · recharges to ×1 after cooldown. Free. Use it.",
+addRuleSection("🧼 Cleanliness (CL) — Your HP", Color3.fromRGB(65,185,235), {
+    "CL goes UP when hit. Does NOT go down on its own. Your mess is permanent until you deal with it.",
+    "Non-allergen hit: ×0.75 CL. Allergen hit: ×1.75 CL. Oil+fire combo: ×1.6 CL.",
+    "~95% CL: 0.75s warning slow + screen edge. The game is telling you something.",
+    "100% CL: you drop 1 random item and take −30% speed. Both bars at 100%: −60% speed. You are a walking highlight reel.",
+    "🧻 Napkin: heals −25 CL · 2s use time (interruptible) · 20s cooldown. Free. Use it on cooldown.",
 })
-addRuleSection("🍔 Fullness (FL) — Pressure, Not Death", Color3.fromRGB(235,155,35), {
-    "FL is a CONTROL and PRESSURE mechanic. It goes down on its own over time. It is NOT the win condition.",
-    "Cooked recipe hit: +2 FL. Raw or cold hit: +1 FL. Trash can loot: +5 CL to YOU — that\'s dirty food off the floor. You didn\'t eat it, it landed on you. Avoid trash loot at high CL.",
-    "FL size and slowness STACK as FL rises — every 10% adds more. By 80% you are noticeably larger and slower than when the match started.",
-    "80%+ FL: bathroom access unlocked. Your body is giving you a strongly worded memo.",
-    "100% FL: FORCED bathroom visit. Costs 1 break. There is a 0.5s slow cue before it triggers — that\'s your warning.",
-    "Enemy throws YOUR favourite food at you: ×2 FL spike on top of normal damage. They know. They planned this.",
-    "💡 FL creates timing pressure. Managing bathroom breaks around your FL level is a real skill. The chaos players who ignore this are the ones spectating first.",
+addRuleSection("🍔 Fullness (FL) — Pressure", Color3.fromRGB(235,155,35), {
+    "FL is a control and pressure mechanic. It drains naturally over time. It is NOT the win condition — Cleanliness is.",
+    "Cooked recipe hit: +2 FL. Raw hit: +1 FL.",
+    "High FL makes you visibly bigger and slower. 100% FL triggers a forced bathroom visit — costs 1 break.",
+    "Enemy throws YOUR favourite food at you: ×2 FL spike on top of normal damage. They planned this.",
 })
-addRuleSection("🚽 Bathroom Breaks — 3 Per Match, Choose Wisely", Color3.fromRGB(100,180,255), {
-    "Each player gets exactly 3 bathroom breaks for the ENTIRE match. No refills. No restocking. Watch the toilet icons in the bottom-left.",
-    "🚿 SINK (left stall): resets CL to 0%. Costs 1 break. Walk in dirty, walk out clean.",
-    "🚽 TOILET (right stall): resets FL to 0%. Costs 1 break. Immediate relief.",
-    "Using BOTH in the same visit: 2 breaks consumed. The bathroom is a FULL IMMUNE ZONE — no damage while inside.",
-    "Max 10 seconds per visit. Then you are automatically ejected. The store respects your time. Somewhat.",
-    "0 breaks remaining = ELIMINATED → spectator mode only. You can still watch and suffer.",
-    "💡 The napkin is FREE −25 CL healing. Use it on cooldown so you aren\'t spending bathroom breaks on minor damage.",
+addRuleSection("🚽 Bathrooms", Color3.fromRGB(100,180,255), {
+    "3 Potty Breaks per match. No refills. Watch the toilet icons in the bottom-left.",
+    "🚿 Sink (left): resets CL to 0%. 🚽 Toilet (right): resets FL to 0%. Using both in one visit costs 2 breaks.",
+    "Full immune zone inside — no damage while in a bathroom. Max 10 seconds per visit, then you're ejected.",
+    "0 breaks remaining = you can no longer enter bathrooms. Plan accordingly.",
 })
-addRuleSection("⚠️ Allergy & ⭐ Favourite — Know Thyself", Color3.fromRGB(226,75,74), {
-    "Set both in Preferences BEFORE Gathering starts. They lock the moment Gathering begins. Plan ahead.",
-    "⚠️ ALLERGY: pick your zone weakness. Allergen hits → ×1.75 CL. All other hits → ×0.75. Produce (cheap raw threat) / Bakery (cooked threat) / Dry Goods (widest cooked coverage) / Freezer (raw + cooked threat — most dangerous).",
-    "⭐ FAVOURITE: throw your favourite at ANYONE and deal +min(BaseCL × 50%, 30) bonus CL on top of normal damage.",
-    "   Example numbers: Tomato (6 CL) → +3 bonus. Mapo Tofu (38 CL) → +19 bonus. Million Dollar Steak (70 CL) → +30 (capped).",
-    "   Self-consume your favourite recipe → buffs from that recipe last ×1.5 longer. Feed yourself well.",
-    "   Enemy throws your own favourite at you → ×2 FL spike. The irony is the point.",
-    "Your allergy and favourite food are HIDDEN from other players by default. They can only find out by Inspecting you — for a medal cost — or by hitting you with the right food and getting it right.",
+addRuleSection("⚠️ Allergy & ⭐ Favourite", Color3.fromRGB(226,75,74), {
+    "Set both in Preferences BEFORE Gathering starts. They lock when Gathering begins.",
+    "⚠️ ALLERGY — pick your zone weakness. Your allergen zone hits you for ×1.75 CL. All other hits deal ×0.75.",
+    "   🥬 Produce: cheap raw threat from minute one (Tomato $2). 🧁 Bakery: safe from raw, punished by cooking.",
+    "   🥫 Dry Goods: widest cooked coverage — high gamble. ❄️ Freezer: raw AND cooked threat. Most dangerous pick.",
+    "⭐ FAVOURITE — throw your favourite at anyone for bonus CL: min(BaseCL × 50%, 30) on top of normal damage.",
+    "   Self-consume your favourite recipe: buffs last ×1.5 longer. Enemy throws it at you: ×2 FL spike.",
 })
-addRuleSection("🍳 Cooking — Earning Your CL Damage", Color3.fromRGB(85,210,130), {
-    "Flow: paid ingredients → Prep Table (assemble) → Stovetop (if the recipe requires heat) → finished dish.",
-    "Cook depth bonus: 2 ingredients = +5% CL · 3 = +10% · 4+ = +15%. More ingredients, more damage.",
-    "Cook time by rarity: Common 2s · Uncommon 4s · Rare 7s · Ultra-Rare 12s · Legendary 20s. Plan accordingly.",
-    "Servings: Common ×3 dishes · Uncommon ×2 · Rare / Ultra-Rare / Legendary ×1. High-rarity = one shot, make it count.",
-    "Burned dish: −20% CL but +30% status effect strength. Debuffer build path. Absolutely a valid strategy.",
-    "Perfect cook (nail the heat window): +10% CL bonus. Reward for not overcooking.",
-    "Any single hit of 25+ CL while AT a station drops the cook. You lose the ingredients. They laugh.",
-    "Cooking makes sound and increases your minimap detection radius. The Kitchen is a beacon. Use it or avoid it.",
-    "🍳 Portable Cooker (Legendary loot): deploy anywhere on the map, 4 uses, lockable. Mobile warfare.",
+addRuleSection("🍳 Cooking", Color3.fromRGB(85,210,130), {
+    "Flow: paid ingredients → Prep Table → Stovetop → finished dish (some recipes are cold-prep only — no stovetop needed).",
+    "Cook time by rarity: Common 2s · Uncommon 4s · Rare 7s · Ultra-Rare 12s · Legendary 20s.",
+    "Servings: Common ×3 · Uncommon ×2 · Rare / Ultra-Rare / Legendary ×1. High-rarity = one shot, make it count.",
+    "Burned dish: −20% CL but +30% status effect strength. A real build path, not a mistake.",
+    "Perfect cook (nail the heat window): +10% CL bonus.",
+    "Any single hit of 25+ CL while at a station drops the cook. You lose the ingredients.",
 })
-addRuleSection("🎯 Mark, Elemental & Control Effects", Color3.fromRGB(175,95,220), {
-    "🔴 MARK — tags a target so your NEXT hit deals bonus CL. One active mark per target at a time, last mark wins.",
-    "   Tomato: +15% CL on next hit. Soy Sauce: +20%. Use marks to set up big follow-up throws.",
-    "⚡ ELEMENTAL — Oil hit, then follow up with a fire recipe within the time window → ×1.6 CL. Powerful. Worth the setup.",
-    "🎮 CONTROL — Banana: knockdown. 2× Cheese Block: 1.5s root. Honey: root + sticky floor zone for 5s.",
-    "   Blue Cheese: next slow or root applied to that target has +50% duration. Pair with anything.",
-    "CC diminishing returns: same control effect within 8s → 50% potency each repeat. Spam is punished.",
-    "Total freeze cap from any combination: 2.5s. Throw cooldown: 0.8s between throws.",
+addRuleSection("🎯 Marks, Elemental & Control", Color3.fromRGB(175,95,220), {
+    "🔴 MARK — tags a target so your NEXT hit deals bonus CL. Tomato: +15%. Soy Sauce: +20%.",
+    "⚡ ELEMENTAL — Oil hit, then follow with Chili Fried Rice within 3s → ×1.6 CL. The only fire combo in Phase 1.",
+    "🎮 CONTROL — 2× Cheese Block: 1.5s root. Honey: root + sticky floor 5s. Blue Cheese: next slow/root on target +50% duration. Ice Cream: Freeze 2s.",
+    "CC diminishing returns: same effect within 8s → reduced potency each repeat. Spam is punished. Freeze hard cap: 2.5s total.",
 })
-addRuleSection("🤝 Alliance System — Friends Are Temporary, Medals Are Forever", C.ally, {
-    "Friendship Bracelets cost $12 at the Trade Hub kiosk. Available during Gathering AND Cooking.",
-    "Press E near any player to offer. They have 10 seconds. After that the offer expires.",
-    "Bracelet CONSUMED regardless of answer — no refunds. If they decline, it\'s announced to the whole server. Publicly. Loudly.",
-    "On accept: matching name colours appear above both heads — visible to ALL players. Romance of the grocery aisles.",
-    "Team size caps: 1–19 players = 1 ally · 20–29 players = 2 allies · 30–40 players = 3 allies.",
-    "💡 Friendship Bracelets also spawn as Ultra-Rare outdoor loot. Max 2 per match, never respawn.",
-    "Food Fight start: alliances grey out. BOTH players must reconfirm within 15 seconds or it breaks — publicly.",
-    "Friendly fire is ALWAYS ON. Hitting your ally does full damage. The game does not care about your feelings.",
+addRuleSection("🤝 Alliances", C.ally, {
+    "Friendship Bracelets cost $12 at the Trade Hub kiosk. Available during Gathering AND Cooking phases.",
+    "Bracelets also spawn as Ultra-Rare outdoor loot — max 2 per match, never respawn.",
+    "On decline: the whole server hears about it. Publicly. Loudly.",
+    "Team size caps: 1–19 players = 1 ally · 20–29 = 2 allies · 30–40 = 3 allies.",
+    "Food Fight start: BOTH players must reconfirm within 15 seconds or the alliance breaks publicly.",
+    "Friendly fire is ALWAYS ON. Hitting your ally does full damage.",
 })
-addRuleSection("🏁 End-Game — The Question That Matters", C.gold, {
-    "When only allied players remain, a 30-second timer appears. One question: Fight or Leave Together?",
-    "🤝 Leave With a Friend: shared win. Both earn 70% of solo medal value. Less glory, more peace.",
-    "⚔️ Food Fight to the Finish: alliance breaks, pure FFA until one person stands. Full medal value.",
-    "Timer expires = Fight starts automatically. The game assumes you want blood.",
-    "Any single Fight vote in a 3-person alliance breaks it for all three. One betrayal is enough.",
-    "There is no right answer. There is only what you do.",
+addRuleSection("🏁 End Game", C.gold, {
+    "When only allied players remain, a 30-second timer appears: Fight or Leave Together?",
+    "🤝 Leave Together: shared win. Both earn 70% of solo medal value.",
+    "⚔️ Fight to the Finish: alliance breaks, pure FFA. Full medal value.",
+    "Any single Fight vote in a 3-person alliance breaks it for all three. Timer expires = Fight starts automatically.",
 })
-addRuleSection("✨ Legendaries — One Per Match, Never Again", C.gold, {
+addRuleSection("✨ Legendaries", C.gold, {
     "Three Legendary items spawn ONCE per match at random locations. They NEVER respawn after pickup.",
-    "🥩 Million Dollar Steak (Wagyu + Truffle + Caviar): 70 CL damage. Every throw is server-announced.",
-    "🛒 Golden Cart: +40% speed, ×2 throw range, unlimited weight for 20 seconds. Server-announced pickup.",
-    "🍳 Portable Cooker: 4 uses, deploy anywhere on the map, 1.5s slower than kitchen, lockable.",
-    "💡 Check EVERY bin, shelf, fridge, and surface. Legendaries spawn anywhere ingredient loot can appear.",
+    "🥩 Million Dollar Steak (Wagyu + Truffle + Caviar): 70 CL. Every throw is server-announced. Instant kill.",
+    "🛒 Golden Cart: +40% speed, ×2 throw range, unlimited weight for 20s. Server-announced on pickup.",
+    "🍳 Portable Cooker: 4 uses, deploy anywhere on the map, lockable.",
 })
-addRuleSection("🗺️ The Store — What Is Where", Color3.fromRGB(200,160,80), {
-    "🥦 PRODUCE (left wall): Fruit, veg, eggs, potato, basil, truffle. Best combo setup zone.",
-    "🥐 BAKERY (right wall): Bread, dough, chocolate, honey, croissant, fondant. Control ingredient zone.",
-    "🥛 DAIRY (centre-left freezer rows): Cheese, butter, cream, mayo, blue cheese. Anti-mobility toolkit.",
-    "❄️ FREEZER / MEAT (centre freezer rows): Chicken, beef, pork, tuna, crab, lobster, wagyu. Pure damage.",
-    "🏪 AISLES (centre-right shelves): Rice, pasta, spices, oil, soy, miso, saffron. The combo engine room.",
-    "📦 STOCKROOM (back area): EVERY ingredient at higher density. Caviar only spawns here. High risk, high reward.",
-    "🍳 KITCHEN (back of main floor): Prep Tables + Stovetops. Bigger detection radius. Known danger zone.",
-    "🛒 CHECKOUT (front): Pay here. Prime ambush location. Standing still is a choice.",
-    "🚽 BATHROOMS (all 4 corners): Full immune zone inside. Sink = CL reset. Toilet = FL reset.",
-    "🤝 TRADE HUB (centre): Safe zone. Friendship Bracelet kiosk during Gathering and Cooking.",
-    "💡 Respawn timers: Rare 50s · Ultra-Rare 90s · Legendaries: never.",
-})
-addRuleSection("🏅 Medals — The Point of All This", Color3.fromRGB(239,159,39), {
-    "Medals are earned after every match. Spend them on Titles and Cosmetics. They do not expire.",
-    "Per-match top accolades: Last One Standing 60 · Chomper Champion 50 · Chaos Agent 40 · Master Chef 35 · Super Shopper 25.",
-    "Bonus accolades: Squeaky Clean 25 · Executioner 25 · Sous-Chef Supreme 25 · Resource Raider 15.",
-    "Base medals every match: Participation 5 · Alive at end +15 · Together Victory 42 each (both players).",
-    "Assist score: apply a mark or CC → ally hits within 4 seconds → you earn 35% of that damage as assist score.",
-    "Ties on any accolade: both players receive the full medal value. No splitting. No drama.",
+addRuleSection("🗺️ Store Layout", Color3.fromRGB(200,160,80), {
+    "🥬 PRODUCE (far right): Tomato, Egg, Garlic, Onion, Avocado, Truffle. Mark and debuff zone.",
+    "🧁 BAKERY (far left): Flour, Milk, Butter, Sugar, Cheese Block, Honey, Blue Cheese, Fondant. CC ingredient zone.",
+    "🥫 DRY GOODS (mid-left aisles): Rice, Pasta, Noodles, Soy Sauce, Chili Powder, Saffron. The combo engine room.",
+    "❄️ FREEZER (mid-right aisles): Chicken, Tuna, Beef, Pork, Shrimp, Ice Cream. Pure damage zone.",
+    "📦 STOCKROOM (back): ALL ingredients at higher density. Caviar only spawns here. High risk, high reward.",
+    "🍳 KITCHEN (back of main floor): Prep Tables + Stovetops. Bigger minimap detection radius. Known danger zone.",
 })
 
 -- ============================================================
@@ -1844,11 +1933,11 @@ end
 -- defaultTab: which main tab to show for the current phase
 local function defaultTab(phase)
     if phase=="Prelobby"                         then return "PREFERENCES" end
-    if phase=="Gathering"                        then return "COOKBOOK"    end
+    if phase=="Gathering"                        then return "OVERVIEW"    end
     if phase=="Cooking" or phase=="CookingGrace" then return "COOKBOOK"    end
     if phase=="FoodFight"                        then return "MATCH"       end
     if phase=="EndGame" or phase=="Accolades"    then return "ACCOLADES"   end
-    return activeTab
+    return "OVERVIEW"
 end
 
 -- defaultCookSub: which Cookbook sub-tab for the current phase
@@ -1977,7 +2066,7 @@ _G.Chompers.ContentArea = ContentArea
 -- INITIAL STATE — one-time auto-open on first join only
 -- ============================================================
 
-switchTab("PREFERENCES")
+switchTab("OVERVIEW")
 task.spawn(function()
     task.wait(1.5)
     -- Don't auto-open if WelcomeScreen is handling onboarding
