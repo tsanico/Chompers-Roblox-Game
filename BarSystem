@@ -30,17 +30,6 @@ function BarSystem.GetCookTime(rarity)
 	return COOK_TIMES[rarity] or 4
 end
 
--- ── Cook depth bonus (Part 10 — locked) ──────────────────────
--- Used both here and by ThrowServer for damage calculation.
-function BarSystem.GetCookDepthBonus(numIngredients)
-	local D = C.Damage
-	if numIngredients >= 4 then return D.CookDepth4Bonus or 0.15
-	elseif numIngredients == 3 then return D.CookDepth3Bonus or 0.10
-	elseif numIngredients == 2 then return D.CookDepth2Bonus or 0.05
-	end
-	return 0
-end
-
 -- ── Heat bar zone boundaries ──────────────────────────────────
 -- Needle oscillates 0→1 using abs(sin). Zone is the position when E is pressed.
 -- Cold:    0.00 – 0.32
