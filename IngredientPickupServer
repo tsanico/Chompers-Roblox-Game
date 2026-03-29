@@ -97,8 +97,14 @@ local function onIngredientPickup(part, player)
 	local ok, reason = PlayerState.AddItem(player, itemData)
 	if not ok then
 		if reason == "slots_full" then
-			-- Could signal client here — for now silent
-			-- (InventoryClient shows full state via UpdateInventory)
+			-- Fire an announcement to the client so the failure is visible
+			local Announce = ReplicatedStorage:WaitForChild("ChompersRemotes",5)
+				and ReplicatedStorage.ChompersRemotes:FindFirstChild("Announce")
+			if Announce then
+				Announce:FireClient(player,
+					"🎒 Inventory full! Drop or throw something first.",
+					Color3.fromRGB(220,60,60), 2.5)
+			end
 		end
 		return
 	end
