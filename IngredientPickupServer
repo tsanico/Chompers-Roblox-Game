@@ -315,9 +315,11 @@ local function setupDumpsters()
 				if not s then return end
 				if s.isEliminated then return end
 
-				-- CL hit on pickup (dumpster diving = risk, Part 33)
-				-- Use a low raw penalty — it's not a throw, just contact
-				PlayerState.ModifyCL(player, 10)
+				-- Trash can loot adds CL to the picker, NOT FL.
+				-- Dirty food off the floor lands on you — you didn't eat it.
+				-- Bible Part 3 / ChompersData.Constants.TrashCanCL = 5
+				-- Using base 5 CL; the existing +10 was a placeholder.
+				PlayerState.ModifyCL(player, ChompersData.Constants.TrashCanCL or 5)
 
 				-- For now: give a random Common ingredient from any zone
 				-- Full dumpster shared inventory = Step 8+ implementation
