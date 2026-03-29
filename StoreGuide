@@ -1275,6 +1275,9 @@ local AWARDS = {
     {i="📋",name="The Regular",            desc="Complete 100 matches",                          goal=100, reward=75},
 }
 
+-- Sort awards ascending by reward (fewest medals first)
+table.sort(AWARDS, function(a,b) return a.reward < b.reward end)
+
 local awardMedalsTotal = 0  -- local running total (DataStore not wired yet)
 
 for j, award in ipairs(AWARDS) do
@@ -1284,31 +1287,31 @@ for j, award in ipairs(AWARDS) do
     local timesStr = "("..prog.."×)"   -- e.g. (0×) — shows how many times earned
 
     local card=Instance.new("Frame",awardScroll)
-    card.Size=UDim2.new(1,0,0,92); card.LayoutOrder=j
+    card.Size=UDim2.new(1,0,0,120); card.LayoutOrder=j
     card.BackgroundColor3=done and Color3.fromRGB(18,36,18) or C.bgLight
     card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
     mkStroke(card,1.5,done and Color3.fromRGB(50,160,60) or C.stroke)
 
     -- Icon (match cosmetics size)
-    mkLabel(card,award.i,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
-        UDim2.new(0,0,0,0),UDim2.new(0,70,1,0)).ZIndex=12
+    mkLabel(card,award.i,Enum.Font.GothamBold,56,C.white,Enum.TextXAlignment.Center,
+        UDim2.new(0,0,0,0),UDim2.new(0,80,1,0)).ZIndex=12
 
     -- Name + (N×) inline on same line
     local nameWithCount = award.name.."  "..timesStr
-    mkLabel(card,nameWithCount,Enum.Font.GothamBlack,21,
+    mkLabel(card,nameWithCount,Enum.Font.GothamBlack,24,
         done and C.green or C.white,Enum.TextXAlignment.Left,
-        UDim2.new(0,74,0,8),UDim2.new(0.58,0,0,26)).ZIndex=12
+        UDim2.new(0,84,0,10),UDim2.new(0.58,0,0,30)).ZIndex=12
 
     -- Description (match cosmetics size + colour)
-    mkLabel(card,award.desc,Enum.Font.Gotham,16,Color3.fromRGB(175,170,205),Enum.TextXAlignment.Left,
-        UDim2.new(0,74,0,38),UDim2.new(0.58,0,0,18)).ZIndex=12
+    mkLabel(card,award.desc,Enum.Font.Gotham,18,Color3.fromRGB(175,170,205),Enum.TextXAlignment.Left,
+        UDim2.new(0,84,0,46),UDim2.new(0.55,0,0,22)).ZIndex=12
 
     -- Progress chip (goal/done, compact, right of desc)
     local progStr = done and "✓ Done" or (prog.." / "..award.goal)
     local progBg=Instance.new("Frame",card); progBg.ZIndex=12
-    progBg.Size=UDim2.new(0,86,0,24); progBg.Position=UDim2.new(0,74,1,-30)
+    progBg.Size=UDim2.new(0,100,0,30); progBg.Position=UDim2.new(0,84,1,-36)
     progBg.BackgroundColor3=Color3.fromRGB(24,22,38); progBg.BorderSizePixel=0; corner(progBg,6)
-    mkLabel(progBg,progStr,Enum.Font.GothamBold,15,
+    mkLabel(progBg,progStr,Enum.Font.GothamBold,17,
         done and C.green or C.dim).ZIndex=13
 
     -- Medal reward badge (right side, cosmetics-style)
@@ -1523,7 +1526,7 @@ local function cosSection(sectionTitle, items)
     hdr.TextColor3=Color3.fromRGB(220,120,180); hdr.TextXAlignment=Enum.TextXAlignment.Left
     for _, item in ipairs(items) do
         local card=Instance.new("Frame",cosScroll)
-        card.Size=UDim2.new(1,0,0,92); card.BackgroundColor3=C.bgLight
+        card.Size=UDim2.new(1,0,0,120); card.BackgroundColor3=C.bgLight
         card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
         mkStroke(card,1.5,item.locked and C.stroke or Color3.fromRGB(200,60,130))
         mkLabel(card,item.icon,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
@@ -1584,22 +1587,22 @@ local sbPanel = matchSub("ScoreboardPanel","SCOREBOARD",false)
 
 -- Header
 local sbHeader=Instance.new("Frame",sbPanel)
-sbHeader.Size=UDim2.new(1,0,0,32); sbHeader.BackgroundColor3=Color3.fromRGB(30,10,10)
+sbHeader.Size=UDim2.new(1,0,0,44); sbHeader.BackgroundColor3=Color3.fromRGB(30,10,10)
 sbHeader.BorderSizePixel=0; corner(sbHeader,6)
-mkLabel(sbHeader,"📊  Live Scoreboard",Enum.Font.GothamBlack,16,C.white,
+mkLabel(sbHeader,"📊  Live Scoreboard",Enum.Font.GothamBlack,20,C.white,
     Enum.TextXAlignment.Left,UDim2.new(0,10,0,0),UDim2.new(0.7,0,1,0)).ZIndex=11
 mkLabel(sbHeader,"⭐ = revealed   ? = unknown",Enum.Font.Gotham,12,C.dim,
     Enum.TextXAlignment.Right,UDim2.new(0.55,0,0,0),UDim2.new(0.45,-8,1,0)).ZIndex=11
 
 -- Column headers
 local sbCols=Instance.new("Frame",sbPanel)
-sbCols.Size=UDim2.new(1,0,0,22); sbCols.Position=UDim2.new(0,0,0,34)
+sbCols.Size=UDim2.new(1,0,0,32); sbCols.Position=UDim2.new(0,0,0,36)
 sbCols.BackgroundColor3=Color3.fromRGB(18,16,30); sbCols.BorderSizePixel=0
 local function sbCol(text,xs,ws,align)
     local l=Instance.new("TextLabel",sbCols)
     l.Size=UDim2.new(ws,0,1,0); l.Position=UDim2.new(xs,0,0,0)
     l.BackgroundTransparency=1; l.Text=text
-    l.Font=Enum.Font.GothamBlack; l.TextSize=11; l.TextColor3=C.dim
+    l.Font=Enum.Font.GothamBlack; l.TextSize=14; l.TextColor3=C.dim
     l.TextXAlignment=align or Enum.TextXAlignment.Center; l.ZIndex=11
 end
 sbCol("PLAYER",   0,    0.28, Enum.TextXAlignment.Left)
@@ -1610,7 +1613,7 @@ sbCol("🚽",      0.58, 0.08)
 sbCol("⭐ FAV",  0.66, 0.18)
 sbCol("⚠ ALG",  0.84, 0.16)
 
-local sbScroll=mkScroll(sbPanel,UDim2.new(1,0,1,-58),UDim2.new(0,0,0,58),C.stroke)
+local sbScroll=mkScroll(sbPanel,UDim2.new(1,0,1,-70),UDim2.new(0,0,0,70),C.stroke)
 sbScroll.ScrollBarThickness=8
 
 local sbPlaceholder=mkLabel(sbScroll,
@@ -1644,7 +1647,7 @@ local function refreshScoreboard()
         local tc=sbGetColor(d.userId or rank)
         local isMe=(d.userId==player.UserId)
         local row=Instance.new("Frame",sbScroll); row.LayoutOrder=rank
-        row.Size=UDim2.new(1,0,0,34)
+        row.Size=UDim2.new(1,0,0,52)
         row.BackgroundColor3=isMe and Color3.fromRGB(28,20,50) or
             (rank%2==0 and C.bgLight or C.bg)
         row.BorderSizePixel=0; row.ZIndex=11; corner(row,5)
@@ -1654,32 +1657,32 @@ local function refreshScoreboard()
         ac.Size=UDim2.new(0,3,1,-6); ac.Position=UDim2.new(0,2,0,3)
         ac.BackgroundColor3=tc; ac.BorderSizePixel=0; corner(ac,2)
         -- Rank+Name
-        mkLabel(row,rank.."  "..(d.name or "?"),Enum.Font.GothamBold,14,tc,
+        mkLabel(row,rank.."  "..(d.name or "?"),Enum.Font.GothamBold,18,tc,
             Enum.TextXAlignment.Left,UDim2.new(0,8,0,0),UDim2.new(0.27,0,1,0)).ZIndex=12
         -- Points
-        mkLabel(row,tostring(d.score or 0),Enum.Font.GothamBlack,14,C.white,
+        mkLabel(row,tostring(d.score or 0),Enum.Font.GothamBlack,18,C.white,
             Enum.TextXAlignment.Center,UDim2.new(0.28,0,0,0),UDim2.new(0.10,0,1,0)).ZIndex=12
         -- CL dealt
-        mkLabel(row,tostring(d.clDealt or 0),Enum.Font.GothamBold,13,
+        mkLabel(row,tostring(d.clDealt or 0),Enum.Font.GothamBold,17,
             Color3.fromRGB(65,185,235),
             Enum.TextXAlignment.Center,UDim2.new(0.38,0,0,0),UDim2.new(0.10,0,1,0)).ZIndex=12
         -- FL dealt
-        mkLabel(row,tostring(d.flDealt or 0),Enum.Font.GothamBold,13,
+        mkLabel(row,tostring(d.flDealt or 0),Enum.Font.GothamBold,17,
             Color3.fromRGB(235,155,35),
             Enum.TextXAlignment.Center,UDim2.new(0.48,0,0,0),UDim2.new(0.10,0,1,0)).ZIndex=12
         -- Breaks
         local brk=d.breaks or 3
-        mkLabel(row,brk==0 and "✗" or tostring(brk),Enum.Font.GothamBold,13,
+        mkLabel(row,brk==0 and "✗" or tostring(brk),Enum.Font.GothamBold,17,
             brk==0 and C.red or C.white,
             Enum.TextXAlignment.Center,UDim2.new(0.58,0,0,0),UDim2.new(0.08,0,1,0)).ZIndex=12
-        -- Fav (? unless revealed via _G.Chompers.GetRevealedInfo)
+        -- Fav
         local rev=_G.Chompers.GetRevealedInfo and _G.Chompers.GetRevealedInfo(d.userId)
         local favTxt=rev and ("⭐ "..rev.fav:sub(1,10)) or "?"
-        mkLabel(row,favTxt,Enum.Font.Gotham,12,rev and C.gold or C.dim,
+        mkLabel(row,favTxt,Enum.Font.GothamBold,15,rev and C.gold or C.dim,
             Enum.TextXAlignment.Center,UDim2.new(0.66,0,0,0),UDim2.new(0.18,0,1,0)).ZIndex=12
         -- Allergen
         local algTxt=rev and ("⚠ "..rev.allergy:sub(1,8)) or "?"
-        mkLabel(row,algTxt,Enum.Font.Gotham,12,rev and C.warn or C.dim,
+        mkLabel(row,algTxt,Enum.Font.GothamBold,15,rev and C.warn or C.dim,
             Enum.TextXAlignment.Center,UDim2.new(0.84,0,0,0),UDim2.new(0.16,0,1,0)).ZIndex=12
     end
 end
@@ -1726,20 +1729,21 @@ local KEYS={
     {"E  (hold)","Pick up ingredient"},
     {"E","Interact — checkout, bathroom, alliance"},
     {"Q","Drop selected item"},
-    {"Click","Throw quick  (min 0.3s, 40% power)"},
-    {"Hold + Release","Throw charged  (up to 1.5s, 100%)"},
+    {"LMB Hold + Release","Charge & throw  (0.3s tap → 20st, 1.5s full → 50st)"},
+    {"RMB","Cancel charge without firing"},
+    {"F","Inspect nearby player"},
     {"Tab","Open Store Guide → Scoreboard tab"},
     {"Escape","Close any open HUD"},
 }
 for i,kb in ipairs(KEYS) do
     local row=Instance.new("Frame",kbScroll)
-    row.Size=UDim2.new(1,0,0,36); row.LayoutOrder=i
+    row.Size=UDim2.new(1,0,0,56); row.LayoutOrder=i
     row.BackgroundColor3=i%2==0 and Color3.fromRGB(24,22,36) or Color3.fromRGB(20,18,32)
     row.BorderSizePixel=0; row.ZIndex=11; corner(row,6)
-    mkLabel(row,kb[1],Enum.Font.GothamBlack,13,C.white,
-        Enum.TextXAlignment.Left,UDim2.new(0,10,0,0),UDim2.new(0.3,0,1,0)).ZIndex=12
-    mkLabel(row,kb[2],Enum.Font.Gotham,13,C.dim,
-        Enum.TextXAlignment.Left,UDim2.new(0.3,0,0,0),UDim2.new(0.7,-10,1,0)).ZIndex=12
+    mkLabel(row,kb[1],Enum.Font.GothamBlack,18,C.white,
+        Enum.TextXAlignment.Left,UDim2.new(0,14,0,0),UDim2.new(0.3,0,1,0)).ZIndex=12
+    mkLabel(row,kb[2],Enum.Font.Gotham,18,C.dim,
+        Enum.TextXAlignment.Left,UDim2.new(0.3,0,0,0),UDim2.new(0.7,-14,1,0)).ZIndex=12
 end
 
 -- Teams
