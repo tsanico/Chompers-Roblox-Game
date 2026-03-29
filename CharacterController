@@ -24,7 +24,7 @@ local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes")
 -- ── Config ──────────────────────────────────────────────────
 local BASE_WALK_SPEED   = 16    -- studs/s — Roblox default, our 1× baseline
 local JUMP_POWER        = 40    -- higher than default 50? no — 40 is slightly lower,
--- giving a heavier, more grounded feel
+                                 -- giving a heavier, more grounded feel
 local AIR_CONTROL_DELAY = 0.2   -- seconds before direction can change mid-air
 
 -- ── State ───────────────────────────────────────────────────
@@ -51,13 +51,14 @@ local function setupCharacter(character)
 	local stateConn
 	stateConn = humanoid.StateChanged:Connect(function(_, newState)
 		if newState == Enum.HumanoidStateType.Jumping
-			or newState == Enum.HumanoidStateType.Freefall then
+		or newState == Enum.HumanoidStateType.Freefall then
 			isAirborne = true
 			airTime    = tick()
 
 		elseif newState == Enum.HumanoidStateType.Landed
-			or newState == Enum.HumanoidStateType.Running
-			or newState == Enum.HumanoidStateType.Idle then
+		or newState == Enum.HumanoidStateType.Running
+		or newState == Enum.HumanoidStateType.RunningNoPhysics
+		or newState == Enum.HumanoidStateType.StrafingNoPhysics then
 			isAirborne       = false
 			lastGroundedTime = tick()
 		end
@@ -193,14 +194,14 @@ Remotes:WaitForChild("PhaseChanged").OnClientEvent:Connect(function(newPhase)
 		humanoid.JumpPower = JUMP_POWER
 
 	elseif newPhase == "Gathering"
-		or newPhase == "Cooking"
-		or newPhase == "CookingGrace"
-		or newPhase == "FoodFight" then
+	or newPhase == "Cooking"
+	or newPhase == "CookingGrace"
+	or newPhase == "FoodFight" then
 		-- Full movement in all active phases
 		humanoid.JumpPower = JUMP_POWER
 
 	elseif newPhase == "EndGame"
-		or newPhase == "Accolades" then
+	or newPhase == "Accolades" then
 		-- Freeze movement at end of match (cosmetic — players watch accolades)
 		humanoid.WalkSpeed = 0
 		humanoid.JumpPower = 0
