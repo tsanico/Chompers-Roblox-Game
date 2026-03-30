@@ -10,6 +10,7 @@ local DataStoreService = game:GetService("DataStoreService")
 local Players          = game:GetService("Players")
 local ReplicatedStorage= game:GetService("ReplicatedStorage")
 
+local ChompersData = require(ReplicatedStorage:WaitForChild("ChompersData"))
 local DS = DataStoreService:GetDataStore("ChompersPlayerData_v1")
 
 local DataService = {}
@@ -75,7 +76,11 @@ local function loadData(player)
     -- Broadcast equipped title to all clients so TitleDisplay updates
     local PlayerTitleUpdateR = Remotes:FindFirstChild("PlayerTitleUpdate")
     if PlayerTitleUpdateR and data.equipped.title then
-        PlayerTitleUpdateR:FireAllClients(player, data.equipped.title, nil, nil)
+        local itemDef = ChompersData.VendorItemById[data.equipped.title]
+        if itemDef then
+            PlayerTitleUpdateR:FireAllClients(player,
+                data.equipped.title, itemDef.name, itemDef.tier)
+        end
     end
 
     print(string.format("[DataService] Loaded %s — %d medals, %d owned items",
