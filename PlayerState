@@ -454,6 +454,11 @@ function PlayerState.ModifyCL(player, delta)
 		HitPlayer:FireClient(player, "cl_warn")
 	end
 
+	-- Notify cooking system of hit (resets active cook timer / heat bar)
+	if delta > 0 and _G.NotifyCookingHit then
+		_G.NotifyCookingHit(player)
+	end
+
 	-- 100% state trigger
 	if s.cl >= 100 and not s.clDebuffActive then
 		s.clDebuffActive = true
