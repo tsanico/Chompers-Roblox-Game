@@ -28,6 +28,30 @@ local AIR_CONTROL_DELAY = 0.2
 local currentSpeedMult = 1.0
 local isAirborne       = false
 local airTime          = 0
+local frozen           = false   -- true while in bathroom animation
+
+-- Freeze/unfreeze remotes (fired by BathroomSystem during sink/toilet use)
+local FreezeMovement   = Remotes:WaitForChild("FreezeMovement",   10)
+local UnfreezeMovement = Remotes:WaitForChild("UnfreezeMovement", 10)
+
+if FreezeMovement then
+    FreezeMovement.OnClientEvent:Connect(function()
+        frozen = true
+        local char = player.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = 0; hum.JumpPower = 0 end
+    end)
+end
+
+if UnfreezeMovement then
+    UnfreezeMovement.OnClientEvent:Connect(function()
+        frozen = false
+        local char = player.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.JumpPower = JUMP_POWER end
+        -- WalkSpeed restored by next UpdateSpeed from server
+    end)
+end
 
 -- ============================================================
 -- CHARACTER SETUP
@@ -66,14 +90,18 @@ local function setupCharacter(character)
 		end
 
 		local targetSpeed = BASE_WALK_SPEED * currentSpeedMult
-		if isAirborne then
-			local elapsed = tick() - airTime
-			if elapsed < AIR_CONTROL_DELAY then
-				local alpha = elapsed / AIR_CONTROL_DELAY
-				targetSpeed = humanoid.WalkSpeed + (targetSpeed - humanoid.WalkSpeed) * alpha
+		if frozen then
+			humanoid.WalkSpeed = 0
+		else
+			if isAirborne then
+				local elapsed = tick() - airTime
+				if elapsed < AIR_CONTROL_DELAY then
+					local alpha = elapsed / AIR_CONTROL_DELAY
+					targetSpeed = humanoid.WalkSpeed + (targetSpeed - humanoid.WalkSpeed) * alpha
+				end
 			end
+			humanoid.WalkSpeed = targetSpeed
 		end
-		humanoid.WalkSpeed = targetSpeed
 	end)
 
 	character.AncestryChanged:Connect(function()
