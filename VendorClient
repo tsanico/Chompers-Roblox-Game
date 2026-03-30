@@ -245,7 +245,7 @@ end
 -- ── Build full item list ──────────────────────────────────────
 local function buildList(vendorData, tab)
     for _,c in ipairs(Scroll:GetChildren()) do
-        if c:IsA("Frame") then c:Destroy() end
+        if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
     end
     if not vendorData then return end
 
@@ -254,7 +254,24 @@ local function buildList(vendorData, tab)
         vendorData.accentHex[2]/255,
         vendorData.accentHex[3]/255)
 
-    local order=0
+    -- Tab-specific note at the top of Titles and Cosmetics tabs
+    if tab == "Titles" or tab == "Cosmetics" then
+        local note = Instance.new("TextLabel", Scroll)
+        note.Size = UDim2.new(1,0,0,30)
+        note.BackgroundTransparency = 1
+        note.Font = Enum.Font.GothamBold
+        note.TextSize = 13
+        note.TextColor3 = C.dim
+        note.TextXAlignment = Enum.TextXAlignment.Left
+        note.Text = tab == "Titles"
+            and "🏷️  Titles appear above your name in-game. Equip one below."
+            or  "🎨  Cosmetics change how you look in the market. More coming soon."
+        note.TextWrapped = true
+        note.LayoutOrder = 0
+        note.ZIndex = 13
+    end
+
+    local order = 0
     for _, item in ipairs(vendorData.items) do
         local cat = item.category
         local isTitleCat = cat=="title" or cat=="title_animated" or cat=="title_prestige"
