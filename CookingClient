@@ -151,15 +151,18 @@ local StampStroke = mkStroke(ResultStamp, 3, Color3.fromRGB(80,220,80))
 local StampEmoji  = mkLabel(ResultStamp, "✓",
 	Enum.Font.GothamBlack, 44, Color3.fromRGB(80,220,80),
 	Enum.TextXAlignment.Center,
-	UDim2.new(0,0,0,4), UDim2.new(0.22,0,1,-8)).ZIndex = 59
+	UDim2.new(0,0,0,4), UDim2.new(0.22,0,1,-8))
+StampEmoji.ZIndex = 59
 local StampText   = mkLabel(ResultStamp, "PERFECT HEAT",
 	Enum.Font.GothamBlack, 22, Color3.fromRGB(80,220,80),
 	Enum.TextXAlignment.Left,
-	UDim2.new(0.22,0,0,10), UDim2.new(0.78,-14,0,30)).ZIndex = 59
+	UDim2.new(0.22,0,0,10), UDim2.new(0.78,-14,0,30))
+StampText.ZIndex = 59
 local StampSub    = mkLabel(ResultStamp, "",
 	Enum.Font.GothamBold, 15, Color3.fromRGB(200,195,230),
 	Enum.TextXAlignment.Left,
-	UDim2.new(0.22,0,0,46), UDim2.new(0.78,-14,0,20)).ZIndex = 59
+	UDim2.new(0.22,0,0,46), UDim2.new(0.78,-14,0,20))
+StampSub.ZIndex = 59
 
 local stampThread = nil
 local function showResultStamp(emoji, title, sub, col, duration)
