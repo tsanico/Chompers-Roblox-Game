@@ -268,7 +268,7 @@ local TABS = {
     {id="RULES",       label="📜 Rules",       color=C.red,                       order=2},
     {id="COOKBOOK",    label="📖 Cookbook",    color=Color3.fromRGB(65,48,128),   order=3},
     {id="MATCH",       label="📋 Match",       color=Color3.fromRGB(50,70,100),   order=4},
-    {id="ACCOLADES",   label="🏅 Accolades",   color=Color3.fromRGB(180,140,50),  order=5},
+    {id="ACCOLADES",   label="🏅 Awards",      color=Color3.fromRGB(180,140,50),  order=5},
     {id="PREFERENCES", label="😋 Preferences", color=Color3.fromRGB(46,140,60),   order=6},
 }
 
@@ -1418,9 +1418,8 @@ local AccPanel = makePanel("AccPanel","ACCOLADES")
 local accSubPanels = {}
 
 mkSubBar(AccPanel, 48, {
-    {id="AWARDS",     label="🏅 Awards",     color=Color3.fromRGB(180,140,50)},
-    {id="COSMETICS",  label="🎨 Cosmetics",  color=Color3.fromRGB(200,60,130)},
-    {id="TITLES",     label="🏆 Titles",     color=C.purple},
+    {id="AWARDS",  label="🏅 Awards",  color=Color3.fromRGB(180,140,50)},
+    {id="VENDORS", label="🍽 Vendors", color=Color3.fromRGB(120,60,160)},
 }, function(id)
     for sid, pnl in pairs(accSubPanels) do pnl.Visible=(sid==id) end
 end)
@@ -1535,237 +1534,63 @@ for j, award in ipairs(AWARDS) do
         done and C.green or C.gold).ZIndex=13
 end
 
--- ── Titles sub-panel — premium vanity purchases only ─────────
--- Titles are pure medal cosmetics. No achievement gating.
--- They sit ABOVE Awards in prestige because you spend medals for them.
+-- ── Vendors sub-panel ────────────────────────────────────────
+-- Cosmetics and titles are now exclusively at the food truck
+-- vendors in the car park. This subtab is a directory only.
+local vendorsContent = Instance.new("Frame", AccPanel)
+vendorsContent.Size=UDim2.new(1,0,1,-48); vendorsContent.Position=UDim2.new(0,0,0,48)
+vendorsContent.BackgroundTransparency=1; vendorsContent.Visible=false
+accSubPanels["VENDORS"] = vendorsContent
 
-local titlesContent = Instance.new("Frame", AccPanel)
-titlesContent.Size=UDim2.new(1,0,1,-48); titlesContent.Position=UDim2.new(0,0,0,48)
-titlesContent.BackgroundTransparency=1; titlesContent.Visible=false
-accSubPanels["TITLES"] = titlesContent
+local vendScroll = mkScroll(vendorsContent,UDim2.new(1,0,1,0),UDim2.new(0,0,0,0),
+    Color3.fromRGB(150,80,220))
 
--- Header bar
-local titleHdr=Instance.new("Frame",titlesContent)
-titleHdr.Size=UDim2.new(1,0,0,38); titleHdr.BackgroundColor3=Color3.fromRGB(16,10,30)
-titleHdr.BorderSizePixel=0
-mkLabel(titleHdr,"Purchase titles with medals — purely cosmetic, purely flex.",
-    Enum.Font.GothamBold,12,C.dim,Enum.TextXAlignment.Center,
-    UDim2.new(0,12,0,0),UDim2.new(0.7,-4,1,0))
+-- Redirect note
+local vRedirect = Instance.new("Frame", vendScroll)
+vRedirect.Size=UDim2.new(1,0,0,44); vRedirect.BackgroundColor3=Color3.fromRGB(22,18,36)
+vRedirect.BorderSizePixel=0; corner(vRedirect,10)
+mkStroke(vRedirect,1.5,Color3.fromRGB(150,80,220))
+mkLabel(vRedirect,
+    "🍽  All cosmetics and titles are sold at the food truck vendors in the car park.",
+    Enum.Font.GothamBold,14,Color3.fromRGB(200,180,255),
+    Enum.TextXAlignment.Center,UDim2.new(0,10,0,0),UDim2.new(1,-20,1,0)).ZIndex=12
 
-local equippedDisplay = mkLabel(titleHdr,"Equipped: (none)",
-    Enum.Font.GothamBlack,13,C.title,Enum.TextXAlignment.Right,
-    UDim2.new(0.7,0,0,0),UDim2.new(0.3,-10,1,0))
-
-local titlesScroll = mkScroll(titlesContent,
-    UDim2.new(1,0,1,-38),UDim2.new(0,0,0,38),C.purple)
-titlesScroll.ScrollBarThickness = 10
-titlesScroll.ScrollBarImageColor3 = C.purple
-
-local HONORIFICS = {
-    -- Starter (25–100 medals)
-    {n=1,  i="🛒",name='"The New Shopper"',             flavor="Wandered in looking for snacks. Left covered in sauce. Tradition.",                cost=25,   tc=Color3.fromRGB(90,190,90)},
-    {n=2,  i="🧺",name='"Basket Case"',                 flavor="You and the basket have been through things together. It shows.",        cost=50,   tc=Color3.fromRGB(90,190,90)},
-    {n=3,  i="📋",name='"The Couponer"',                flavor="You read the fine print. The fine print did not save you.",     cost=75,   tc=Color3.fromRGB(90,190,90)},
-    {n=4,  i="🏪",name='"Knows the Layout"',            flavor="You have memorised every aisle. This is your store now. Arguably.", cost=100, tc=Color3.fromRGB(90,190,90)},
-    -- Common (125–200 medals)
-    {n=5,  i="🏎️",name='"The Speed Shopper"',           flavor="You were gone before anyone noticed. Mostly.",              cost=125,  tc=Color3.fromRGB(80,130,220)},
-    {n=6,  i="🧻",name='"The Napkin Knight"',           flavor="You keep extras. People think it's sweet. It is not sweet.",             cost=150,  tc=Color3.fromRGB(80,130,220)},
-    {n=7,  i="🤝",name='"Friend of the Floor"',         flavor="You shook hands. You shared something. It was mostly sauce.",             cost=175,  tc=Color3.fromRGB(80,130,220)},
-    {n=8,  i="🚽",name='"Bathroom Tactician"',          flavor="You have a system. Nobody else knows what it is. Perfect.",          cost=175,  tc=Color3.fromRGB(80,130,220)},
-    {n=9,  i="🛡️",name='"The Untouchable"',            flavor="You move through crowds like a rumour. Quietly. Efficiently.",       cost=200,  tc=Color3.fromRGB(80,130,220)},
-    {n=10, i="🍳",name='"Line Cook Energy"',            flavor="You did not train for this. And yet. Here you are.",     cost=200,  tc=Color3.fromRGB(80,130,220)},
-    -- Uncommon (250–350 medals)
-    {n=11, i="👑",name='"Queen of the Store"',          flavor="The trolley wheels align differently when you walk in. Coincidence.",    cost=250,  tc=C.purple},
-    {n=12, i="🥦",name='"The Green Vegetable Knight"',  flavor="You sworn an oath to the produce aisle. It has never been broken.",          cost=250,  tc=C.purple},
-    {n=13, i="🌶️",name='"The Spice Warlord"',          flavor="Nobody knows your full recipe. Nobody has survived to report it.",              cost=300,  tc=C.purple},
-    {n=14, i="🍰",name='"Head of the Bakery"',          flavor="You rose before everyone else did. Like bread. Extremely like bread.",           cost=325,  tc=C.purple},
-    {n=15, i="💥",name='"The Shopping Spreer"',         flavor="Some come to shop. You come to remind people what shopping costs.",                cost=350,  tc=C.purple},
-    -- Rare (400–600 medals)
-    {n=16, i="🔪",name='"The Deli Counter Menace"',     flavor="You asked for a number. You were already 47 ahead in your head.",  cost=400,  tc=C.red},
-    {n=17, i="🥩",name='"Lord of the Meat Aisle"',      flavor="Cold. Calculated. Slightly marbled. The aisle chose you.",         cost=450,  tc=C.red},
-    {n=18, i="🦞",name='"The Seafood Sovereign"',       flavor="The lobster tank respects you. So does everyone in the frozen section.",           cost=500,  tc=C.red},
-    {n=19, i="💰",name='"The Big Spender"',             flavor="You saw the price tag. You smiled. You bought more.",         cost=600,  tc=C.red},
-    -- Elite (750–1000 medals)
-    {n=20, i="🍄",name='"The Fungal Overlord"',         flavor="You grow on people. Not everyone welcomes this. You continue regardless.",       cost=750,  tc=C.gold},
-    {n=21, i="🧀",name='"The Cheesemonger"',            flavor="You have aged well. So has the collection. Nobody goes near the collection.",        cost=800,  tc=C.gold},
-    {n=22, i="🥄",name='"Silver Spoon Assassin"',       flavor="Refined taste. Impeccable posture. Absolutely catastrophic to be near.",      cost=1000, tc=C.gold},
-    -- Legendary (1500–2500 medals)
-    {n=23, i="⚡",name='"The Freshest in the Store"',   flavor="Some say you're close to meeting Chompy himself. Others say you ARE Chompy.",    cost=1500, tc=Color3.fromRGB(220,200,40)},
-    {n=24, i="💣",name='"The Market Mayhem Architect"', flavor="You did not cause the chaos. You merely designed the store it happened in.",      cost=2500, tc=Color3.fromRGB(220,200,40)},
+local VENDOR_LIST = {
+    {emoji="🍳",name="Tony Two-Pans",  tagline="Master of the Grill",
+     specialty="Cooking titles, chef cosmetics & throw effects",
+     accent=Color3.fromRGB(235,100,40)},
+    {emoji="🛒",name="Gloria",          tagline="The Grocer",
+     specialty="Cart & basket skins, economy titles & effects",
+     accent=Color3.fromRGB(70,195,85)},
+    {emoji="🔥",name="Rico",            tagline="The Fryer",
+     specialty="Combat throw effects & chaos titles",
+     accent=Color3.fromRGB(220,60,40)},
+    {emoji="🧹",name="Mops",            tagline="The Janitor",
+     specialty="Survival titles, cleaning cosmetics & trail effects",
+     accent=Color3.fromRGB(100,180,220)},
 }
 
-local TIER_RANGES = {
-    {min=0,    max=100,  label="Starter",   bg=Color3.fromRGB(18,32,18)},
-    {min=101,  max=200,  label="Common",    bg=Color3.fromRGB(14,20,42)},
-    {min=201,  max=400,  label="Uncommon",  bg=Color3.fromRGB(22,10,40)},
-    {min=401,  max=700,  label="Rare",      bg=Color3.fromRGB(38,10,10)},
-    {min=701,  max=1100, label="Elite",     bg=Color3.fromRGB(40,30,4)},
-    {min=1101, max=9999, label="Legendary", bg=Color3.fromRGB(34,28,4)},
-}
-local function tierFor(cost)
-    for _, t in ipairs(TIER_RANGES) do
-        if cost >= t.min and cost <= t.max then return t end
-    end
-    return {label="?", bg=C.bgCard}
+for i, vd in ipairs(VENDOR_LIST) do
+    local card=Instance.new("Frame",vendScroll)
+    card.Size=UDim2.new(1,0,0,100); card.LayoutOrder=i+1
+    card.BackgroundColor3=Color3.fromRGB(18,16,32); card.BorderSizePixel=0; card.ZIndex=11
+    corner(card,12); mkStroke(card,2,vd.accent)
+
+    mkLabel(card,vd.emoji,Enum.Font.GothamBlack,44,C.white,
+        Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,68,1,0)).ZIndex=12
+
+    mkLabel(card,vd.name,Enum.Font.GothamBlack,20,vd.accent,
+        Enum.TextXAlignment.Left,UDim2.new(0,76,0,10),UDim2.new(1,-86,0,26)).ZIndex=12
+
+    mkLabel(card,vd.specialty,Enum.Font.GothamBold,14,C.dim,
+        Enum.TextXAlignment.Left,UDim2.new(0,76,0,38),UDim2.new(1,-86,0,20)).ZIndex=12
+
+    local locTag=Instance.new("Frame",card)
+    locTag.Size=UDim2.new(0,110,0,22); locTag.AnchorPoint=Vector2.new(1,1)
+    locTag.Position=UDim2.new(1,-8,1,-8); locTag.BackgroundColor3=Color3.fromRGB(14,12,24)
+    locTag.BorderSizePixel=0; locTag.ZIndex=12; corner(locTag,6)
+    mkLabel(locTag,"📍 Car Park",Enum.Font.GothamBold,12,C.dim).ZIndex=13
 end
-
-local titleEquipBtns = {}
-local function refreshTitleBtns(equipped)
-    for _, d in ipairs(titleEquipBtns) do
-        local isEq = d.fullName == equipped
-        d.btn.Text = isEq and "✓ Equipped" or "Equip"
-        d.btn.BackgroundColor3 = isEq and Color3.fromRGB(28,110,44) or Color3.fromRGB(50,14,80)
-        d.btn.TextColor3 = isEq and Color3.fromRGB(200,255,215) or Color3.fromRGB(210,170,255)
-    end
-end
-
-for _, h in ipairs(HONORIFICS) do
-    local fullName = h.i.." "..h.name
-    local tier = tierFor(h.cost)
-    local costFmt = h.cost >= 1000
-        and (tostring(math.floor(h.cost/100)/10):gsub("%.0","").."k")
-        or tostring(h.cost)
-
-    -- Card: 128px, full-width, no manual pixel positioning
-    local card = Instance.new("Frame", titlesScroll)
-    card.Size = UDim2.new(1,0,0,128); card.LayoutOrder = h.n
-    card.BackgroundColor3 = tier.bg; card.BorderSizePixel = 0; card.ZIndex = 11
-    corner(card,12); mkStroke(card,2,h.tc)
-
-    -- Top colour stripe
-    local stripe = Instance.new("Frame", card)
-    stripe.Size = UDim2.new(1,0,0,4); stripe.Position = UDim2.new(0,0,0,0)
-    stripe.BackgroundColor3 = h.tc; stripe.BorderSizePixel = 0; corner(stripe,2)
-
-    -- LEFT COLUMN — vertical UIListLayout, centred
-    local leftCol = Instance.new("Frame", card)
-    leftCol.Size = UDim2.new(1,-148,1,-6); leftCol.Position = UDim2.new(0,10,0,5)
-    leftCol.BackgroundTransparency = 1; leftCol.ZIndex = 12
-    local leftLL = Instance.new("UIListLayout", leftCol)
-    leftLL.SortOrder = Enum.SortOrder.LayoutOrder
-    leftLL.HorizontalAlignment = Enum.HorizontalAlignment.Left
-    leftLL.VerticalAlignment   = Enum.VerticalAlignment.Center
-    leftLL.Padding = UDim.new(0,4)
-
-    -- Title name
-    local nameL = Instance.new("TextLabel", leftCol); nameL.LayoutOrder = 1
-    nameL.Size = UDim2.new(1,0,0,26); nameL.BackgroundTransparency = 1
-    nameL.Text = fullName; nameL.Font = Enum.Font.GothamBlack; nameL.TextSize = 19
-    nameL.TextColor3 = C.title; nameL.TextXAlignment = Enum.TextXAlignment.Left
-    nameL.TextTruncate = Enum.TextTruncate.AtEnd; nameL.ZIndex = 12
-
-    -- Tier badge (auto-sized pill, text centred within)
-    local tierPill = Instance.new("Frame", leftCol); tierPill.LayoutOrder = 2
-    tierPill.Size = UDim2.new(0,0,0,22); tierPill.AutomaticSize = Enum.AutomaticSize.X
-    tierPill.BackgroundColor3 = h.tc; tierPill.BorderSizePixel = 0; corner(tierPill,5)
-    local tpLL = Instance.new("UIListLayout", tierPill)
-    tpLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    tpLL.VerticalAlignment   = Enum.VerticalAlignment.Center
-    local tpPad = Instance.new("UIPadding", tierPill)
-    tpPad.PaddingLeft = UDim.new(0,8); tpPad.PaddingRight = UDim.new(0,8)
-    local tierL = Instance.new("TextLabel", tierPill)
-    tierL.Size = UDim2.new(0,0,1,0); tierL.AutomaticSize = Enum.AutomaticSize.X
-    tierL.BackgroundTransparency = 1; tierL.Text = tier.label
-    tierL.Font = Enum.Font.GothamBlack; tierL.TextSize = 13
-    tierL.TextColor3 = Color3.new(0,0,0); tierL.ZIndex = 13
-
-    -- Flavor text (wrapped)
-    local flavorL = Instance.new("TextLabel", leftCol); flavorL.LayoutOrder = 3
-    flavorL.Size = UDim2.new(1,0,0,0); flavorL.AutomaticSize = Enum.AutomaticSize.Y
-    flavorL.BackgroundTransparency = 1; flavorL.Text = h.flavor
-    flavorL.Font = Enum.Font.Gotham; flavorL.TextSize = 13
-    flavorL.TextColor3 = Color3.fromRGB(185,180,215)
-    flavorL.TextXAlignment = Enum.TextXAlignment.Left
-    flavorL.TextWrapped = true; flavorL.ZIndex = 12
-
-    -- RIGHT COLUMN — cost + equip, right-anchored, centred vertically
-    local rightCol = Instance.new("Frame", card)
-    rightCol.Size = UDim2.new(0,130,1,-12); rightCol.Position = UDim2.new(1,-136,0,6)
-    rightCol.BackgroundTransparency = 1; rightCol.ZIndex = 12
-    local rightLL = Instance.new("UIListLayout", rightCol)
-    rightLL.SortOrder = Enum.SortOrder.LayoutOrder
-    rightLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    rightLL.VerticalAlignment   = Enum.VerticalAlignment.Center
-    rightLL.Padding = UDim.new(0,8)
-
-    -- Medal cost badge
-    local costBg = Instance.new("Frame", rightCol); costBg.LayoutOrder = 1
-    costBg.Size = UDim2.new(1,0,0,40)
-    costBg.BackgroundColor3 = Color3.fromRGB(36,26,4); costBg.BorderSizePixel = 0
-    corner(costBg,8); mkStroke(costBg,1.5,C.gold)
-    local costLL = Instance.new("UIListLayout", costBg)
-    costLL.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    costLL.VerticalAlignment   = Enum.VerticalAlignment.Center
-    local costL = Instance.new("TextLabel", costBg)
-    costL.Size = UDim2.new(1,0,1,0); costL.BackgroundTransparency = 1
-    costL.Text = "🏅 "..costFmt; costL.Font = Enum.Font.GothamBlack; costL.TextSize = 18
-    costL.TextColor3 = C.gold; costL.TextXAlignment = Enum.TextXAlignment.Center; costL.ZIndex = 13
-
-    -- Equip button
-    local eBtn = Instance.new("TextButton", rightCol); eBtn.LayoutOrder = 2
-    eBtn.Size = UDim2.new(1,0,0,34)
-    eBtn.BackgroundColor3 = Color3.fromRGB(50,14,80); eBtn.BorderSizePixel = 0
-    eBtn.AutoButtonColor = false; eBtn.Font = Enum.Font.GothamBold; eBtn.TextSize = 16
-    eBtn.TextColor3 = Color3.fromRGB(210,170,255); eBtn.Text = "Equip"; corner(eBtn,8)
-    mkStroke(eBtn,1.5,C.purple)
-
-    table.insert(titleEquipBtns, {btn=eBtn, fullName=fullName})
-    local capFull = fullName
-    eBtn.MouseButton1Click:Connect(function()
-        Selections.equippedTitle = capFull
-        equippedDisplay.Text = "Equipped: "..capFull
-        refreshTitleBtns(capFull)
-        updateBillboard()
-    end)
-end
-
--- ── Cosmetics sub-panel ──────────────────────────────────────
-local cosmeticsContent = Instance.new("Frame", AccPanel)
-cosmeticsContent.Size=UDim2.new(1,0,1,-48); cosmeticsContent.Position=UDim2.new(0,0,0,48)
-cosmeticsContent.BackgroundTransparency=1; cosmeticsContent.Visible=false
-accSubPanels["COSMETICS"] = cosmeticsContent
-
-local cosScroll = mkScroll(cosmeticsContent,UDim2.new(1,0,1,0),UDim2.new(0,0,0,0),
-    Color3.fromRGB(200,60,130))
-
-local function cosSection(sectionTitle, items)
-    local hdr=Instance.new("TextLabel",cosScroll)
-    hdr.Size=UDim2.new(1,0,0,28); hdr.BackgroundTransparency=1
-    hdr.Text=sectionTitle; hdr.Font=Enum.Font.GothamBold; hdr.TextSize = 28
-    hdr.TextColor3=Color3.fromRGB(220,120,180); hdr.TextXAlignment=Enum.TextXAlignment.Left
-    for _, item in ipairs(items) do
-        local card=Instance.new("Frame",cosScroll)
-        card.Size=UDim2.new(1,0,0,120); card.BackgroundColor3=C.bgLight
-        card.BorderSizePixel=0; card.ZIndex=11; corner(card,10)
-        mkStroke(card,1.5,item.locked and C.stroke or Color3.fromRGB(200,60,130))
-        mkLabel(card,item.icon,Enum.Font.GothamBold,44,C.white,Enum.TextXAlignment.Center,
-            UDim2.new(0,0,0,0),UDim2.new(0,70,1,0)).ZIndex=12
-        mkLabel(card,item.name,Enum.Font.GothamBlack,21,C.white,Enum.TextXAlignment.Left,
-            UDim2.new(0,74,0,8),UDim2.new(1,-160,0,26)).ZIndex=12
-        mkLabel(card,item.desc,Enum.Font.Gotham,16,Color3.fromRGB(175,170,205),Enum.TextXAlignment.Left,
-            UDim2.new(0,74,0,38),UDim2.new(1,-160,0,18)).ZIndex=12
-        local costStr=item.locked and "🔒 Coming Soon" or ("🏅 "..item.cost)
-        local cBg=Instance.new("Frame",card)
-        cBg.Size=UDim2.new(0,100,0,28); cBg.AnchorPoint=Vector2.new(1,0.5)
-        cBg.Position=UDim2.new(1,-8,0.5,0)
-        cBg.BackgroundColor3=item.locked and Color3.fromRGB(30,28,44) or Color3.fromRGB(40,6,20)
-        cBg.BorderSizePixel=0; corner(cBg,6)
-        mkLabel(cBg,costStr,Enum.Font.GothamBlack,16,item.locked and C.dim or Color3.fromRGB(255,140,200)).ZIndex=13
-    end
-end
-
-cosSection("🧺 Basket Skins", {
-    {icon="🧺",name="Classic Wicker",  desc="The original.",                      cost=0,    locked=false},
-    {icon="🌸",name="Spring Basket",   desc="Floral weave. Limited edition.",     cost=200,  locked=true},
-    {icon="🔥",name="Inferno Basket",  desc="For the chaos player.",              cost=500,  locked=true},
-    {icon="⭐",name="Golden Basket",   desc="You've earned it.",                  cost=1000, locked=true},
-})
-cosSection("🛒 Cart Skins", {
-    {icon="🛒",name="Standard Cart",   desc="The classic.",                       cost=0,    locked=false},
-    {icon="🌊",name="Ocean Cart",      desc="Smooth ride.",                       cost=250,  locked=true},
-    {icon="🎃",name="Haunted Cart",    desc="Seasonal. Very spooky.",             cost=400,  locked=true},
-    {icon="👑",name="Royal Cart",      desc="For the Chomper Champion.",          cost=1500, locked=true},
-})
 
 -- ============================================================
 -- MATCH TAB — Scoreboard | Keybindings | Teams | Settings
@@ -2108,7 +1933,6 @@ if PhaseRemote then
     end)
 end
 
--- ============================================================
 -- _G.Chompers API
 -- ============================================================
 
