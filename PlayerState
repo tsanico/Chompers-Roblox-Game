@@ -62,6 +62,7 @@ local function defaultState()
 
 		-- ── Inventory ─────────────────────────────────────────
 		inventory = {},
+		overflow  = {},           -- unlimited storage; spills here when hotbar (10 slots) is full
 		container = "Basket",
 		napkins = C.Economy.StartingNapkins or 1,
 
@@ -157,6 +158,13 @@ function PlayerState.SyncInventory(player)
 	local totalWt = PlayerState.GetTotalWeight(player)
 	local limit = PlayerState.GetWeightLimit(player)
 	UpdateInventory:FireClient(player, s.inventory)
+	-- Sync overflow separately so client can show storage section
+	local UpdateOverflow = Remotes:FindFirstChild("UpdateOverflow")
+	if not UpdateOverflow then
+		UpdateOverflow = Instance.new("RemoteEvent")
+		UpdateOverflow.Name = "UpdateOverflow"; UpdateOverflow.Parent = Remotes
+	end
+	UpdateOverflow:FireClient(player, s.overflow)
 	UpdateWeight:FireClient(player, totalWt, limit)
 end
 
@@ -190,9 +198,8 @@ function PlayerState.GetTotalWeight(player)
 	local s = _state[player]
 	if not s then return 0 end
 	local total = 0
-	for _, item in ipairs(s.inventory) do
-		total = total + (item.wt or 0)
-	end
+	for _, item in ipairs(s.inventory) do total = total + (item.wt or 0) end
+	for _, item in ipairs(s.overflow)  do total = total + (item.wt or 0) end
 	return total
 end
 
@@ -283,27 +290,22 @@ end
 -- INVENTORY
 -- ============================================================
 
--- AddItem: returns true on success, false + reason on failure
--- Weight cap only — no slot limit (Bible Part 35: 10 slots always available,
--- players capped by weight only. Overloading IS allowed but penalised.)
+-- AddItem: fills hotbar (slots 1-10) first, then spills to overflow.
+-- Weight is the only hard limit — overflow has no slot cap.
 function PlayerState.AddItem(player, itemData)
 	local s = _state[player]
 	if not s then return false, "no_state" end
 
-	-- Hard cap: 10 slots max (UI limit — not a gameplay restriction per se,
-	-- but prevents unbounded inventory. Weight is the real gate.)
-	if #s.inventory >= 10 then
-		return false, "slots_full"
+	if #s.inventory < 10 then
+		-- Hotbar has room
+		table.insert(s.inventory, itemData)
+	else
+		-- Hotbar full — add to unlimited overflow storage
+		table.insert(s.overflow, itemData)
 	end
 
-	-- Overloading beyond weight limit IS allowed — just penalises speed + pickup
-	-- No weight block here. The penalty is applied in GetSpeedMult and pickup hold time.
-
-	table.insert(s.inventory, itemData)
 	s.itemsGathered = s.itemsGathered + 1
-
 	PlayerState.AddPoints(player, C.Points.PickupIngredient)
-
 	PlayerState.SyncInventory(player)
 	PlayerState.SyncSpeed(player)
 	return true
@@ -345,46 +347,75 @@ function PlayerState.MarkItemPaid(player, slotIndex)
 	PlayerState.AddPoints(player, C.Points.IngredientPaidCheckout)
 end
 
--- MarkAllUnpaidAsPaid: marks every unpaid item as paid in one pass
+-- MarkAllUnpaidAsPaid: marks every unpaid item as paid (hotbar + overflow)
 function PlayerState.MarkAllUnpaidAsPaid(player)
 	local s = _state[player]
 	if not s then return 0 end
 	local count = 0
-	for _, item in ipairs(s.inventory) do
-		if not item.paid then
-			item.paid = true
-			s.ingredientsPurchased = s.ingredientsPurchased + 1
-			PlayerState.AddPoints(player, C.Points.IngredientPaidCheckout)
-			count = count + 1
+	local function payList(list)
+		for _, item in ipairs(list) do
+			if not item.paid then
+				item.paid = true
+				s.ingredientsPurchased = s.ingredientsPurchased + 1
+				PlayerState.AddPoints(player, C.Points.IngredientPaidCheckout)
+				count = count + 1
+			end
 		end
 	end
+	payList(s.inventory)
+	payList(s.overflow)
 	PlayerState.SyncInventory(player)
 	return count
 end
 
--- GetUnpaidCost: sum of costs for all unpaid items
+-- GetUnpaidCost: sum of costs for all unpaid items (hotbar + overflow)
 function PlayerState.GetUnpaidCost(player)
 	local s = _state[player]
 	if not s then return 0 end
 	local total = 0
 	for _, item in ipairs(s.inventory) do
-		if not item.paid then
-			total = total + (item.cost or 0)
-		end
+		if not item.paid then total = total + (item.cost or 0) end
+	end
+	for _, item in ipairs(s.overflow) do
+		if not item.paid then total = total + (item.cost or 0) end
 	end
 	return total
 end
 
--- DropAllItems: empties inventory, returns the dropped items list
--- Called by 100% state and bathroom systems
+-- DropAllItems: empties hotbar AND overflow, returns combined dropped list
 function PlayerState.DropAllItems(player)
 	local s = _state[player]
 	if not s then return {} end
-	local dropped = s.inventory
+	local dropped = {}
+	for _, item in ipairs(s.inventory) do table.insert(dropped, item) end
+	for _, item in ipairs(s.overflow)  do table.insert(dropped, item) end
 	s.inventory = {}
+	s.overflow  = {}
 	PlayerState.SyncInventory(player)
 	PlayerState.SyncSpeed(player)
 	return dropped
+end
+
+-- MoveOverflowToHotbar: moves item at overflow index to first free hotbar slot
+function PlayerState.MoveOverflowToHotbar(player, overflowIndex)
+	local s = _state[player]
+	if not s then return false end
+	if not s.overflow[overflowIndex] then return false end
+	if #s.inventory >= 10 then return false, "hotbar_full" end
+	local item = table.remove(s.overflow, overflowIndex)
+	table.insert(s.inventory, item)
+	PlayerState.SyncInventory(player)
+	return true
+end
+
+-- RemoveOverflowItem: removes by overflow index (for drop Q on overflow items)
+function PlayerState.RemoveOverflowItem(player, overflowIndex)
+	local s = _state[player]
+	if not s or not s.overflow[overflowIndex] then return nil end
+	local item = table.remove(s.overflow, overflowIndex)
+	PlayerState.SyncInventory(player)
+	PlayerState.SyncSpeed(player)
+	return item
 end
 
 -- AddNapkin / UseNapkin
