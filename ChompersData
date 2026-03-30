@@ -468,114 +468,147 @@ end
 
 -- ============================================================
 -- VENDOR CATALOG
--- Each vendor sells cosmetics tied to a distinct playstyle.
--- Items are purchasable exclusively at food truck vendors in
--- the car park — not from the StoreGuide.
+-- Items are purchasable exclusively at food truck vendors.
+-- Pricing tiers: starter 20–35 · common 50–90 · premium 140–220 · prestige 400–700
 --
 -- Categories:
---   "title"          — text tag above player head
---   "title_animated" — same but glows / pulses (mid+)
---   "title_prestige" — rare titles (premium+)
---   "cosmetic"       — visual items (hats, skins, effects)
+--   "title"          — common text tag above player head
+--   "title_animated" — epic glow/colour title (premium+)
+--   "title_prestige" — legendary gold title (prestige)
+--   "cosmetic"       — visual items (hats, aprons, etc.)
+--   "cart_skin"      — changes cart appearance
+--   "basket_skin"    — changes basket appearance
+--   "throw_fx"       — effect on thrown projectiles
 -- ============================================================
 
 ChompersData.Vendors = {
 
     -- ── Tony Two-Pans ──────────────────────────────────────────
     tony = {
-        id          = "tony",
-        name        = "Tony Two-Pans",
-        tagline     = "Master of the Grill",
-        emoji       = "🍳",
-        idleLines   = {
+        id        = "tony",
+        name      = "Tony Two-Pans",
+        tagline   = "Master of the Grill",
+        emoji     = "🍳",
+        specialty = "Cooking Cosmetics",
+        idleLines = {
             "If you throw raw eggs, don't expect respect.",
             "Perfect heat separates chefs from amateurs.",
             "I saw someone burn pasta earlier. Tragic.",
             "Burned food deals less damage, but the status sticks longer.",
         },
-        accentHex   = { 235, 100, 40 },   -- flame orange
-        items       = {
-            { id="tony_title_line_cook",     name="Line Cook",               category="title",
-              cost=20,   tier="cheap",    desc="Straight from the kitchen floor." },
-            { id="tony_cosmetic_chef_hat",   name="Chef Hat",                category="cosmetic",
-              cost=80,   tier="mid",      desc="A proper toque. Earns respect at the prep table." },
-            { id="tony_title_exec_chef",     name="Executive Chef ✨",        category="title_animated",
-              cost=200,  tier="premium",  desc="The kitchen is your domain." },
-            { id="tony_title_master_kitchen",name="Master of the Kitchen",   category="title_prestige",
-              cost=500,  tier="prestige", desc="One per store. You earned it." },
-            { id="tony_cosmetic_golden_apron",name="Golden Apron",           category="cosmetic",
-              cost=800,  tier="ultra",    desc="The real one. For the real one." },
+        accentHex = {235, 100, 40},
+        items = {
+            -- Titles
+            {id="tony_title_line_cook",      name="Line Cook",              category="title",          cost=20,  tier="cheap",    desc="Straight from the kitchen floor."},
+            {id="tony_title_sauce_whisper",  name="Sauce Whisperer",        category="title",          cost=40,  tier="cheap",    desc="The sauce speaks. You listen."},
+            {id="tony_title_kitchen_cmdr",   name="Kitchen Commander",      category="title",          cost=80,  tier="mid",      desc="Order in the kitchen."},
+            {id="tony_title_exec_chef",      name="Executive Chef ✨",       category="title_animated", cost=200, tier="premium",  desc="The kitchen is your domain."},
+            {id="tony_title_master_kitchen", name="Master of the Kitchen",  category="title_prestige", cost=600, tier="prestige", desc="One per store. You earned it."},
+            -- Cosmetics
+            {id="tony_cosmetic_chef_hat",    name="Chef Hat",               category="cosmetic",       cost=70,  tier="mid",      desc="A proper toque. Earns respect at the prep table."},
+            {id="tony_cosmetic_burn_apron",  name="Burn Mark Apron",        category="cosmetic",       cost=50,  tier="cheap",    desc="Battle-tested. Every burn has a story."},
+            {id="tony_cosmetic_gold_spat",   name="Golden Spatula",         category="cosmetic",       cost=220, tier="premium",  desc="Flip it. Flip it good."},
+            {id="tony_cosmetic_flame_aura",  name="Stove Flame Aura",       category="cosmetic",       cost=240, tier="premium",  desc="The heat follows you everywhere."},
+            -- Throw FX
+            {id="tony_fx_steam_trail",       name="Steam Burst Trail",      category="throw_fx",       cost=80,  tier="mid",      desc="Your throws arrive with a sizzle."},
+            {id="tony_fx_sizzle_impact",     name="Sizzle Impact",          category="throw_fx",       cost=120, tier="mid",      desc="Hits land with a satisfying hiss."},
         },
     },
 
     -- ── Gloria "The Grocer" ────────────────────────────────────
     gloria = {
-        id          = "gloria",
-        name        = "Gloria",
-        tagline     = "The Grocer",
-        emoji       = "🛒",
-        idleLines   = {
+        id        = "gloria",
+        name      = "Gloria",
+        tagline   = "The Grocer",
+        emoji     = "🛒",
+        specialty = "Shopping & Economy",
+        idleLines = {
             "If you didn't pay for it, you shouldn't cook with it.",
             "Cart users always think bigger.",
             "I've seen better produce in a gas station.",
             "You'll find more loose cash outside the store.",
         },
-        accentHex   = { 70, 195, 85 },   -- produce green
-        items       = {
-            { id="gloria_title_coupon_clip", name="Coupon Clipper",         category="title",
-              cost=25,   tier="cheap",    desc="Every cent counts." },
-            { id="gloria_cosmetic_cart",     name="Market Cart",             category="cosmetic",
-              cost=100,  tier="mid",      desc="Painted green and twice as useful." },
-            { id="gloria_title_market_mogul",name="Market Mogul ✨",         category="title_animated",
-              cost=200,  tier="premium",  desc="You own this market." },
-            { id="gloria_title_king_market", name="King of the Market",      category="title_prestige",
-              cost=500,  tier="prestige", desc="Everyone else is just shopping." },
+        accentHex = {70, 195, 85},
+        items = {
+            -- Titles
+            {id="gloria_title_coupon",       name="Coupon Clipper",         category="title",          cost=20,  tier="cheap",    desc="Every cent counts."},
+            {id="gloria_title_bulk_buyer",   name="Bulk Buyer",             category="title",          cost=50,  tier="cheap",    desc="You came prepared."},
+            {id="gloria_title_checkout",     name="Checkout Champion",      category="title",          cost=90,  tier="mid",      desc="First to the register, every time."},
+            {id="gloria_title_mogul",        name="Market Mogul ✨",         category="title_animated", cost=200, tier="premium",  desc="You own this market."},
+            {id="gloria_title_king_market",  name="King of the Market",     category="title_prestige", cost=600, tier="prestige", desc="Everyone else is just shopping."},
+            -- Cart skins
+            {id="gloria_cart_wooden",        name="Wooden Produce Cart",    category="cart_skin",      cost=80,  tier="mid",      desc="Rustic and reliable. Farmers approve."},
+            {id="gloria_cart_chrome",        name="Chrome Super Cart",      category="cart_skin",      cost=140, tier="premium",  desc="Aerodynamic. Suspicious."},
+            {id="gloria_cart_golden",        name="Golden Grocery Cart",    category="cart_skin",      cost=250, tier="premium",  desc="Conspicuous but undeniably effective."},
+            -- Basket skins
+            {id="gloria_basket_farmers",     name="Farmers Basket",         category="basket_skin",    cost=60,  tier="mid",      desc="Wicker and pride."},
+            {id="gloria_basket_fancy",       name="Fancy Market Basket",    category="basket_skin",    cost=120, tier="mid",      desc="For the discerning gatherer."},
+            -- FX
+            {id="gloria_fx_coin_trail",      name="Coin Sparkle Trail",     category="throw_fx",       cost=90,  tier="mid",      desc="Money well spent. Literally."},
+            {id="gloria_fx_barcode",         name="Barcode Scanner Sound",  category="throw_fx",       cost=70,  tier="mid",      desc="Every hit is a purchase."},
         },
     },
 
     -- ── Rico "The Fryer" ───────────────────────────────────────
     rico = {
-        id          = "rico",
-        name        = "Rico",
-        tagline     = "The Fryer",
-        emoji       = "🔥",
-        idleLines   = {
+        id        = "rico",
+        name      = "Rico",
+        tagline   = "The Fryer",
+        emoji     = "🔥",
+        specialty = "Combat Effects",
+        idleLines = {
             "Cook it… or just throw it harder.",
             "The louder the splat, the better the hit.",
             "You aiming or guessing?",
             "Heavy food hits harder. Light food flies faster.",
         },
-        accentHex   = { 220, 60, 40 },   -- hot red
-        items       = {
-            { id="rico_title_food_fighter",  name="Food Fighter",             category="title",
-              cost=20,   tier="cheap",    desc="Chaos first, questions later." },
-            { id="rico_title_sauce_slinger", name="Sauce Slinger ✨",          category="title_animated",
-              cost=200,  tier="premium",  desc="You've earned your splatter stripes." },
-            { id="rico_title_king_fight",    name="King of the Food Fight",   category="title_prestige",
-              cost=500,  tier="prestige", desc="The market fears your trajectory." },
+        accentHex = {220, 60, 40},
+        items = {
+            -- Titles
+            {id="rico_title_food_fight",     name="Food Fighter",           category="title",          cost=20,  tier="cheap",    desc="Chaos first, questions later."},
+            {id="rico_title_sauce_sling",    name="Sauce Slinger",          category="title",          cost=60,  tier="cheap",    desc="You've earned your splatter stripes."},
+            {id="rico_title_tomato_terror",  name="Tomato Terror",          category="title",          cost=120, tier="mid",      desc="They heard you coming."},
+            {id="rico_title_splatter",       name="Splatter Champion ✨",    category="title_animated", cost=220, tier="premium",  desc="Artwork, basically."},
+            {id="rico_title_king_fight",     name="King of the Food Fight", category="title_prestige", cost=650, tier="prestige", desc="The market fears your trajectory."},
+            -- Throw FX
+            {id="rico_fx_tomato_splash",     name="Tomato Splash",          category="throw_fx",       cost=40,  tier="cheap",    desc="Classic. Loud. Effective."},
+            {id="rico_fx_sauce_boom",        name="Sauce Explosion",        category="throw_fx",       cost=90,  tier="mid",      desc="Impact radius: yes."},
+            {id="rico_fx_chili_trail",       name="Chili Flame Trail",      category="throw_fx",       cost=150, tier="premium",  desc="Leaves a burning impression."},
+            {id="rico_fx_oil_slick",         name="Oil Slick Impact",       category="throw_fx",       cost=180, tier="premium",  desc="Slippery science."},
+            -- Combat cosmetics
+            {id="rico_cosmetic_fry_helmet",  name="Fry Basket Helmet",      category="cosmetic",       cost=120, tier="mid",      desc="Protective. Questionable."},
+            {id="rico_cosmetic_gloves",      name="Grease-Stained Gloves",  category="cosmetic",       cost=70,  tier="mid",      desc="You've been in the thick of it."},
         },
     },
 
     -- ── Mops "The Janitor" ─────────────────────────────────────
     mops = {
-        id          = "mops",
-        name        = "Mops",
-        tagline     = "The Janitor",
-        emoji       = "🧹",
-        idleLines   = {
+        id        = "mops",
+        name      = "Mops",
+        tagline   = "The Janitor",
+        emoji     = "🧹",
+        specialty = "Survival & Cleanliness",
+        idleLines = {
             "Every match ends the same. I clean up.",
             "Bathrooms are a privilege, not a right.",
             "You people are animals.",
             "You only get three bathroom breaks. Use them wisely.",
         },
-        accentHex   = { 100, 180, 220 },  -- mop blue
-        items       = {
-            { id="mops_title_floor_super",   name="Floor Supervisor",         category="title",
-              cost=20,   tier="cheap",    desc="Someone has to maintain order around here." },
-            { id="mops_title_clean_freak",   name="Clean Freak ✨",            category="title_animated",
-              cost=200,  tier="premium",  desc="You survived cleaner than anyone else." },
-            { id="mops_title_lord_sanit",    name="Lord of Sanitation",       category="title_prestige",
-              cost=500,  tier="prestige", desc="Mops respects you. That's rare." },
+        accentHex = {100, 180, 220},
+        items = {
+            -- Titles
+            {id="mops_title_floor_super",    name="Floor Supervisor",       category="title",          cost=20,  tier="cheap",    desc="Someone has to maintain order."},
+            {id="mops_title_spill_surv",     name="Spill Survivor",         category="title",          cost=60,  tier="cheap",    desc="You walked through it and kept going."},
+            {id="mops_title_bath_bandit",    name="Bathroom Bandit",        category="title",          cost=120, tier="mid",      desc="Three breaks. Used all three. Masterfully."},
+            {id="mops_title_clean_freak",    name="Clean Freak ✨",          category="title_animated", cost=200, tier="premium",  desc="You survived cleaner than anyone else."},
+            {id="mops_title_lord_sanit",     name="Lord of Sanitation",     category="title_prestige", cost=650, tier="prestige", desc="Mops respects you. That's rare."},
+            -- Cosmetics
+            {id="mops_cosmetic_uniform",     name="Janitor Uniform",        category="cosmetic",       cost=90,  tier="mid",      desc="Official. Slightly defeated."},
+            {id="mops_cosmetic_mop_pack",    name="Mop Backpack",           category="cosmetic",       cost=120, tier="mid",      desc="Always ready. Always cleaning."},
+            {id="mops_cosmetic_golden_mop",  name="Golden Mop",             category="cosmetic",       cost=220, tier="premium",  desc="The finest cleaning instrument money can buy."},
+            -- FX
+            {id="mops_fx_soap_trail",        name="Soap Bubble Trail",      category="throw_fx",       cost=80,  tier="mid",      desc="Clean on the way in."},
+            {id="mops_fx_spray_impact",      name="Disinfectant Spray",     category="throw_fx",       cost=120, tier="mid",      desc="Sanitizes on contact."},
         },
     },
 }
