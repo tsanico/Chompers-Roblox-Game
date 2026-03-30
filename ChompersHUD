@@ -1177,6 +1177,121 @@ onR("BathroomTimer", function(secsLeft)
         and Color3.fromRGB(220, 80, 60)
         or  Color3.fromRGB(170, 160, 200)
 end)
+
+-- ── Bathroom animation overlay ────────────────────────────────
+-- Covers screen during sink/toilet use while player is frozen.
+-- Sink: blue water theme, 3s countdown.
+-- Toilet: dark purple theme, 4s countdown. Hides character locally.
+local BathroomAnimOverlay = Instance.new("Frame", Gui)
+BathroomAnimOverlay.Name                  = "BathroomAnimOverlay"
+BathroomAnimOverlay.Size                  = UDim2.new(1, 0, 1, 0)
+BathroomAnimOverlay.BackgroundColor3      = Color3.fromRGB(0, 0, 0)
+BathroomAnimOverlay.BackgroundTransparency= 0.55
+BathroomAnimOverlay.BorderSizePixel       = 0
+BathroomAnimOverlay.Visible               = false
+BathroomAnimOverlay.ZIndex                = 50
+
+local BathroomAnimCard = Instance.new("Frame", BathroomAnimOverlay)
+BathroomAnimCard.Size             = UDim2.new(0, 300, 0, 160)
+BathroomAnimCard.AnchorPoint      = Vector2.new(0.5, 0.5)
+BathroomAnimCard.Position         = UDim2.new(0.5, 0, 0.5, 0)
+BathroomAnimCard.BackgroundColor3 = Color3.fromRGB(14, 12, 24)
+BathroomAnimCard.BorderSizePixel  = 0
+BathroomAnimCard.ZIndex           = 51
+do
+    local cc = Instance.new("UICorner", BathroomAnimCard); cc.CornerRadius = UDim.new(0, 16)
+    local cs = Instance.new("UIStroke", BathroomAnimCard); cs.Thickness = 2
+    cs.Color = Color3.fromRGB(80, 160, 255)
+end
+
+local BathroomAnimEmoji = Instance.new("TextLabel", BathroomAnimCard)
+BathroomAnimEmoji.Size               = UDim2.new(1, 0, 0, 70)
+BathroomAnimEmoji.Position           = UDim2.new(0, 0, 0, 8)
+BathroomAnimEmoji.BackgroundTransparency = 1
+BathroomAnimEmoji.Text               = "🚿"
+BathroomAnimEmoji.Font               = Enum.Font.GothamBold
+BathroomAnimEmoji.TextSize           = 52
+BathroomAnimEmoji.ZIndex             = 52
+
+local BathroomAnimLabel = Instance.new("TextLabel", BathroomAnimCard)
+BathroomAnimLabel.Size               = UDim2.new(1, -24, 0, 28)
+BathroomAnimLabel.Position           = UDim2.new(0, 12, 0, 82)
+BathroomAnimLabel.BackgroundTransparency = 1
+BathroomAnimLabel.Text               = "Washing hands…"
+BathroomAnimLabel.Font               = Enum.Font.GothamBlack
+BathroomAnimLabel.TextSize           = 20
+BathroomAnimLabel.TextColor3         = Color3.fromRGB(100, 200, 255)
+BathroomAnimLabel.ZIndex             = 52
+
+local BathroomAnimCountdown = Instance.new("TextLabel", BathroomAnimCard)
+BathroomAnimCountdown.Size               = UDim2.new(1, -24, 0, 24)
+BathroomAnimCountdown.Position           = UDim2.new(0, 12, 0, 116)
+BathroomAnimCountdown.BackgroundTransparency = 1
+BathroomAnimCountdown.Text               = ""
+BathroomAnimCountdown.Font               = Enum.Font.GothamBold
+BathroomAnimCountdown.TextSize           = 16
+BathroomAnimCountdown.TextColor3         = Color3.fromRGB(160, 150, 200)
+BathroomAnimCountdown.ZIndex             = 52
+
+local bathroomAnimThread = nil
+local bathroomAnimType   = nil
+
+local function hideCharacterLocally(hide)
+    -- Only used for toilet — hides character from their own camera
+    local char = player.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.LocalTransparencyModifier = hide and 1 or 0
+        end
+    end
+end
+
+onR("BathroomAnimStart", function(animType, duration)
+    bathroomAnimType = animType
+    local isSink = animType == "sink"
+
+    -- Style for sink vs toilet
+    local animStroke = BathroomAnimCard:FindFirstChildWhichIsA("UIStroke")
+    if animStroke then
+        animStroke.Color = isSink
+            and Color3.fromRGB(80,160,255)
+            or  Color3.fromRGB(150,80,220)
+    end
+    BathroomAnimEmoji.Text    = isSink and "🚿" or "🚽"
+    BathroomAnimLabel.Text    = isSink and "Washing hands…" or "Using the bathroom…"
+    BathroomAnimLabel.TextColor3 = isSink
+        and Color3.fromRGB(100,200,255)
+        or  Color3.fromRGB(180,120,255)
+    BathroomAnimOverlay.Visible = true
+
+    if not isSink then hideCharacterLocally(true) end
+
+    -- Countdown ticker
+    if bathroomAnimThread then task.cancel(bathroomAnimThread) end
+    bathroomAnimThread = task.spawn(function()
+        local remaining = math.ceil(duration)
+        while remaining > 0 and BathroomAnimOverlay.Visible do
+            BathroomAnimCountdown.Text = remaining .. "s"
+            BathroomAnimCountdown.TextColor3 = remaining <= 1
+                and Color3.fromRGB(220,80,60)
+                or  Color3.fromRGB(160,150,200)
+            task.wait(1)
+            remaining -= 1
+        end
+        BathroomAnimCountdown.Text = ""
+    end)
+end)
+
+onR("BathroomAnimComplete", function()
+    if bathroomAnimThread then
+        task.cancel(bathroomAnimThread)
+        bathroomAnimThread = nil
+    end
+    BathroomAnimOverlay.Visible = false
+    if bathroomAnimType == "toilet" then hideCharacterLocally(false) end
+    bathroomAnimType = nil
+end)
 -- Scoreboard data — route to _G.Chompers.UpdateScoreboard (implemented by StoreGuide)
 onR("UpdateScoreboard", function(data) _G.Chompers.UpdateScoreboard(data) end)
 onR("ScoreboardData",   function(data) _G.Chompers.UpdateScoreboard(data) end)
