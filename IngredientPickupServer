@@ -155,6 +155,18 @@ local function onLootPickup(part, player)
 
 	elseif lootType == "napkin" then
 		PlayerState.AddNapkin(player, 1)
+		-- Tell client HUD to add 1 napkin to stock (without resetting cooldown queue)
+		local NapkinAddedR = Remotes:FindFirstChild("NapkinAdded")
+		if not NapkinAddedR then
+			NapkinAddedR = Instance.new("RemoteEvent")
+			NapkinAddedR.Name = "NapkinAdded"; NapkinAddedR.Parent = Remotes
+		end
+		NapkinAddedR:FireClient(player, 1)
+		if AnnounceRemote then
+			AnnounceRemote:FireClient(player,
+				"🧻  Found a Napkin! (−25 CL on use)",
+				Color3.fromRGB(100,180,255), 3)
+		end
 		print(string.format("[Pickup] %s picked up a Napkin", player.Name))
 	end
 
