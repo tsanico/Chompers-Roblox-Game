@@ -452,22 +452,38 @@ Players.PlayerAdded:Connect(function(player)
 	end
 
 	player.CharacterAdded:Connect(function()
-		-- Spawn players to prelobby spawn points
+		-- Spawn players in the car park area only — never inside the store
 		if currentPhase == PHASE.PRELOBBY then
-			-- Teleport to a random prelobby spawn
-			local spawns = workspace:FindFirstChild("Map")
-				and workspace.Map:FindFirstChild("IP")
-				and workspace.Map.IP:FindFirstChild("Prelobby")
+			task.wait(0.1)   -- let character finish loading
 
-			if spawns then
-				local spawnList = spawns:GetChildren()
-				if #spawnList > 0 then
-					local pick = spawnList[math.random(1, #spawnList)]
-					local hrp = player.Character:WaitForChild("HumanoidRootPart", 3)
-					if hrp then
-						hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 3, 0))
+			-- Look for explicit Zone_CarPark tagged parts first
+			local spawnParts = {}
+			for _, desc in ipairs(workspace:GetDescendants()) do
+				if desc:IsA("BasePart") and desc:GetAttribute("Zone") == "Zone_CarPark" then
+					table.insert(spawnParts, desc)
+				end
+			end
+
+			-- Fallback: use Map.IP.Prelobby spawn points
+			if #spawnParts == 0 then
+				local spawns = workspace:FindFirstChild("Map")
+					and workspace.Map:FindFirstChild("IP")
+					and workspace.Map.IP:FindFirstChild("Prelobby")
+				if spawns then
+					for _, c in ipairs(spawns:GetChildren()) do
+						if c:IsA("BasePart") then table.insert(spawnParts, c) end
 					end
 				end
+			end
+
+			local hrp = player.Character
+				and player.Character:WaitForChild("HumanoidRootPart", 3)
+			if hrp and #spawnParts > 0 then
+				local pick = spawnParts[math.random(1, #spawnParts)]
+				hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 4, 0))
+			elseif hrp then
+				-- Last resort: hardcoded car park position
+				hrp.CFrame = CFrame.new(Vector3.new(0, 4, -120))
 			end
 		end
 	end)
