@@ -1,0 +1,192 @@
+-- ============================================================
+-- EndMatchServer — ServerScript · ServerScriptService
+--
+-- Listens for EndGame phase, calculates the victory hierarchy
+-- and accolades, then broadcasts MatchResult to all clients.
+--
+-- Victory Hierarchy (Bible Part 37):
+--   1. Last Chef Standing  → Golden Apron (1 survivor, FoodFight ended early)
+--   2. Grand Grocer        → highest points among survivors
+--   3. Top 5 Accolades     → categorical awards for all players
+-- ============================================================
+
+local Players             = game:GetService("Players")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local PlayerState = require(ServerScriptService:WaitForChild("PlayerState"))
+local Remotes     = ReplicatedStorage:WaitForChild("ChompersRemotes")
+
+-- Auto-create MatchResult remote
+local MatchResult = Remotes:FindFirstChild("MatchResult")
+if not MatchResult then
+    MatchResult = Instance.new("RemoteEvent")
+    MatchResult.Name = "MatchResult"; MatchResult.Parent = Remotes
+end
+
+-- ── Accolade definitions ──────────────────────────────────────
+-- Each accolade picks the player with the highest value for its stat.
+local ACCOLADES = {
+    {
+        key   = "sauceBoss",
+        emoji = "💣",
+        title = "Sauce Boss",
+        sub   = "most CL dealt",
+        getValue = function(row) return row.clDealt end,
+        fmt   = function(v) return v.." CL" end,
+    },
+    {
+        key   = "headChef",
+        emoji = "🍳",
+        title = "Head Chef",
+        sub   = "most dishes cooked",
+        getValue = function(row) return row.cook end,
+        fmt   = function(v) return v.." dish"..(v==1 and "" or "es") end,
+    },
+    {
+        key   = "marketMaven",
+        emoji = "🛒",
+        title = "Market Maven",
+        sub   = "most items gathered",
+        getValue = function(row) return row.gather end,
+        fmt   = function(v) return v.." item"..(v==1 and "" or "s") end,
+    },
+    {
+        key   = "floorSweeper",
+        emoji = "🧹",
+        title = "Floor Sweeper",
+        sub   = "most players eliminated",
+        getValue = function(row) return row.eliminations end,
+        fmt   = function(v) return v.." elim"..(v==1 and "" or "s") end,
+    },
+    {
+        key   = "pottyPro",
+        emoji = "🚽",
+        title = "Potty Pro",
+        sub   = "most bathroom breaks used",
+        getValue = function(row) return 3 - (row.breaks or 3) end,
+        fmt   = function(v) return v.." break"..(v==1 and "" or "s") end,
+    },
+}
+
+-- ── Build MatchResult payload ─────────────────────────────────
+local function buildResult(survivors, timedOut)
+    local allRows = PlayerState.GetScoreboardData()
+
+    -- ── 1. Rankings (all players, sorted by score desc) ───────
+    local rankings = {}
+    for i, row in ipairs(allRows) do
+        table.insert(rankings, {
+            rank         = i,
+            userId       = row.userId,
+            name         = row.name,
+            score        = row.score,
+            clDealt      = row.clDealt,
+            gather       = row.gather,
+            cook         = row.cook,
+            eliminations = row.eliminations or 0,
+            isEliminated = row.isEliminated or false,
+        })
+    end
+
+    -- ── 2. True winner by hierarchy ────────────────────────────
+    local winnerData = { type = "None", name = "Nobody", userId = 0, score = 0 }
+
+    local survivorSet = {}
+    for _, p in ipairs(survivors) do survivorSet[p.UserId] = p end
+
+    if not timedOut and #survivors == 1 then
+        -- Last Chef Standing — only one player left
+        local p = survivors[1]
+        local row = nil
+        for _, r in ipairs(rankings) do
+            if r.userId == p.UserId then row = r; break end
+        end
+        winnerData = {
+            type  = "LastChef",
+            name  = p.DisplayName or p.Name,
+            userId= p.UserId,
+            score = row and row.score or 0,
+        }
+
+    elseif #survivors >= 1 then
+        -- Grand Grocer — highest scorer among survivors
+        local best, bestScore = nil, -1
+        for _, r in ipairs(rankings) do
+            if survivorSet[r.userId] and r.score > bestScore then
+                best = r; bestScore = r.score
+            end
+        end
+        if best then
+            winnerData = {
+                type  = "GrandGrocer",
+                name  = best.name,
+                userId= best.userId,
+                score = best.score,
+            }
+        end
+    end
+
+    -- ── 3. Accolades ──────────────────────────────────────────
+    local accolades = {}
+    for _, def in ipairs(ACCOLADES) do
+        local bestRow, bestVal = nil, -1
+        for _, row in ipairs(allRows) do
+            local v = def.getValue(row) or 0
+            if v > bestVal then bestVal = v; bestRow = row end
+        end
+        if bestRow and bestVal > 0 then
+            table.insert(accolades, {
+                key        = def.key,
+                emoji      = def.emoji,
+                title      = def.title,
+                sub        = def.sub,
+                winnerName = bestRow.name,
+                valueStr   = def.fmt(bestVal),
+            })
+        end
+    end
+
+    return {
+        timedOut  = timedOut or false,
+        winner    = winnerData,
+        rankings  = rankings,
+        accolades = accolades,
+    }
+end
+
+-- ── Listen for EndGame phase ───────────────────────────────────
+local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
+if not PhaseChangedEvent then
+    -- Wait briefly — GameManager creates this at boot
+    PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 15)
+end
+
+if PhaseChangedEvent then
+    local processingEndGame = false
+    PhaseChangedEvent.Event:Connect(function(phase, survivors, timedOut)
+        if phase ~= "EndGame" then return end
+
+        -- GameManager fires PhaseChangedEvent twice for EndGame:
+        --   1st: from setPhase() with no survivors (skip this one)
+        --   2nd: explicitly with real survivors data (process this one)
+        if not survivors then return end
+        if processingEndGame then return end
+        processingEndGame = true
+
+        -- Small delay so final PlayerState mutations settle
+        task.wait(0.3)
+
+        local result = buildResult(survivors, timedOut)
+
+        print(string.format("[EndMatchServer] Winner: %s (%s, %d pts)",
+            result.winner.name, result.winner.type, result.winner.score))
+        print(string.format("[EndMatchServer] %d rankings, %d accolades",
+            #result.rankings, #result.accolades))
+
+        MatchResult:FireAllClients(result)
+        processingEndGame = false
+    end)
+end
+
+print("[EndMatchServer] Ready")
