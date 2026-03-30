@@ -25,10 +25,11 @@ local function getOrCreate(name)
     return r
 end
 
-local OpenVendorR     = getOrCreate("OpenVendor")      -- Server→Client: open vendor UI
-local PurchaseItemR   = getOrCreate("PurchaseItem")    -- Client→Server: buy request
-local PurchaseResultR = getOrCreate("PurchaseResult")  -- Server→Client: success/fail
-local EquipItemR      = getOrCreate("EquipItem")       -- Client→Server: equip request
+local OpenVendorR     = getOrCreate("OpenVendor")
+local PurchaseItemR   = getOrCreate("PurchaseItem")
+local PurchaseResultR = getOrCreate("PurchaseResult")
+local EquipItemR      = getOrCreate("EquipItem")
+local PlayerTitleUpdateR = getOrCreate("PlayerTitleUpdate")  -- fires to ALL clients
 
 -- ── Best anchor helper ────────────────────────────────────────
 local function getBestAnchor(part)
@@ -154,6 +155,12 @@ EquipItemR.OnServerEvent:Connect(function(player, itemId, category)
     if not itemDef then return end
     local cat = category or itemDef.category
     DataService.SetEquipped(player, cat, itemId)
+
+    -- Broadcast title change to all clients so TitleDisplay can update
+    local isTitleCat = cat=="title" or cat=="title_animated" or cat=="title_prestige"
+    if isTitleCat then
+        PlayerTitleUpdateR:FireAllClients(player, itemId, itemDef.name, itemDef.tier)
+    end
 end)
 
 -- ── Scan workspace ────────────────────────────────────────────
