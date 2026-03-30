@@ -1,0 +1,231 @@
+-- ============================================================
+-- AllianceClient — LocalScript · StarterPlayerScripts
+--
+-- UI for two alliance decision prompts:
+--
+--   RECONFIRMATION (FoodFight start, 15s)
+--   "AllyName wants to continue the alliance. Confirm or Break?"
+--
+--   FIGHT OR LEAVE (EndGame, 30s)
+--   "The match is over. Fight AllyName or Leave Together?"
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local RunService        = game:GetService("RunService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+
+local function R(n) return Remotes:WaitForChild(n, 10) end
+local AllianceReconfirmR        = R("AllianceReconfirm")
+local AllianceReconfirmRespR    = R("AllianceReconfirmResp")
+local AllianceFightOrLeaveR     = R("AllianceFightOrLeave")
+local AllianceFightOrLeaveRespR = R("AllianceFightOrLeaveResp")
+
+-- ── Palette ───────────────────────────────────────────────────
+local C = {
+    bg     = Color3.fromRGB(14, 12, 26),
+    dark   = Color3.fromRGB(10,  8, 20),
+    stroke = Color3.fromRGB(48, 44, 70),
+    white  = Color3.fromRGB(245,242,255),
+    dim    = Color3.fromRGB(105,100,138),
+    gold   = Color3.fromRGB(239,159, 39),
+    green  = Color3.fromRGB( 70,195, 85),
+    red    = Color3.fromRGB(218, 65, 65),
+}
+
+-- ── Helpers ───────────────────────────────────────────────────
+local function corner(p,r) Instance.new("UICorner",p).CornerRadius=UDim.new(0,r or 12) end
+local function mkStroke(p,t,c)
+    local s=Instance.new("UIStroke",p); s.Thickness=t or 1.5; s.Color=c or C.stroke; return s
+end
+local function lbl(p,text,font,size,col,xA,pos,sz)
+    local l=Instance.new("TextLabel",p); l.BackgroundTransparency=1
+    l.Text=text or ""; l.Font=font or Enum.Font.GothamBold
+    l.TextSize=size or 14; l.TextColor3=col or C.white
+    l.TextXAlignment=xA or Enum.TextXAlignment.Center
+    l.TextYAlignment=Enum.TextYAlignment.Center
+    l.TextWrapped=true
+    l.Position=pos or UDim2.new(0,0,0,0)
+    l.Size=sz or UDim2.new(1,0,1,0)
+    return l
+end
+local BACK = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local FAST = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local function tw(o,i,p) TweenService:Create(o,i,p):Play() end
+
+-- ── Root ScreenGui ────────────────────────────────────────────
+local Gui = Instance.new("ScreenGui")
+Gui.Name="AllianceUI"; Gui.ResetOnSpawn=false; Gui.IgnoreGuiInset=true
+Gui.DisplayOrder=22; Gui.Enabled=false; Gui.Parent=playerGui
+
+-- ── Shared panel (slides up from bottom-centre) ───────────────
+local Panel = Instance.new("Frame", Gui)
+Panel.Size=UDim2.new(0,480,0,148); Panel.AnchorPoint=Vector2.new(0.5,1)
+Panel.Position=UDim2.new(0.5,0,1,20)   -- off-screen initially
+Panel.BackgroundColor3=C.bg; Panel.BorderSizePixel=0; Panel.ZIndex=20
+corner(Panel,16)
+local PanelStroke = mkStroke(Panel, 2.5, C.gold)
+
+-- Countdown bar at top of panel
+local CdTrack = Instance.new("Frame", Panel)
+CdTrack.Size=UDim2.new(1,0,0,4); CdTrack.BackgroundColor3=Color3.fromRGB(28,26,40)
+CdTrack.BorderSizePixel=0; CdTrack.ZIndex=21; corner(CdTrack,2)
+local CdFill = Instance.new("Frame", CdTrack)
+CdFill.Size=UDim2.new(1,0,1,0); CdFill.BackgroundColor3=C.gold
+CdFill.BorderSizePixel=0; CdFill.ZIndex=22; corner(CdFill,2)
+
+-- Emoji + title row
+local EmojiLbl = lbl(Panel,"🤝",Enum.Font.GothamBlack,38,C.white,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,10),UDim2.new(0,56,0,48))
+EmojiLbl.ZIndex=21
+
+local TitleLbl = lbl(Panel,"",Enum.Font.GothamBlack,20,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,60,0,10),UDim2.new(1,-68,0,24))
+TitleLbl.ZIndex=21
+
+local BodyLbl = lbl(Panel,"",Enum.Font.GothamBold,15,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0,60,0,34),UDim2.new(1,-68,0,22))
+BodyLbl.ZIndex=21
+
+-- Two action buttons
+local Btn1 = Instance.new("TextButton", Panel)
+Btn1.Size=UDim2.new(0.48,-8,0,40); Btn1.Position=UDim2.new(0,8,1,-50)
+Btn1.BackgroundColor3=Color3.fromRGB(14,36,16); Btn1.BorderSizePixel=0
+Btn1.AutoButtonColor=false; Btn1.Font=Enum.Font.GothamBlack; Btn1.TextSize=16
+Btn1.TextColor3=C.green; Btn1.Text="Confirm"; Btn1.ZIndex=22; corner(Btn1,10)
+mkStroke(Btn1,1.5,C.green)
+
+local Btn2 = Instance.new("TextButton", Panel)
+Btn2.Size=UDim2.new(0.48,-8,0,40); Btn2.AnchorPoint=Vector2.new(1,0)
+Btn2.Position=UDim2.new(1,-8,1,-50)
+Btn2.BackgroundColor3=Color3.fromRGB(36,12,12); Btn2.BorderSizePixel=0
+Btn2.AutoButtonColor=false; Btn2.Font=Enum.Font.GothamBlack; Btn2.TextSize=16
+Btn2.TextColor3=C.red; Btn2.Text="Break"; Btn2.ZIndex=22; corner(Btn2,10)
+mkStroke(Btn2,1.5,C.red)
+
+-- ── Panel control ─────────────────────────────────────────────
+local panelOpen = false
+local cdConn = nil
+
+local function showPanel()
+    Gui.Enabled=true; panelOpen=true
+    tw(Panel, BACK, {Position=UDim2.new(0.5,0,1,-120)})
+end
+
+local function hidePanel()
+    if cdConn then cdConn:Disconnect(); cdConn=nil end
+    tw(Panel, FAST, {Position=UDim2.new(0.5,0,1,20)})
+    task.delay(0.25, function() Gui.Enabled=false; panelOpen=false end)
+end
+
+local function startCountdown(duration, onExpire)
+    if cdConn then cdConn:Disconnect() end
+    local endAt = tick() + duration
+    cdConn = RunService.Heartbeat:Connect(function()
+        local rem = math.max(0, endAt - tick())
+        CdFill.Size = UDim2.new(rem/duration, 0, 1, 0)
+        -- Colour shifts red as time runs low
+        if rem < 5 then
+            CdFill.BackgroundColor3 = C.red
+        elseif rem < duration * 0.4 then
+            CdFill.BackgroundColor3 = Color3.fromRGB(235,130,30)
+        else
+            CdFill.BackgroundColor3 = C.gold
+        end
+        if rem <= 0 then
+            cdConn:Disconnect(); cdConn=nil
+            if onExpire then onExpire() end
+        end
+    end)
+end
+
+-- Disconnect all button connections cleanly
+local btn1Conn, btn2Conn = nil, nil
+local function clearBtnConns()
+    if btn1Conn then btn1Conn:Disconnect(); btn1Conn=nil end
+    if btn2Conn then btn2Conn:Disconnect(); btn2Conn=nil end
+end
+
+-- ============================================================
+-- RECONFIRMATION PROMPT
+-- ============================================================
+
+AllianceReconfirmR.OnClientEvent:Connect(function(allyName, duration)
+    clearBtnConns()
+    EmojiLbl.Text   = "🤝"
+    TitleLbl.Text   = "Reconfirm Alliance?"
+    TitleLbl.TextColor3 = C.gold
+    PanelStroke.Color = C.gold
+    BodyLbl.Text    = allyName.." is your ally. Do you continue together?"
+    Btn1.Text       = "✓ Confirm"
+    Btn1.TextColor3 = C.green
+    Btn1.BackgroundColor3=Color3.fromRGB(14,36,16)
+    mkStroke(Btn1,1.5,C.green)
+    Btn2.Text       = "✕ Break"
+    Btn2.TextColor3 = C.red
+    Btn2.BackgroundColor3=Color3.fromRGB(36,12,12)
+    mkStroke(Btn2,1.5,C.red)
+    CdFill.BackgroundColor3 = C.gold
+
+    showPanel()
+    startCountdown(duration, function()
+        -- Time expired → auto-break (no response = declined)
+        AllianceReconfirmRespR:FireServer(false)
+        hidePanel()
+    end)
+
+    btn1Conn = Btn1.MouseButton1Click:Connect(function()
+        clearBtnConns()
+        AllianceReconfirmRespR:FireServer(true)
+        hidePanel()
+    end)
+    btn2Conn = Btn2.MouseButton1Click:Connect(function()
+        clearBtnConns()
+        AllianceReconfirmRespR:FireServer(false)
+        hidePanel()
+    end)
+end)
+
+-- ============================================================
+-- FIGHT OR LEAVE PROMPT
+-- ============================================================
+
+AllianceFightOrLeaveR.OnClientEvent:Connect(function(allyName, duration)
+    clearBtnConns()
+    EmojiLbl.Text   = "⚔️"
+    TitleLbl.Text   = "Fight or Leave Together?"
+    TitleLbl.TextColor3 = Color3.fromRGB(220,160,80)
+    PanelStroke.Color = Color3.fromRGB(220,160,80)
+    BodyLbl.Text    = "The match is over. What do you and "..allyName.." do?"
+    Btn1.Text       = "🤝 Leave Together  +18 🏅"
+    Btn1.TextColor3 = C.gold
+    Btn1.BackgroundColor3=Color3.fromRGB(36,26,4)
+    mkStroke(Btn1,1.5,C.gold)
+    Btn2.Text       = "⚔️ Fight!"
+    Btn2.TextColor3 = C.red
+    Btn2.BackgroundColor3=Color3.fromRGB(36,12,12)
+    mkStroke(Btn2,1.5,C.red)
+    CdFill.BackgroundColor3 = Color3.fromRGB(220,160,80)
+
+    showPanel()
+    startCountdown(duration, function()
+        -- Timed out → default to leaving together
+        AllianceFightOrLeaveRespR:FireServer("leave")
+        hidePanel()
+    end)
+
+    btn1Conn = Btn1.MouseButton1Click:Connect(function()
+        clearBtnConns()
+        AllianceFightOrLeaveRespR:FireServer("leave")
+        hidePanel()
+    end)
+    btn2Conn = Btn2.MouseButton1Click:Connect(function()
+        clearBtnConns()
+        AllianceFightOrLeaveRespR:FireServer("fight")
+        hidePanel()
+    end)
+end)
