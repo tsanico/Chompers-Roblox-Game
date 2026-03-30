@@ -43,18 +43,23 @@ local function getOrCreate(name)
 	return r
 end
 
-local ShowPrepUI      = getOrCreate("ShowPrepUI")
-local HidePrepUI      = getOrCreate("HidePrepUI")
-local RequestAssemble = getOrCreate("RequestAssemble")
-local AssembleResult  = getOrCreate("AssembleResult")
-local ShowCookUI      = getOrCreate("ShowCookUI")
-local HideCookUI      = getOrCreate("HideCookUI")
-local BeginHeatBar    = getOrCreate("BeginHeatBar")
-local StopHeatBar     = getOrCreate("StopHeatBar")
-local CookingComplete = getOrCreate("CookingComplete")
-local SousChefJoin    = getOrCreate("SousChefJoin")
-local SousChefAck     = getOrCreate("SousChefAck")
-local AnnounceRemote  = Remotes:WaitForChild("Announce", 10)
+local ShowPrepUI       = getOrCreate("ShowPrepUI")
+local HidePrepUI       = getOrCreate("HidePrepUI")
+local RequestAssemble  = getOrCreate("RequestAssemble")
+local AssembleResult   = getOrCreate("AssembleResult")
+local ShowCookUI       = getOrCreate("ShowCookUI")
+local HideCookUI       = getOrCreate("HideCookUI")
+local BeginHeatBar     = getOrCreate("BeginHeatBar")
+local StopHeatBar      = getOrCreate("StopHeatBar")
+local CookingComplete  = getOrCreate("CookingComplete")
+local CookingCancelled = getOrCreate("CookingCancelled")  -- interrupt signal
+local SousChefJoin     = getOrCreate("SousChefJoin")
+local SousChefAck      = getOrCreate("SousChefAck")
+local AnnounceRemote   = Remotes:WaitForChild("Announce", 10)
+
+-- heatBarStartTimes[player] = { startTick, speed, part }
+-- Used for server-authoritative needle position — we never trust client's needlePos
+local heatBarStartTimes = {}
 
 -- ── Recipe emoji lookup (server-side subset) ─────────────────
 local RECIPE_EMOJI = {
@@ -483,8 +488,16 @@ local function setupStovetop(part)
 
 			heatBarSessions[player] = part
 
+			-- Record server start time for authoritative needle position
+			local HEAT_SPEED  = 1.8   -- oscillations/s
+			local HEAT_WINDOW = 2.0   -- seconds before auto-Cold
+			local MISS_DELAY  = 1.2
+			local heatStart   = tick()
+			heatBarStartTimes[player] = { startTick=heatStart, speed=HEAT_SPEED, part=part }
+
 			updateBillboard("⚡ TIMING!", 1)
-			BeginHeatBar:FireClient(player, dishCopy.name, HEAT_SPEED, HEAT_WINDOW)
+			-- Send server timestamp so client can sync its animation
+			BeginHeatBar:FireClient(player, dishCopy.name, HEAT_SPEED, HEAT_WINDOW, workspace:GetServerTimeNow())
 
 			-- Auto-resolve as Cold if player doesn't press E in time
 			task.delay(HEAT_WINDOW + MISS_DELAY, function()
@@ -582,15 +595,76 @@ function resolveCook(player, part, zone, missedWindow)
 		player.Name, finalDish.name, finalDish.cookZone or finalZone, finalDish.cl))
 end
 
--- StopHeatBar: client pressed E with their needle position
-StopHeatBar.OnServerEvent:Connect(function(player, needlePos)
+-- StopHeatBar: client pressed E — server computes authoritative needle position
+-- Client argument is ignored; we use server-side timing to determine zone.
+StopHeatBar.OnServerEvent:Connect(function(player, _ignored)
 	local part = heatBarSessions[player]
 	if not part then return end
 
-	local zone = BarSystem.EvaluateHeatZone(needlePos or 0)
+	local info = heatBarStartTimes[player]
+	local needlePos = 0.5   -- safe fallback
+
+	if info then
+		local elapsed = tick() - info.startTick
+		local period  = 1 / info.speed
+		local phase   = (elapsed % period) / period
+		needlePos     = phase < 0.5 and (phase * 2) or ((1 - phase) * 2)
+		heatBarStartTimes[player] = nil
+	end
+
+	local zone = BarSystem.EvaluateHeatZone(needlePos)
 	heatBarSessions[player] = nil
 	resolveCook(player, part, zone, false)
 end)
+
+-- ── DISTANCE LEASH ────────────────────────────────────────────
+local LEASH_DISTANCE = 12
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		for part, session in pairs(cookSessions) do
+			local player = session.player
+			local char   = player and player.Character
+			local hrp    = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp and part and part.Parent then
+				if (hrp.Position - part.Position).Magnitude > LEASH_DISTANCE then
+					cookSessions[part]        = nil
+					heatBarSessions[player]   = nil
+					heatBarStartTimes[player] = nil
+					HideCookUI:FireClient(player)
+					CookingCancelled:FireClient(player, "too_far")
+					if AnnounceRemote then
+						AnnounceRemote:FireClient(player,
+							"ð³  You moved too far — cooking cancelled. Dish still in your bag.",
+							Color3.fromRGB(220,80,60), 3)
+					end
+				end
+			end
+		end
+	end
+end)
+
+-- ── HIT-CANCEL — registered _G hook for PlayerState to call ──
+-- PlayerState calls _G.NotifyCookingHit(player) after applying CL damage.
+_G.NotifyCookingHit = function(player)
+	for part, session in pairs(cookSessions) do
+		if session.player == player then
+			session.startTime = tick()   -- reset passive timer
+			if heatBarSessions[player] then
+				heatBarSessions[player]   = nil
+				heatBarStartTimes[player] = nil
+				CookingCancelled:FireClient(player, "hit_during_heat")
+				ShowCookUI:FireClient(player, session.dish.name, session.dish.emoji, session.cookTime)
+			end
+			if AnnounceRemote then
+				AnnounceRemote:FireClient(player,
+					"ð¥  Hit during cooking — heat reset!",
+					Color3.fromRGB(220,80,60), 2)
+			end
+			break
+		end
+	end
+end
 
 -- ── SCAN WORKSPACE FOR STATIONS ───────────────────────────────
 local function setupAll()
