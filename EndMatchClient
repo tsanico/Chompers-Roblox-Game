@@ -1,0 +1,329 @@
+-- ============================================================
+-- EndMatchClient — LocalScript · StarterPlayerScripts
+--
+-- Displays the match results screen when MatchResult fires.
+-- Shows: winner banner, full rankings table, 5 accolade cards.
+-- Auto-dismisses when the next Prelobby phase starts.
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+local RunService        = game:GetService("RunService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local MatchResult       = Remotes:WaitForChild("MatchResult", 15)
+local PhaseChangedR     = Remotes:FindFirstChild("PhaseChanged")
+    or Remotes:WaitForChild("PhaseChanged", 15)
+
+-- ── Colour palette ────────────────────────────────────────────
+local C = {
+    bg       = Color3.fromRGB(12, 10, 22),
+    panel    = Color3.fromRGB(18, 16, 32),
+    stroke   = Color3.fromRGB(48, 44, 70),
+    white    = Color3.fromRGB(245, 242, 255),
+    dim      = Color3.fromRGB(105, 100, 138),
+    gold     = Color3.fromRGB(239, 159, 39),
+    green    = Color3.fromRGB(70, 195, 85),
+    red      = Color3.fromRGB(218, 65, 65),
+    blue     = Color3.fromRGB(65, 135, 235),
+    purple   = Color3.fromRGB(150, 80, 220),
+}
+
+-- ── UI helpers ────────────────────────────────────────────────
+local function corner(p, r) Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 12) end
+local function mkStroke(p, t, col)
+    local s = Instance.new("UIStroke", p); s.Thickness = t or 1.5
+    s.Color = col or C.stroke; return s
+end
+local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
+    local l = Instance.new("TextLabel", p)
+    l.Text = text or ""; l.Font = font or Enum.Font.GothamBold
+    l.TextSize = size or 14; l.TextColor3 = color or C.white
+    l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
+    l.TextYAlignment = Enum.TextYAlignment.Center
+    l.BackgroundTransparency = 1
+    l.Position = pos or UDim2.new(0,0,0,0)
+    l.Size = sz or UDim2.new(1,0,1,0)
+    l.TextWrapped = true; return l
+end
+
+-- ── ScreenGui ─────────────────────────────────────────────────
+local ResultGui = Instance.new("ScreenGui")
+ResultGui.Name           = "EndMatchScreen"
+ResultGui.ResetOnSpawn   = false
+ResultGui.IgnoreGuiInset = true
+ResultGui.DisplayOrder   = 25
+ResultGui.Enabled        = false
+ResultGui.Parent         = playerGui
+
+-- Full dimmer
+local Dimmer = Instance.new("Frame", ResultGui)
+Dimmer.Size = UDim2.new(1,0,1,0)
+Dimmer.BackgroundColor3 = Color3.fromRGB(6,4,14)
+Dimmer.BackgroundTransparency = 0.35
+Dimmer.BorderSizePixel = 0; Dimmer.ZIndex = 20
+
+-- ── Main panel ────────────────────────────────────────────────
+local Panel = Instance.new("Frame", ResultGui)
+Panel.Size             = UDim2.new(0, 860, 0, 580)
+Panel.AnchorPoint      = Vector2.new(0.5, 0.5)
+Panel.Position         = UDim2.new(0.5, 0, 0.5, 0)
+Panel.BackgroundColor3 = C.bg
+Panel.BorderSizePixel  = 0; Panel.ZIndex = 21
+corner(Panel, 18); mkStroke(Panel, 2.5, C.gold)
+
+-- Header bar
+local Header = Instance.new("Frame", Panel)
+Header.Size = UDim2.new(1,0,0,64)
+Header.BackgroundColor3 = Color3.fromRGB(20,16,38); Header.BorderSizePixel=0; Header.ZIndex=22
+corner(Header, 18)
+-- Square off bottom corners
+local HeaderBot = Instance.new("Frame", Header)
+HeaderBot.Size=UDim2.new(1,0,0.5,0); HeaderBot.Position=UDim2.new(0,0,0.5,0)
+HeaderBot.BackgroundColor3=Color3.fromRGB(20,16,38); HeaderBot.BorderSizePixel=0; HeaderBot.ZIndex=22
+
+local HeaderTitle = mkLabel(Header, "🏆  MATCH OVER",
+    Enum.Font.GothamBlack, 28, C.gold,
+    Enum.TextXAlignment.Left,
+    UDim2.new(0,20,0,0), UDim2.new(0.7,0,1,0))
+HeaderTitle.ZIndex = 23
+
+local CountdownLabel = mkLabel(Header, "Next match in …s",
+    Enum.Font.GothamBold, 15, C.dim,
+    Enum.TextXAlignment.Right,
+    UDim2.new(0.7,0,0,0), UDim2.new(0.3,-16,1,0))
+CountdownLabel.ZIndex = 23
+
+-- ── Winner banner ─────────────────────────────────────────────
+local WinBanner = Instance.new("Frame", Panel)
+WinBanner.Size = UDim2.new(1,-24,0,78)
+WinBanner.Position = UDim2.new(0,12,0,72)
+WinBanner.BackgroundColor3 = Color3.fromRGB(22,18,40)
+WinBanner.BorderSizePixel = 0; WinBanner.ZIndex = 22
+corner(WinBanner, 12); mkStroke(WinBanner, 2, C.gold)
+
+local WinEmoji = mkLabel(WinBanner, "🏆",
+    Enum.Font.GothamBlack, 44, C.gold,
+    Enum.TextXAlignment.Center,
+    UDim2.new(0,0,0,0), UDim2.new(0,72,1,0))
+WinEmoji.ZIndex = 23
+
+local WinNameLabel = mkLabel(WinBanner, "—",
+    Enum.Font.GothamBlack, 26, C.gold,
+    Enum.TextXAlignment.Left,
+    UDim2.new(0,76,0,8), UDim2.new(0.65,0,0,34))
+WinNameLabel.ZIndex = 23
+
+local WinTypeLabel = mkLabel(WinBanner, "",
+    Enum.Font.GothamBold, 15, C.dim,
+    Enum.TextXAlignment.Left,
+    UDim2.new(0,76,0,44), UDim2.new(0.65,0,0,22))
+WinTypeLabel.ZIndex = 23
+
+local WinScoreLabel = mkLabel(WinBanner, "",
+    Enum.Font.GothamBlack, 22, C.white,
+    Enum.TextXAlignment.Right,
+    UDim2.new(0.65,0,0,0), UDim2.new(0.35,-14,1,0))
+WinScoreLabel.ZIndex = 23
+
+-- ── Rankings table ────────────────────────────────────────────
+local RankScroll = Instance.new("ScrollingFrame", Panel)
+RankScroll.Size = UDim2.new(0.52,-18,1,-220)
+RankScroll.Position = UDim2.new(0,12,0,162)
+RankScroll.BackgroundTransparency = 1; RankScroll.BorderSizePixel=0
+RankScroll.ScrollBarThickness = 5
+RankScroll.ScrollBarImageColor3 = C.gold
+RankScroll.CanvasSize = UDim2.new(1,0,0,0)
+RankScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+RankScroll.ZIndex = 22
+local RankLayout = Instance.new("UIListLayout", RankScroll)
+RankLayout.SortOrder = Enum.SortOrder.LayoutOrder; RankLayout.Padding = UDim.new(0,4)
+local RankPad = Instance.new("UIPadding", RankScroll)
+RankPad.PaddingTop = UDim.new(0,2); RankPad.PaddingBottom = UDim.new(0,8)
+
+local RANK_MEDALS = {"🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"}
+
+local function buildRankings(rankings)
+    for _, c in ipairs(RankScroll:GetChildren()) do
+        if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
+    end
+
+    -- Column header
+    local hdr = Instance.new("Frame", RankScroll)
+    hdr.Size=UDim2.new(1,0,0,22); hdr.BackgroundTransparency=1
+    hdr.LayoutOrder=0; hdr.ZIndex=23
+    local function hcol(txt, pos, sz)
+        local l = mkLabel(hdr, txt, Enum.Font.GothamBlack, 11, C.dim,
+            Enum.TextXAlignment.Left, pos, sz); l.ZIndex=23
+    end
+    hcol("PLAYER",  UDim2.new(0,32,0,0), UDim2.new(0.48,0,1,0))
+    hcol("PTS",     UDim2.new(0.48,0,0,0), UDim2.new(0.2,0,1,0))
+    hcol("CL",      UDim2.new(0.68,0,0,0), UDim2.new(0.16,0,1,0))
+    hcol("ELIM",    UDim2.new(0.84,0,0,0), UDim2.new(0.16,0,1,0))
+
+    for i, row in ipairs(rankings) do
+        local isMe = row.userId == player.UserId
+        local row_f = Instance.new("Frame", RankScroll)
+        row_f.Size = UDim2.new(1,0,0,44)
+        row_f.BackgroundColor3 = isMe
+            and Color3.fromRGB(24,30,50)
+            or  Color3.fromRGB(18,16,30)
+        row_f.BorderSizePixel=0; row_f.LayoutOrder=i; row_f.ZIndex=22
+        corner(row_f, 8)
+        if isMe then mkStroke(row_f, 1.5, C.blue) end
+
+        local medalStr = RANK_MEDALS[i] or tostring(i)
+        mkLabel(row_f, medalStr, Enum.Font.GothamBlack, 20, C.gold,
+            Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,30,1,0)).ZIndex=23
+
+        local nameCol = row.isEliminated and C.dim or C.white
+        local nameL = mkLabel(row_f, row.name, Enum.Font.GothamBold, 14, nameCol,
+            Enum.TextXAlignment.Left, UDim2.new(0,32,0,4), UDim2.new(0.48,-34,0,20))
+        nameL.ZIndex=23; nameL.TextTruncate = Enum.TextTruncate.AtEnd
+
+        local statusSub = row.isEliminated and "Eliminated" or "Survivor ✓"
+        local statusCol = row.isEliminated and C.red or C.green
+        mkLabel(row_f, statusSub, Enum.Font.Gotham, 11, statusCol,
+            Enum.TextXAlignment.Left, UDim2.new(0,32,0,26), UDim2.new(0.48,-34,0,14)).ZIndex=23
+
+        mkLabel(row_f, tostring(row.score), Enum.Font.GothamBlack, 16, C.gold,
+            Enum.TextXAlignment.Left, UDim2.new(0.48,0,0,0), UDim2.new(0.2,0,1,0)).ZIndex=23
+        mkLabel(row_f, tostring(row.clDealt), Enum.Font.GothamBold, 14, C.white,
+            Enum.TextXAlignment.Left, UDim2.new(0.68,0,0,0), UDim2.new(0.16,0,1,0)).ZIndex=23
+        mkLabel(row_f, tostring(row.eliminations or 0), Enum.Font.GothamBold, 14, C.white,
+            Enum.TextXAlignment.Left, UDim2.new(0.84,0,0,0), UDim2.new(0.16,0,1,0)).ZIndex=23
+    end
+end
+
+-- ── Accolades panel (right column) ────────────────────────────
+local AccoladeFrame = Instance.new("Frame", Panel)
+AccoladeFrame.Size = UDim2.new(0.48,-18,1,-220)
+AccoladeFrame.Position = UDim2.new(0.52,6,0,162)
+AccoladeFrame.BackgroundTransparency=1; AccoladeFrame.BorderSizePixel=0; AccoladeFrame.ZIndex=22
+
+mkLabel(AccoladeFrame, "⭐  ACCOLADES", Enum.Font.GothamBlack, 14, C.gold,
+    Enum.TextXAlignment.Left, UDim2.new(0,0,0,0), UDim2.new(1,0,0,22)).ZIndex=23
+
+local AccScroll = Instance.new("ScrollingFrame", AccoladeFrame)
+AccScroll.Size = UDim2.new(1,0,1,-26)
+AccScroll.Position = UDim2.new(0,0,0,26)
+AccScroll.BackgroundTransparency=1; AccScroll.BorderSizePixel=0
+AccScroll.ScrollBarThickness=4; AccScroll.ScrollBarImageColor3=C.purple
+AccScroll.CanvasSize=UDim2.new(1,0,0,0); AccScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+AccScroll.ZIndex=22
+local AccLayout = Instance.new("UIListLayout", AccScroll)
+AccLayout.SortOrder=Enum.SortOrder.LayoutOrder; AccLayout.Padding=UDim.new(0,6)
+
+local function buildAccolades(accolades)
+    for _, c in ipairs(AccScroll:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    for i, acc in ipairs(accolades) do
+        local card = Instance.new("Frame", AccScroll)
+        card.Size = UDim2.new(1,0,0,62)
+        card.BackgroundColor3 = Color3.fromRGB(20,16,38)
+        card.BorderSizePixel=0; card.LayoutOrder=i; card.ZIndex=22
+        corner(card, 10); mkStroke(card, 1.5, C.purple)
+
+        mkLabel(card, acc.emoji, Enum.Font.GothamBold, 34, C.white,
+            Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,52,1,0)).ZIndex=23
+
+        mkLabel(card, acc.title, Enum.Font.GothamBlack, 16, C.purple,
+            Enum.TextXAlignment.Left, UDim2.new(0,56,0,6), UDim2.new(1,-60,0,22)).ZIndex=23
+
+        mkLabel(card, acc.winnerName.."  ·  "..acc.valueStr,
+            Enum.Font.GothamBold, 13, C.white,
+            Enum.TextXAlignment.Left, UDim2.new(0,56,0,28), UDim2.new(1,-60,0,18)).ZIndex=23
+
+        mkLabel(card, acc.sub, Enum.Font.Gotham, 11, C.dim,
+            Enum.TextXAlignment.Left, UDim2.new(0,56,0,46), UDim2.new(1,-60,0,14)).ZIndex=23
+    end
+end
+
+-- ── Bottom bar ────────────────────────────────────────────────
+local BottomBar = Instance.new("Frame", Panel)
+BottomBar.Size = UDim2.new(1,-24,0,48)
+BottomBar.Position = UDim2.new(0,12,1,-58)
+BottomBar.BackgroundColor3 = Color3.fromRGB(16,14,28)
+BottomBar.BorderSizePixel = 0; BottomBar.ZIndex = 22
+corner(BottomBar, 10); mkStroke(BottomBar, 1.5, C.stroke)
+
+local BottomHint = mkLabel(BottomBar, "🛒  Next match lobby opens automatically.",
+    Enum.Font.GothamBold, 14, C.dim,
+    Enum.TextXAlignment.Center,
+    UDim2.new(0,0,0,0), UDim2.new(1,0,1,0))
+BottomHint.ZIndex = 23
+
+-- ── Show / hide logic ─────────────────────────────────────────
+local countdownConn = nil
+
+local function hideScreen()
+    ResultGui.Enabled = false
+    if countdownConn then countdownConn:Disconnect(); countdownConn = nil end
+end
+
+local function showScreen(result)
+    ResultGui.Enabled = true
+
+    -- Winner banner
+    local w = result.winner
+    if w.type == "LastChef" then
+        WinEmoji.Text    = "👑"
+        WinNameLabel.Text = w.name
+        WinTypeLabel.Text  = "Last Chef Standing  ·  Golden Apron"
+        WinScoreLabel.Text = tostring(w.score).." pts"
+        mkStroke(WinBanner, 2, Color3.fromRGB(255,215,0))
+    elseif w.type == "GrandGrocer" then
+        WinEmoji.Text    = "🏆"
+        WinNameLabel.Text = w.name
+        WinTypeLabel.Text  = "Grand Grocer  ·  Top Points"
+        WinScoreLabel.Text = tostring(w.score).." pts"
+        mkStroke(WinBanner, 2, C.gold)
+    else
+        WinEmoji.Text    = "🤷"
+        WinNameLabel.Text = "No winner this round"
+        WinTypeLabel.Text  = result.timedOut and "Time expired — everyone survived" or ""
+        WinScoreLabel.Text = ""
+    end
+
+    buildRankings(result.rankings)
+    buildAccolades(result.accolades)
+
+    -- Countdown label (driven by server phase timer — approximate)
+    local accoladesDuration = 20   -- matches C.Phase.Accolades
+    local endAt = tick() + accoladesDuration
+    if countdownConn then countdownConn:Disconnect() end
+    countdownConn = RunService.Heartbeat:Connect(function()
+        local remaining = math.max(0, math.ceil(endAt - tick()))
+        CountdownLabel.Text = "Next match in " .. remaining .. "s"
+        if remaining <= 0 then
+            countdownConn:Disconnect(); countdownConn = nil
+        end
+    end)
+
+    -- Entrance animation: panel drops in from above
+    Panel.Position = UDim2.new(0.5, 0, -0.2, 0)
+    TweenService:Create(Panel,
+        TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        {Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
+end
+
+-- ── Remote listeners ──────────────────────────────────────────
+if MatchResult then
+    MatchResult.OnClientEvent:Connect(function(result)
+        showScreen(result)
+    end)
+end
+
+if PhaseChangedR then
+    PhaseChangedR.OnClientEvent:Connect(function(phase)
+        if phase == "Prelobby" then
+            hideScreen()
+        end
+    end)
+end
+
+print("[EndMatchClient] Ready")
