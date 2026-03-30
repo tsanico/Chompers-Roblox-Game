@@ -581,11 +581,16 @@ function resolveCook(player, part, zone, missedWindow)
 		if fl then fl.Size = UDim2.new(0,0,1,0) end
 	end
 
-	-- Announce legendary cook
-	if finalDish.rarity == "Legendary" and AnnounceRemote then
-		AnnounceRemote:FireAllClients(
-			"⭐ "..player.Name.." just cooked the "..finalDish.name.."!",
-			Color3.fromRGB(200,140,30), 5)
+	-- Legendary cook → kill feed (Million Dollar Steak can only be cooked, not found)
+	if finalDish.rarity == "Legendary" then
+		local KillFeedEvent = Remotes:FindFirstChild("KillFeedEvent")
+		if KillFeedEvent then
+			KillFeedEvent:FireAllClients("legendary_cooked", {
+				chef  = player.Name,
+				item  = finalDish.name,
+				emoji = finalDish.emoji or "⭐",
+			})
+		end
 	end
 
 	CookingComplete:FireClient(player, finalDish, finalZone)
