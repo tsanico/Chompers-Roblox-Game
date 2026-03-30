@@ -1423,7 +1423,6 @@ mkSubBar(AccPanel, 48, {
 }, function(id)
     for sid, pnl in pairs(accSubPanels) do pnl.Visible=(sid==id) end
 end)
-
 -- ── Awards sub-panel ─────────────────────────────────────────
 local awardsContent = Instance.new("Frame", AccPanel)
 awardsContent.Size=UDim2.new(1,0,1,-48); awardsContent.Position=UDim2.new(0,0,0,48)
@@ -1585,11 +1584,9 @@ for i, vd in ipairs(VENDOR_LIST) do
     mkLabel(card,vd.specialty,Enum.Font.GothamBold,14,C.dim,
         Enum.TextXAlignment.Left,UDim2.new(0,76,0,38),UDim2.new(1,-86,0,20)).ZIndex=12
 
-    local locTag=Instance.new("Frame",card)
-    locTag.Size=UDim2.new(0,110,0,22); locTag.AnchorPoint=Vector2.new(1,1)
-    locTag.Position=UDim2.new(1,-8,1,-8); locTag.BackgroundColor3=Color3.fromRGB(14,12,24)
-    locTag.BorderSizePixel=0; locTag.ZIndex=12; corner(locTag,6)
-    mkLabel(locTag,"📍 Car Park",Enum.Font.GothamBold,12,C.dim).ZIndex=13
+    local div = Instance.new("Frame", card)
+    div.Size = UDim2.new(1, -24, 0, 1); div.Position = UDim2.new(0, 12, 0, 74)
+    div.BackgroundColor3 = Color3.fromRGB(40, 36, 60); div.BorderSizePixel = 0; div.ZIndex = 12
 end
 
 -- ============================================================
