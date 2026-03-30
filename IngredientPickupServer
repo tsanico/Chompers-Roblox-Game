@@ -273,6 +273,36 @@ DropItemRemote.OnServerEvent:Connect(function(player, slotIndex)
 	spawnDroppedPart(player, item, pos, false)
 end)
 
+-- ── Move overflow item to hotbar ──────────────────────────────
+local MoveToHotbarR = Remotes:FindFirstChild("MoveToHotbar")
+if not MoveToHotbarR then
+	MoveToHotbarR = Instance.new("RemoteEvent")
+	MoveToHotbarR.Name = "MoveToHotbar"; MoveToHotbarR.Parent = Remotes
+end
+MoveToHotbarR.OnServerEvent:Connect(function(player, overflowIndex)
+	local ok, reason = PlayerState.MoveOverflowToHotbar(player, overflowIndex)
+	if not ok and reason == "hotbar_full" and AnnounceRemote then
+		AnnounceRemote:FireClient(player,
+			"🎒  Hotbar full — drop an item first.",
+			Color3.fromRGB(200,140,50), 2)
+	end
+end)
+
+-- ── Drop overflow item ────────────────────────────────────────
+local DropOverflowR = Remotes:FindFirstChild("DropOverflowItem")
+if not DropOverflowR then
+	DropOverflowR = Instance.new("RemoteEvent")
+	DropOverflowR.Name = "DropOverflowItem"; DropOverflowR.Parent = Remotes
+end
+DropOverflowR.OnServerEvent:Connect(function(player, overflowIndex)
+	local item = PlayerState.RemoveOverflowItem(player, overflowIndex)
+	if not item then return end
+	local char = player.Character
+	local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+	local pos  = hrp and hrp.Position or Vector3.new(0, 5, 0)
+	spawnDroppedPart(player, item, pos, false)
+end)
+
 -- ── 100% state drop (all items, with owner lock) ────────────
 -- PlayerState._Trigger100State calls DropAllItems and fires HitPlayer
 -- to the client. We listen here server-side to spawn the world parts.
@@ -302,119 +332,159 @@ _G.SpawnDroppedItems = function(player, droppedItems)
 end
 
 -- ============================================================
--- DUMPSTER HANDLING (Part 33)
--- Dumpsters: IsTrashBin=true, SharedInventory=true
--- Picking up from a dumpster triggers a CL hit
+-- TRASH CAN & DUMPSTER HANDLING
+--
+-- Two types, differentiated by attribute:
+--   IsTrashCan = true  → 2 random Common items, quick rummage (0.5s hold)
+--   IsDumpster = true  → 4 random Common items, longer dig (1.0s hold)
+--
+-- Both give +5 CL penalty on pickup (dirty food off the floor).
+-- This is an intentional "free ingredients at a CL cost" mechanic.
+-- Items deplete per pickup. Dumpster HUD shows contents to nearby players.
 -- ============================================================
 
--- ============================================================
--- DUMPSTER HANDLING (Part 33 + Part 48 update)
--- Pre-populated with 2-4 random Common items when Gathering starts.
--- Client polls proximity and requests contents via RemoteFunction.
--- Each pickup removes item from the list and costs +5 CL.
--- ============================================================
+-- ── Universal "best anchor" helper ──────────────────────────
+-- Roblox measures ProximityPrompt distance from the Part's CFrame centre,
+-- NOT from its surface. If the tagged Part is buried inside a Model,
+-- players can't get close enough to trigger it.
+-- This helper walks up to the Model's PrimaryPart (or first accessible
+-- BasePart) so the prompt activates from any surface approach.
+local function getBestAnchor(part)
+    local parent = part.Parent
+    if parent then
+        if parent:IsA("Model") then
+            return parent.PrimaryPart or part
+        end
+    end
+    return part
+end
 
-local dumpsterContents = {}   -- [dumpsterPart] = {item, item, ...}
+local function makeInteractPrompt(part, objectText, actionText, holdDuration)
+    local anchor = getBestAnchor(part)
+    -- Remove any existing prompt on anchor to avoid duplicates
+    local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
+    if existing then existing:Destroy() end
+
+    local prompt = Instance.new("ProximityPrompt")
+    prompt.ObjectText            = objectText
+    prompt.ActionText            = actionText
+    prompt.KeyboardKeyCode       = Enum.KeyCode.E
+    prompt.HoldDuration          = holdDuration or 0
+    prompt.MaxActivationDistance = 15   -- generous — works from any surface approach
+    prompt.RequiresLineOfSight   = false
+    prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
+    prompt.Parent                = anchor
+    return prompt, anchor
+end
+
+local dumpsterContents = {}   -- [originalPart] = {item, ...}
 
 local commonIngredients = {}
 for _, ing in ipairs(ChompersData.Ingredients) do
-	if ing.rarity == "Common" then table.insert(commonIngredients, ing) end
+    if ing.rarity == "Common" then table.insert(commonIngredients, ing) end
 end
 
 local GetDumpsterContents = Remotes:FindFirstChild("GetDumpsterContents")
 if not GetDumpsterContents then
-	GetDumpsterContents = Instance.new("RemoteFunction")
-	GetDumpsterContents.Name = "GetDumpsterContents"
-	GetDumpsterContents.Parent = Remotes
+    GetDumpsterContents = Instance.new("RemoteFunction")
+    GetDumpsterContents.Name = "GetDumpsterContents"; GetDumpsterContents.Parent = Remotes
 end
 local DumpsterUpdated = Remotes:FindFirstChild("DumpsterUpdated")
 if not DumpsterUpdated then
-	DumpsterUpdated = Instance.new("RemoteEvent")
-	DumpsterUpdated.Name = "DumpsterUpdated"
-	DumpsterUpdated.Parent = Remotes
+    DumpsterUpdated = Instance.new("RemoteEvent")
+    DumpsterUpdated.Name = "DumpsterUpdated"; DumpsterUpdated.Parent = Remotes
 end
 
 GetDumpsterContents.OnServerInvoke = function(_, dumpsterPart)
-	if typeof(dumpsterPart) ~= "Instance" then return {} end
-	return dumpsterContents[dumpsterPart] or {}
+    if typeof(dumpsterPart) ~= "Instance" then return {} end
+    return dumpsterContents[dumpsterPart] or {}
 end
 
-local function populateDumpsters()
-	dumpsterContents = {}
-	for _, desc in ipairs(workspace:GetDescendants()) do
-		if desc:IsA("BasePart") and desc:GetAttribute("IsTrashBin") == true then
-			local items = {}
-			for _ = 1, math.random(2, 4) do
-				if #commonIngredients > 0 then
-					local ing = commonIngredients[math.random(1, #commonIngredients)]
-					table.insert(items, {
-						name=ing.name, emoji=ing.emoji or "🍽", rarity=ing.rarity,
-						wt=ing.wt, allergy=ing.allergy, zone=ing.zone, cl=ing.cl,
-					})
-				end
-			end
-			dumpsterContents[desc] = items
-		end
-	end
+local function populateContainers()
+    dumpsterContents = {}
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            local isTrash   = desc:GetAttribute("IsTrashCan") == true
+            local isDumpster= desc:GetAttribute("IsDumpster")  == true
+            if isTrash or isDumpster then
+                local count = isDumpster and 4 or 2
+                local items = {}
+                for _ = 1, count do
+                    if #commonIngredients > 0 then
+                        local ing = commonIngredients[math.random(1, #commonIngredients)]
+                        table.insert(items, {
+                            name=ing.name, emoji=ing.emoji or "🍽", rarity=ing.rarity,
+                            wt=ing.wt, allergy=ing.allergy, zone=ing.zone, cl=ing.cl,
+                        })
+                    end
+                end
+                dumpsterContents[desc] = items
+            end
+        end
+    end
 end
 
-local function setupDumpsters()
-	for _, desc in ipairs(workspace:GetDescendants()) do
-		if desc:IsA("BasePart") and desc:GetAttribute("IsTrashBin") == true then
-			local prompt = Instance.new("ProximityPrompt")
-			prompt.ObjectText            = "🗑️ Dumpster"
-			prompt.ActionText            = "Dig through trash"
-			prompt.KeyboardKeyCode       = Enum.KeyCode.E
-			prompt.HoldDuration          = 1.0
-			prompt.MaxActivationDistance = 8
-			prompt.RequiresLineOfSight   = false
-			prompt.Parent                = desc
+local function handlePickup(player, desc, isDumpster)
+    local s = PlayerState.Get(player)
+    if not s or s.isEliminated then return end
 
-			prompt.Triggered:Connect(function(player)
-				local s = PlayerState.Get(player)
-				if not s or s.isEliminated then return end
+    local list = dumpsterContents[desc] or {}
+    if #list == 0 then
+        if AnnounceRemote then
+            AnnounceRemote:FireClient(player,
+                "🗑️  " .. (isDumpster and "Dumpster" or "Trash can") .. " is empty.",
+                Color3.fromRGB(130,120,165), 2)
+        end
+        return
+    end
 
-				local list = dumpsterContents[desc] or {}
-				if #list == 0 then
-					if AnnounceRemote then
-						AnnounceRemote:FireClient(player,
-							"🗑️  This dumpster is empty.",
-							Color3.fromRGB(130,120,165), 2)
-					end
-					return
-				end
+    local ing = table.remove(list, 1)
+    PlayerState.ModifyCL(player, ChompersData.Constants.TrashCanCL or 5)
+    PlayerState.AddItem(player, {
+        name=ing.name, rarity=ing.rarity, wt=ing.wt,
+        cost=0, emoji=ing.emoji, allergy=ing.allergy,
+        zone=ing.zone, cl=ing.cl, paid=true,
+    })
+    if AnnounceRemote then
+        AnnounceRemote:FireClient(player,
+            "🗑️  Found " .. (ing.emoji or "") .. " " .. ing.name
+            .. "! (+" .. (ChompersData.Constants.TrashCanCL or 5) .. " CL — dirty food)",
+            Color3.fromRGB(160,120,60), 3.5)
+    end
+    DumpsterUpdated:FireAllClients(desc, list)
+end
 
-				local ing = table.remove(list, 1)
-				PlayerState.ModifyCL(player, ChompersData.Constants.TrashCanCL or 5)
-				PlayerState.AddItem(player, {
-					name=ing.name, rarity=ing.rarity, wt=ing.wt,
-					cost=0, emoji=ing.emoji, allergy=ing.allergy,
-					zone=ing.zone, cl=ing.cl, paid=true,
-				})
-				if AnnounceRemote then
-					AnnounceRemote:FireClient(player,
-						"🗑️  Found " .. ing.emoji .. " " .. ing.name
-						.. "! (+" .. (ChompersData.Constants.TrashCanCL or 5) .. " CL — dirty food)",
-						Color3.fromRGB(160,120,60), 3.5)
-				end
-				-- Notify all clients so nearby dumpster HUD refreshes
-				DumpsterUpdated:FireAllClients(desc, list)
-			end)
-		end
-	end
+local function setupContainers()
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") then
+            local isTrash    = desc:GetAttribute("IsTrashCan")  == true
+            local isDumpster = desc:GetAttribute("IsDumpster")   == true
+            if isTrash or isDumpster then
+                local objText  = isDumpster and "🗑️ Dumpster" or "🗑️ Trash Can"
+                local actText  = isDumpster and "Dig through" or "Rummage"
+                local holdTime = isDumpster and 1.0 or 0.5
+
+                local prompt = makeInteractPrompt(desc, objText, actText, holdTime)
+                local capIsDumpster = isDumpster
+                prompt.Triggered:Connect(function(player)
+                    handlePickup(player, desc, capIsDumpster)
+                end)
+            end
+        end
+    end
 end
 
 -- Populate on Gathering start
 local SSS_phase = game:GetService("ServerScriptService")
 local PhaseChangedEvent2 = SSS_phase:FindFirstChild("PhaseChangedEvent")
-	or SSS_phase:WaitForChild("PhaseChangedEvent", 10)
+    or SSS_phase:WaitForChild("PhaseChangedEvent", 10)
 if PhaseChangedEvent2 then
-	PhaseChangedEvent2.Event:Connect(function(phase)
-		if phase == "Gathering" then populateDumpsters() end
-	end)
+    PhaseChangedEvent2.Event:Connect(function(phase)
+        if phase == "Gathering" then populateContainers() end
+    end)
 end
 
-task.spawn(setupDumpsters)
+task.spawn(setupContainers)
 
 -- ============================================================
 -- CONTAINER DISPENSARY PROMPTS
@@ -438,15 +508,10 @@ local function setupDispensaryPrompts()
             local isCart   = desc:GetAttribute("IsCartDispensary")   == true
             if isBasket or isCart then
                 local choice = isBasket and "basket" or "cart"
-                local prompt = Instance.new("ProximityPrompt")
-                prompt.ObjectText            = isBasket and "🧺 Basket Rack" or "🛒 Cart Rack"
-                prompt.ActionText            = isBasket
-                    and "Switch to Basket (faster)"
-                    or  "Switch to Cart (carries more)"
-                prompt.HoldDuration          = 0
-                prompt.MaxActivationDistance = 8
-                prompt.RequiresLineOfSight   = false
-                prompt.Parent                = desc
+                local prompt = makeInteractPrompt(desc,
+                    isBasket and "🧺 Basket Rack" or "🛒 Cart Rack",
+                    isBasket and "Switch to Basket (faster)" or "Switch to Cart (carries more)",
+                    0)
                 prompt.Triggered:Connect(function(player)
                     ContainerSwitchR:FireClient(player, choice)
                 end)
