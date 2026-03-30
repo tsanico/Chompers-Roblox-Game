@@ -139,7 +139,7 @@ local function tweenDoorOpen(door, state)
 
 	-- Gathering/fire-exit/butcher doors just disappear
 	if door:GetAttribute("OpenOnGathering") or door:GetAttribute("IsFireExit")
-		or door:GetAttribute("IsButcherDoor") then
+	or door:GetAttribute("IsButcherDoor") then
 		disappearDoor(door, state)
 		return
 	end
@@ -304,7 +304,7 @@ local function runProximityLoop()
 				-- ButcherSwing: swing toward player
 				local doorType = door:GetAttribute("DoorType") or "Hinged"
 				if doorType == "ButcherSwing"
-					and door:GetAttribute("TwoWaySwing") == true then
+				and door:GetAttribute("TwoWaySwing") == true then
 					local hrp = nearestPlayer.Character
 						and nearestPlayer.Character:FindFirstChild("HumanoidRootPart")
 					if hrp then
@@ -332,13 +332,13 @@ PhaseChangedEvent.Event:Connect(function(newPhase)
 	currentPhase = newPhase
 
 	if newPhase == "Gathering"
-		or newPhase == "Cooking"
-		or newPhase == "FoodFight"
-		or newPhase == "CookingGrace" then
+	or newPhase == "Cooking"
+	or newPhase == "FoodFight"
+	or newPhase == "CookingGrace" then
 		openGatheringDoors()
 
-	elseif newPhase == "Prelobby" then
-		-- New match starting — reset all doors
+	elseif newPhase == "Prelobby" or newPhase == "EndGame" then
+		-- Match starting or ending — store doors closed
 		task.wait(1)
 		closeAllDoors()
 	end
