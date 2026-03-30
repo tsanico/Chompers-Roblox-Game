@@ -1,0 +1,139 @@
+-- ============================================================
+-- ScaleSystem — ServerScript · ServerScriptService
+--
+-- Grocery store scales let players check their unpaid total
+-- before heading to checkout.
+--
+-- Studio setup:
+--   Tag the scale BasePart: Attribute "IsScale" = true
+--
+-- Interaction: Press E near a scale
+-- Output: Announce showing total unpaid cost, item count,
+--         and a breakdown of what's unpaid.
+-- ============================================================
+
+local Players             = game:GetService("Players")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local PlayerState = require(ServerScriptService:WaitForChild("PlayerState"))
+local Remotes     = ReplicatedStorage:WaitForChild("ChompersRemotes")
+local Announce    = Remotes:FindFirstChild("Announce")
+
+-- ── Best-anchor helper (consistent with other systems) ────────
+local function getBestAnchor(part)
+    local parent = part.Parent
+    if parent and parent:IsA("Model") then
+        return parent.PrimaryPart or part
+    end
+    return part
+end
+
+-- ── Scale setup ───────────────────────────────────────────────
+local function setupScale(part)
+    local anchor = getBestAnchor(part)
+    local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
+    if existing then existing:Destroy() end
+
+    local prompt = Instance.new("ProximityPrompt")
+    prompt.ObjectText            = "⚖️ Scale"
+    prompt.ActionText            = "Check unpaid total"
+    prompt.HoldDuration          = 0
+    prompt.MaxActivationDistance = 12
+    prompt.RequiresLineOfSight   = false
+    prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
+    prompt.Parent                = anchor
+
+    -- Billboard label on the scale itself (visible to all players)
+    local bb = Instance.new("BillboardGui", part)
+    bb.Size = UDim2.new(0, 120, 0, 30)
+    bb.StudsOffset = Vector3.new(0, 3.2, 0)
+    bb.AlwaysOnTop = false
+    local lbl = Instance.new("TextLabel", bb)
+    lbl.Size = UDim2.new(1,0,1,0)
+    lbl.BackgroundColor3 = Color3.fromRGB(14,12,24)
+    lbl.BackgroundTransparency = 0.25
+    lbl.BorderSizePixel = 0
+    lbl.Text = "⚖️  SCALE"
+    lbl.Font = Enum.Font.GothamBlack
+    lbl.TextSize = 13
+    lbl.TextColor3 = Color3.fromRGB(239,159,39)
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 6)
+
+    prompt.Triggered:Connect(function(player)
+        local s = PlayerState.Get(player)
+        if not s then return end
+
+        -- Collect unpaid items from hotbar AND overflow
+        local unpaidItems = {}
+        local totalCost   = 0
+        local totalWt     = 0
+
+        local function checkList(list)
+            for _, item in ipairs(list) do
+                if item and not item.paid and (item.cost or 0) > 0 then
+                    table.insert(unpaidItems, item)
+                    totalCost = totalCost + (item.cost or 0)
+                end
+                if item then
+                    totalWt = totalWt + (item.wt or 0)
+                end
+            end
+        end
+        checkList(s.inventory)
+        checkList(s.overflow)
+
+        if not Announce then return end
+
+        if #unpaidItems == 0 then
+            -- All items paid
+            local wLimit = PlayerState.GetWeightLimit(player)
+            Announce:FireClient(player,
+                "⚖️  All items paid! Weight: "..totalWt.." / "..wLimit.." wt  ·  $"..s.money.." remaining.",
+                Color3.fromRGB(80,200,100), 3.5)
+            return
+        end
+
+        -- Build itemised breakdown (max 5 lines, then summarise)
+        local lines = {}
+        local shown = math.min(#unpaidItems, 4)
+        for i = 1, shown do
+            local item = unpaidItems[i]
+            table.insert(lines, (item.emoji or "🍽").."  "..item.name.."  —  $"..(item.cost or 0))
+        end
+        if #unpaidItems > 4 then
+            table.insert(lines, "…and "..(#unpaidItems - 4).." more item(s)")
+        end
+
+        local breakdown = table.concat(lines, "\n")
+        local wLimit = PlayerState.GetWeightLimit(player)
+
+        -- Fire two announces: a header and the breakdown
+        Announce:FireClient(player,
+            "⚖️  UNPAID: $"..totalCost.."  ·  "..#unpaidItems.." item"..(#unpaidItems==1 and "" or "s")
+            .."  ·  "..totalWt.." / "..wLimit.." wt  ·  $"..s.money.." in pocket",
+            Color3.fromRGB(239,159,39), 5)
+
+        task.wait(0.15)
+
+        Announce:FireClient(player,
+            breakdown,
+            Color3.fromRGB(200, 170, 100), 5)
+    end)
+end
+
+-- ── Scan workspace ────────────────────────────────────────────
+local function scanAll()
+    local n = 0
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and desc:GetAttribute("IsScale") == true then
+            setupScale(desc)
+            n = n + 1
+        end
+    end
+    print(string.format("[ScaleSystem] Registered %d scale(s)", n))
+end
+
+scanAll()
+print("[ScaleSystem] Ready")
