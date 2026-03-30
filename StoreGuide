@@ -1083,6 +1083,21 @@ end)
 local PrefPanel = makePanel("PrefPanel","PREFERENCES")
 local PAD = 14
 
+-- Vendor redirect banner
+local vendorBanner = Instance.new("Frame", PrefPanel)
+vendorBanner.Size = UDim2.new(1,-PAD*2,0,42)
+vendorBanner.Position = UDim2.new(0,PAD,0,4)
+vendorBanner.BackgroundColor3 = Color3.fromRGB(22,18,36)
+vendorBanner.BorderSizePixel = 0; vendorBanner.ZIndex = 10
+corner(vendorBanner, 10)
+local vbStroke = Instance.new("UIStroke", vendorBanner)
+vbStroke.Thickness = 1.5; vbStroke.Color = Color3.fromRGB(239,159,39)
+mkLabel(vendorBanner,
+    "🍽  Cosmetics & titles are available at the food truck vendors in the car park.",
+    Enum.Font.GothamBold, 14, Color3.fromRGB(239,159,39),
+    Enum.TextXAlignment.Center, UDim2.new(0,10,0,0), UDim2.new(1,-20,1,0)
+).ZIndex = 11
+
 -- Scroll-level lock overlays are created after scrolls below.
 -- prefsLocked boolean still gates all click handlers.
 -- (Full-panel overlay removed — headers, descriptions, and selection displays stay readable during match)
@@ -1932,18 +1947,31 @@ end
 local kbPanel=matchSub("KeybindingsPanel","KEYBINDINGS",true)
 local kbScroll=mkScroll(kbPanel,UDim2.new(1,-20,1,-6),UDim2.new(0,10,0,4),C.stroke)
 local KEYS={
-    {"1 – 9, 0","Select hotbar slots 1–10"},
-    {"I","Toggle Inventory HUD"},
-    {"G","Toggle Store Guide"},
-    {"E  (hold)","Pick up ingredient"},
-    {"E","Interact — checkout, bathroom, alliance"},
-    {"Q","Drop selected item"},
-    {"LMB Hold + Release","Charge & throw  (0.3s tap → 20st, 1.5s full → 50st)"},
-    {"RMB","Cancel charge without firing"},
-    {"F","Inspect nearby player"},
-    {"Tab","Open Store Guide → Scoreboard tab"},
-    {"Escape","Close any open HUD"},
-    {"🎯 Padlock (bottom-right)","Enable Shift-Lock from Roblox menu — recommended for aiming and throwing. Close the guide first."},
+    -- Movement
+    {"WASD / Thumbstick",  "Move your character"},
+    {"Space / Jump button","Jump"},
+    -- Hotbar
+    {"1 – 9, 0",           "Select hotbar slots 1–10"},
+    {"Scroll Wheel",        "Cycle through hotbar slots"},
+    -- Interaction (E)
+    {"E",                  "Interact — checkout, bathroom sink/toilet, Trade Kiosk, dispensary"},
+    {"E  (hold 0.5s)",     "Rummage through a trash can (+5 CL — free ingredient)"},
+    {"E  (hold 1.0s)",     "Dig through a dumpster (+5 CL — free ingredient)"},
+    {"E  (hold)",          "Pick up an ingredient from the floor"},
+    -- Combat
+    {"LMB Hold + Release", "Charge & throw  (0.3s = 20 studs · 1.5s = 50 studs)"},
+    {"RMB",                "Cancel throw charge — no projectile fired"},
+    -- Inventory
+    {"Q",                  "Drop the item in your selected hotbar slot"},
+    {"I",                  "Toggle Inventory panel (full item list + details)"},
+    -- Information
+    {"G",                  "Toggle Store Guide (this menu)"},
+    {"Tab",                "Open Store Guide → Scoreboard"},
+    {"F",                  "Inspect a nearby player (costs medals, reveals their info)"},
+    -- Navigation
+    {"Escape",             "Close any open HUD or menu"},
+    -- Recommended
+    {"🎯 Padlock (bottom-right)", "Enable Shift-Lock — highly recommended for aiming and throwing. Close this guide first."},
 }
 for i,kb in ipairs(KEYS) do
     local row=Instance.new("Frame",kbScroll)
