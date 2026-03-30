@@ -249,14 +249,69 @@ local function restoreSpeed()
 	preChargeSpeed = nil
 end
 
+-- ── Throw warning hint (non-intrusive, near crosshair) ────────
+-- Appears briefly when player tries to throw an empty slot or
+-- an unpaid item. Does NOT use the main Announce system.
+local ThrowWarnLabel = Instance.new("TextLabel", ThrowGui)
+ThrowWarnLabel.Size               = UDim2.new(0, 320, 0, 28)
+ThrowWarnLabel.AnchorPoint        = Vector2.new(0.5, 0.5)
+ThrowWarnLabel.Position           = UDim2.new(0.5, 0, 0.5, 40)
+ThrowWarnLabel.BackgroundColor3   = Color3.fromRGB(14, 12, 24)
+ThrowWarnLabel.BackgroundTransparency = 0.25
+ThrowWarnLabel.BorderSizePixel    = 0
+ThrowWarnLabel.Font               = Enum.Font.GothamBold
+ThrowWarnLabel.TextSize           = 14
+ThrowWarnLabel.TextColor3         = Color3.fromRGB(220, 180, 80)
+ThrowWarnLabel.Text               = ""
+ThrowWarnLabel.TextXAlignment     = Enum.TextXAlignment.Center
+ThrowWarnLabel.Visible            = false
+ThrowWarnLabel.ZIndex             = 15
+do
+	local c = Instance.new("UICorner", ThrowWarnLabel); c.CornerRadius = UDim.new(0,8)
+end
+
+local warnThread = nil
+local function showThrowWarn(msg)
+	ThrowWarnLabel.Text    = msg
+	ThrowWarnLabel.Visible = true
+	ThrowWarnLabel.TextTransparency = 0
+	ThrowWarnLabel.BackgroundTransparency = 0.25
+	if warnThread then task.cancel(warnThread) end
+	warnThread = task.delay(1.4, function()
+		-- Fade out
+		for i = 1, 8 do
+			task.wait(0.04)
+			local t = i / 8
+			ThrowWarnLabel.TextTransparency          = t
+			ThrowWarnLabel.BackgroundTransparency    = 0.25 + 0.75 * t
+		end
+		ThrowWarnLabel.Visible = false
+		warnThread = nil
+	end)
+end
+
 -- ── Throw — fires after delivery delay ─────────────────────────
 local function doThrow(horizSpeed)
 	local origin = getOrigin(); if not origin then return end
+
+	-- Client-side validation: check slot before firing to server
+	local slot = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
+	local inv   = _G.Chompers.GetInventory and _G.Chompers.GetInventory()
+	local item  = inv and inv[slot]
+
+	if not item then
+		showThrowWarn("❌  No item in slot " .. slot)
+		smoothedAimPoint = nil; return
+	end
+	if not item.paid then
+		showThrowWarn("🏷️  Can't throw — pay at Checkout first")
+		smoothedAimPoint = nil; return
+	end
+
 	local rawAim = smoothedAimPoint or getAimPoint()
 	local aimPt  = clampAimPoint(origin, rawAim, horizSpeed)
-	local slot = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
 	ThrowFood:FireServer(slot, horizSpeed, aimPt)
-	smoothedAimPoint = nil   -- reset after throw
+	smoothedAimPoint = nil
 end
 
 -- ── End charge (release or auto-fire) ─────────────────────────
