@@ -558,6 +558,9 @@ function resolveCook(player, part, zone, missedWindow)
 		PlayerState.SyncInventory(player)
 	end
 
+	-- Record recipe for Head Chef accolade tracking
+	PlayerState.RecordRecipeCooked(player, finalDish.name)
+
 	-- Award points
 	local rec = recByName[finalDish.name]
 	local rarMult = (C.Points.RarityMultiplier or {})[finalDish.rarity] or 1
