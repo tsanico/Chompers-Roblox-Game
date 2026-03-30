@@ -316,8 +316,14 @@ startEndGame = function(survivors, timedOut)
 	cancelTimer()
 	setPhase(PHASE.ENDGAME)
 
-	-- Clear ingredients from the store (Prelobby state — no new spawns)
-	IngredientSpawner.StartPrelobbyPhase()
+	-- Clear ingredients from the store
+	if IngredientSpawner and IngredientSpawner.ClearAll then
+		IngredientSpawner.ClearAll()
+	else
+		-- Fallback: clear the live folder directly
+		local liveFolder = workspace:FindFirstChild("Ingredients_Live")
+		if liveFolder then liveFolder:ClearAllChildren() end
+	end
 
 	-- Teleport all players to the car park spawn area
 	-- Car park centre is roughly at workspace.Map.CarPark if it exists,
