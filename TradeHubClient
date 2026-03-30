@@ -27,7 +27,17 @@ local TweenService      = game:GetService("TweenService")
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
-local function R(n) return Remotes:WaitForChild(n, 10) end
+
+-- Wait for TradeHubSystem to finish creating all remotes server-side
+-- before connecting any listeners. Without this, WaitForChild may time
+-- out on remotes that TradeHubSystem hasn't created yet.
+task.wait(2)
+
+local function R(n)
+    local r = Remotes:FindFirstChild(n)
+    if not r then r = Remotes:WaitForChild(n, 8) end
+    return r
+end
 
 -- ── Colours ───────────────────────────────────────────────────
 local C = {
