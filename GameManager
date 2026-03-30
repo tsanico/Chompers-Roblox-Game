@@ -325,31 +325,34 @@ startEndGame = function(survivors, timedOut)
 		if liveFolder then liveFolder:ClearAllChildren() end
 	end
 
-	-- Teleport all players to the car park spawn area
-	-- Car park centre is roughly at workspace.Map.CarPark if it exists,
-	-- otherwise we use a hardcoded fallback near the store entrance.
+	-- Teleport ALL players to the car park — including eliminated ones who need respawning
 	local carParkCentre = Vector3.new(0, 4, -120)   -- default fallback
 	local carPark = workspace:FindFirstChild("Map")
 		and workspace.Map:FindFirstChild("CarPark")
 	if carPark and carPark:IsA("BasePart") then
 		carParkCentre = carPark.Position + Vector3.new(0, 4, 0)
 	elseif carPark then
-		-- CarPark is a folder/model — use its bounding centre
 		local cf, _ = carPark:GetBoundingBox()
 		carParkCentre = cf.Position + Vector3.new(0, 4, 0)
 	end
 
-	task.delay(0.5, function()
+	task.spawn(function()
+		-- Respawn any eliminated/no-character players so they can be teleported
+		for _, p in ipairs(Players:GetPlayers()) do
+			if not p.Character then
+				pcall(function() p:LoadCharacter() end)
+			end
+		end
+		task.wait(2.0)   -- allow LoadCharacter to finish before teleporting
+
 		for _, p in ipairs(Players:GetPlayers()) do
 			local char = p.Character
 			local hrp  = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
-				-- Spread players randomly in a 20-stud radius around car park centre
 				local angle  = math.random() * math.pi * 2
-				local radius = math.random() * 20
-				local offset = Vector3.new(
-					math.cos(angle) * radius, 0, math.sin(angle) * radius)
-				hrp.CFrame = CFrame.new(carParkCentre + offset)
+				local radius = math.random() * 22
+				hrp.CFrame = CFrame.new(carParkCentre
+					+ Vector3.new(math.cos(angle)*radius, 0, math.sin(angle)*radius))
 			end
 		end
 	end)
