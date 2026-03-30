@@ -1083,21 +1083,6 @@ end)
 local PrefPanel = makePanel("PrefPanel","PREFERENCES")
 local PAD = 14
 
--- Vendor redirect banner
-local vendorBanner = Instance.new("Frame", PrefPanel)
-vendorBanner.Size = UDim2.new(1,-PAD*2,0,42)
-vendorBanner.Position = UDim2.new(0,PAD,0,4)
-vendorBanner.BackgroundColor3 = Color3.fromRGB(22,18,36)
-vendorBanner.BorderSizePixel = 0; vendorBanner.ZIndex = 10
-corner(vendorBanner, 10)
-local vbStroke = Instance.new("UIStroke", vendorBanner)
-vbStroke.Thickness = 1.5; vbStroke.Color = Color3.fromRGB(239,159,39)
-mkLabel(vendorBanner,
-    "🍽  Cosmetics & titles are available at the food truck vendors in the car park.",
-    Enum.Font.GothamBold, 14, Color3.fromRGB(239,159,39),
-    Enum.TextXAlignment.Center, UDim2.new(0,10,0,0), UDim2.new(1,-20,1,0)
-).ZIndex = 11
-
 -- Scroll-level lock overlays are created after scrolls below.
 -- prefsLocked boolean still gates all click handlers.
 -- (Full-panel overlay removed — headers, descriptions, and selection displays stay readable during match)
