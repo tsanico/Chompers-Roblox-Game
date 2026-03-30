@@ -71,6 +71,13 @@ local function loadData(player)
     -- Sync to client
     UpdateMedalsR:FireClient(player, data.medals)
     UpdateOwnedR:FireClient(player, data.owned, data.equipped)
+
+    -- Broadcast equipped title to all clients so TitleDisplay updates
+    local PlayerTitleUpdateR = Remotes:FindFirstChild("PlayerTitleUpdate")
+    if PlayerTitleUpdateR and data.equipped.title then
+        PlayerTitleUpdateR:FireAllClients(player, data.equipped.title, nil, nil)
+    end
+
     print(string.format("[DataService] Loaded %s — %d medals, %d owned items",
         player.Name, data.medals, #data.owned))
 end
