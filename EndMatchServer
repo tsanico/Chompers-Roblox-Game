@@ -228,7 +228,9 @@ if PhaseChangedEvent then
         if processingEndGame then return end
         processingEndGame = true
 
-        task.wait(0.3)
+        -- Wait for GameManager to respawn + teleport all players (~2s)
+        -- then an extra buffer so everyone is settled in the car park
+        task.wait(3.5)
 
         local result = buildResult(survivors, timedOut)
 
