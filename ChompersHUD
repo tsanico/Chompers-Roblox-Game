@@ -342,7 +342,8 @@ local function buildTooltip(data, slotIndex)
 
 	-- X-position: centre tooltip above the hovered slot, clamped to screen
 	local slotCentreX = (slotIndex-1)*(SLOT_SIZE+SLOT_GAP) + SLOT_SIZE/2
-	local pct = math.clamp(slotCentreX/totalHotbarW, 0.05, 0.95)
+	local _totalW = NUM_SLOTS*(SLOT_SIZE+SLOT_GAP)-SLOT_GAP   -- compute inline — safe from ordering issue
+	local pct = math.clamp(slotCentreX/_totalW, 0.05, 0.95)
 	TooltipFrame.AnchorPoint = Vector2.new(pct, 1)
 	TooltipFrame.Position    = UDim2.new(0.5,0,1,-(BAR_BOTTOM+SLOT_SIZE+10))
 
