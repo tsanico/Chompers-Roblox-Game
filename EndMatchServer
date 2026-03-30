@@ -24,13 +24,15 @@ if not MatchResult then
     MatchResult.Name = "MatchResult"; MatchResult.Parent = Remotes
 end
 
--- ── Medal values ──────────────────────────────────────────────
+-- ── Medal values (Bible Part 49 — rebalanced for vendor economy) ─
+-- Target match range: 5 (bad) → 10 (survived) → 19 (specialist) → 54 (winner)
 local MEDALS = {
-    Participation = 5,
-    Accolade      = 15,
-    GrandGrocer   = 35,
-    GoldenApron   = 50,
-    TogetherWin   = 35,   -- alliance together victory
+    Participation = 5,    -- everyone, always
+    AliveBonus    = 5,    -- survived to end of FoodFight
+    Accolade      = 14,   -- each Top-5 headline accolade
+    GrandGrocer   = 22,   -- Match MVP (highest points)
+    GoldenApron   = 30,   -- Last Chef Standing
+    TogetherWin   = 18,   -- alliance together victory (each)
 }
 
 -- ── Accolade definitions ──────────────────────────────────────
@@ -176,8 +178,14 @@ local function buildResult(survivors, timedOut)
     -- ── 4. Medal awards per player ─────────────────────────────
     local playerMedals = {}   -- [userId] = { list, total }
     for _, row in ipairs(rankings) do
-        local list = {{ label="Participation", amount=MEDALS.Participation }}
+        local list  = {{ label="Participation", amount=MEDALS.Participation }}
         local total = MEDALS.Participation
+
+        -- Alive bonus for surviving to end of FoodFight
+        if survivorSet[row.userId] then
+            table.insert(list, { label="🟢 Survived", amount=MEDALS.AliveBonus })
+            total = total + MEDALS.AliveBonus
+        end
 
         if row.userId == winnerData.userId then
             if winnerData.type == "LastChef" then
