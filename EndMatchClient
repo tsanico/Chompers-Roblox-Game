@@ -1,9 +1,12 @@
 -- ============================================================
 -- EndMatchClient — LocalScript · StarterPlayerScripts
 --
--- Displays the match results screen when MatchResult fires.
--- Shows: winner banner, full rankings table, 5 accolade cards.
--- Auto-dismisses when the next Prelobby phase starts.
+-- Phased victory ceremony over 30 seconds:
+--   0.0s  Dim + Phase 1: Golden Apron (full-screen)
+--   7.0s  Phase 2: Grand Grocer (slides in from right)
+--  13.0s  Phase 3: Accolades (5 cards, 1.8s apart)
+--  23.0s  Phase 4: Leaderboard + Grocery Receipt
+--  30.0s  Auto-dismiss → Prelobby
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -14,315 +17,470 @@ local RunService        = game:GetService("RunService")
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
-local MatchResult       = Remotes:WaitForChild("MatchResult", 15)
-local PhaseChangedR     = Remotes:FindFirstChild("PhaseChanged")
-    or Remotes:WaitForChild("PhaseChanged", 15)
+local MatchResultR  = Remotes:WaitForChild("MatchResult",  15)
+local PhaseChangedR = Remotes:WaitForChild("PhaseChanged", 15)
 
--- ── Colour palette ────────────────────────────────────────────
+-- ── Palette ───────────────────────────────────────────────────
 local C = {
-    bg       = Color3.fromRGB(12, 10, 22),
-    panel    = Color3.fromRGB(18, 16, 32),
-    stroke   = Color3.fromRGB(48, 44, 70),
-    white    = Color3.fromRGB(245, 242, 255),
-    dim      = Color3.fromRGB(105, 100, 138),
-    gold     = Color3.fromRGB(239, 159, 39),
-    green    = Color3.fromRGB(70, 195, 85),
-    red      = Color3.fromRGB(218, 65, 65),
-    blue     = Color3.fromRGB(65, 135, 235),
-    purple   = Color3.fromRGB(150, 80, 220),
+    bg     = Color3.fromRGB(10,  8,  20),
+    panel  = Color3.fromRGB(18, 16, 32),
+    dark   = Color3.fromRGB(14, 12, 26),
+    stroke = Color3.fromRGB(48, 44, 70),
+    white  = Color3.fromRGB(245,242,255),
+    dim    = Color3.fromRGB(105,100,138),
+    gold   = Color3.fromRGB(239,159,39),
+    green  = Color3.fromRGB(70, 195, 85),
+    red    = Color3.fromRGB(218, 65, 65),
+    blue   = Color3.fromRGB(65, 135,235),
+    purple = Color3.fromRGB(150, 80,220),
 }
 
--- ── UI helpers ────────────────────────────────────────────────
-local function corner(p, r) Instance.new("UICorner", p).CornerRadius = UDim.new(0, r or 12) end
-local function mkStroke(p, t, col)
-    local s = Instance.new("UIStroke", p); s.Thickness = t or 1.5
-    s.Color = col or C.stroke; return s
+-- ── Helpers ───────────────────────────────────────────────────
+local function corner(p,r) Instance.new("UICorner",p).CornerRadius=UDim.new(0,r or 12) end
+local function stroke(p,t,c) local s=Instance.new("UIStroke",p);s.Thickness=t or 1.5;s.Color=c or C.stroke;return s end
+local function lbl(p,text,font,size,col,xA,pos,sz)
+    local l=Instance.new("TextLabel",p); l.BackgroundTransparency=1
+    l.Text=text or ""; l.Font=font or Enum.Font.GothamBold
+    l.TextSize=size or 14; l.TextColor3=col or C.white
+    l.TextXAlignment=xA or Enum.TextXAlignment.Center
+    l.TextYAlignment=Enum.TextYAlignment.Center
+    l.TextWrapped=true
+    l.Position=pos or UDim2.new(0,0,0,0)
+    l.Size=sz or UDim2.new(1,0,1,0)
+    return l
 end
-local function mkLabel(p, text, font, size, color, xAlign, pos, sz)
-    local l = Instance.new("TextLabel", p)
-    l.Text = text or ""; l.Font = font or Enum.Font.GothamBold
-    l.TextSize = size or 14; l.TextColor3 = color or C.white
-    l.TextXAlignment = xAlign or Enum.TextXAlignment.Center
-    l.TextYAlignment = Enum.TextYAlignment.Center
-    l.BackgroundTransparency = 1
-    l.Position = pos or UDim2.new(0,0,0,0)
-    l.Size = sz or UDim2.new(1,0,1,0)
-    l.TextWrapped = true; return l
-end
+local function tween(obj,info,props) TweenService:Create(obj,info,props):Play() end
+local FAST = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local BACK = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local SLOW = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- ── ScreenGui ─────────────────────────────────────────────────
-local ResultGui = Instance.new("ScreenGui")
-ResultGui.Name           = "EndMatchScreen"
-ResultGui.ResetOnSpawn   = false
-ResultGui.IgnoreGuiInset = true
-ResultGui.DisplayOrder   = 25
-ResultGui.Enabled        = false
-ResultGui.Parent         = playerGui
+-- ── Root ScreenGui ────────────────────────────────────────────
+local Gui = Instance.new("ScreenGui")
+Gui.Name="VictoryUI"; Gui.ResetOnSpawn=false; Gui.IgnoreGuiInset=true
+Gui.DisplayOrder=30; Gui.Enabled=false; Gui.Parent=playerGui
 
 -- Full dimmer
-local Dimmer = Instance.new("Frame", ResultGui)
-Dimmer.Size = UDim2.new(1,0,1,0)
-Dimmer.BackgroundColor3 = Color3.fromRGB(6,4,14)
-Dimmer.BackgroundTransparency = 0.35
-Dimmer.BorderSizePixel = 0; Dimmer.ZIndex = 20
+local Dim = Instance.new("Frame",Gui)
+Dim.Size=UDim2.new(1,0,1,0); Dim.BackgroundColor3=Color3.fromRGB(4,2,12)
+Dim.BackgroundTransparency=1; Dim.BorderSizePixel=0; Dim.ZIndex=10
 
--- ── Main panel ────────────────────────────────────────────────
-local Panel = Instance.new("Frame", ResultGui)
-Panel.Size             = UDim2.new(0, 860, 0, 580)
-Panel.AnchorPoint      = Vector2.new(0.5, 0.5)
-Panel.Position         = UDim2.new(0.5, 0, 0.5, 0)
-Panel.BackgroundColor3 = C.bg
-Panel.BorderSizePixel  = 0; Panel.ZIndex = 21
-corner(Panel, 18); mkStroke(Panel, 2.5, C.gold)
+-- ── Countdown bar (always visible when screen is open) ────────
+local CdBar = Instance.new("Frame",Gui)
+CdBar.Size=UDim2.new(1,0,0,4); CdBar.Position=UDim2.new(0,0,1,-4)
+CdBar.BackgroundColor3=C.gold; CdBar.BorderSizePixel=0; CdBar.ZIndex=50
 
--- Header bar
-local Header = Instance.new("Frame", Panel)
-Header.Size = UDim2.new(1,0,0,64)
-Header.BackgroundColor3 = Color3.fromRGB(20,16,38); Header.BorderSizePixel=0; Header.ZIndex=22
-corner(Header, 18)
--- Square off bottom corners
-local HeaderBot = Instance.new("Frame", Header)
-HeaderBot.Size=UDim2.new(1,0,0.5,0); HeaderBot.Position=UDim2.new(0,0,0.5,0)
-HeaderBot.BackgroundColor3=Color3.fromRGB(20,16,38); HeaderBot.BorderSizePixel=0; HeaderBot.ZIndex=22
+local CdLabel = lbl(Gui,"",Enum.Font.GothamBlack,14,C.dim,Enum.TextXAlignment.Right,
+    UDim2.new(0,0,1,-24),UDim2.new(1,-14,0,20))
+CdLabel.ZIndex=50
 
-local HeaderTitle = mkLabel(Header, "🏆  MATCH OVER",
-    Enum.Font.GothamBlack, 28, C.gold,
-    Enum.TextXAlignment.Left,
-    UDim2.new(0,20,0,0), UDim2.new(0.7,0,1,0))
-HeaderTitle.ZIndex = 23
+-- ── Confetti spawner (ingredient emojis rain down) ────────────
+local CONFETTI = {"🍅","🥚","🍜","🥕","🧀","🧅","🍋","🌶️","🥦","🍞"}
+local confettiActive = false
+local function startConfetti()
+    confettiActive = true
+    task.spawn(function()
+        while confettiActive do
+            for _=1,3 do
+                local e = Instance.new("TextLabel",Gui)
+                e.BackgroundTransparency=1; e.ZIndex=55
+                e.Font=Enum.Font.GothamBold; e.TextSize=28
+                e.Text=CONFETTI[math.random(#CONFETTI)]
+                e.Size=UDim2.new(0,40,0,40)
+                e.Position=UDim2.new(math.random()*0.9+0.05,0,-0.05,0)
+                local landX = e.Position.X.Scale + (math.random()-0.5)*0.3
+                tween(e, TweenInfo.new(2.2+math.random()*1.2,Enum.EasingStyle.Quad,Enum.EasingDirection.In),
+                    {Position=UDim2.new(landX,0,1.1,0)})
+                tween(e, TweenInfo.new(2.8,Enum.EasingStyle.Linear), {TextTransparency=0.6})
+                game:GetService("Debris"):AddItem(e,3.2)
+            end
+            task.wait(0.18)
+        end
+    end)
+end
+local function stopConfetti() confettiActive=false end
 
-local CountdownLabel = mkLabel(Header, "Next match in …s",
-    Enum.Font.GothamBold, 15, C.dim,
-    Enum.TextXAlignment.Right,
-    UDim2.new(0.7,0,0,0), UDim2.new(0.3,-16,1,0))
-CountdownLabel.ZIndex = 23
+-- ============================================================
+-- PHASE 1 — GOLDEN APRON (full screen, 0–7s)
+-- ============================================================
 
--- ── Winner banner ─────────────────────────────────────────────
-local WinBanner = Instance.new("Frame", Panel)
-WinBanner.Size = UDim2.new(1,-24,0,78)
-WinBanner.Position = UDim2.new(0,12,0,72)
-WinBanner.BackgroundColor3 = Color3.fromRGB(22,18,40)
-WinBanner.BorderSizePixel = 0; WinBanner.ZIndex = 22
-corner(WinBanner, 12); mkStroke(WinBanner, 2, C.gold)
+local P1 = Instance.new("Frame",Gui)
+P1.Size=UDim2.new(0,540,0,280); P1.AnchorPoint=Vector2.new(0.5,0.5)
+P1.Position=UDim2.new(0.5,0,-0.4,0)   -- starts above screen
+P1.BackgroundColor3=C.dark; P1.BorderSizePixel=0; P1.ZIndex=20; P1.Visible=false
+corner(P1,20); stroke(P1,3,C.gold)
 
-local WinEmoji = mkLabel(WinBanner, "🏆",
-    Enum.Font.GothamBlack, 44, C.gold,
-    Enum.TextXAlignment.Center,
-    UDim2.new(0,0,0,0), UDim2.new(0,72,1,0))
-WinEmoji.ZIndex = 23
+local P1_ApronBg = lbl(P1,"👑",Enum.Font.GothamBlack,120,Color3.fromRGB(50,38,6),
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(1,0,1,0))
+P1_ApronBg.TextTransparency=0.82; P1_ApronBg.ZIndex=20
 
-local WinNameLabel = mkLabel(WinBanner, "—",
-    Enum.Font.GothamBlack, 26, C.gold,
-    Enum.TextXAlignment.Left,
-    UDim2.new(0,76,0,8), UDim2.new(0.65,0,0,34))
-WinNameLabel.ZIndex = 23
+local P1_Title = lbl(P1,"🥇  GOLDEN APRON",Enum.Font.GothamBlack,28,C.gold,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,18),UDim2.new(1,0,0,36))
+P1_Title.ZIndex=22
 
-local WinTypeLabel = mkLabel(WinBanner, "",
-    Enum.Font.GothamBold, 15, C.dim,
-    Enum.TextXAlignment.Left,
-    UDim2.new(0,76,0,44), UDim2.new(0.65,0,0,22))
-WinTypeLabel.ZIndex = 23
+local P1_Sub = lbl(P1,"Last Chef Standing",Enum.Font.GothamBold,16,C.dim,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,54),UDim2.new(1,0,0,22))
+P1_Sub.ZIndex=22
 
-local WinScoreLabel = mkLabel(WinBanner, "",
-    Enum.Font.GothamBlack, 22, C.white,
-    Enum.TextXAlignment.Right,
-    UDim2.new(0.65,0,0,0), UDim2.new(0.35,-14,1,0))
-WinScoreLabel.ZIndex = 23
+local P1_Divider = Instance.new("Frame",P1)
+P1_Divider.Size=UDim2.new(0.6,0,0,2); P1_Divider.Position=UDim2.new(0.2,0,0,88)
+P1_Divider.BackgroundColor3=C.gold; P1_Divider.BackgroundTransparency=0.6
+P1_Divider.BorderSizePixel=0; P1_Divider.ZIndex=22
 
--- ── Rankings table ────────────────────────────────────────────
-local RankScroll = Instance.new("ScrollingFrame", Panel)
-RankScroll.Size = UDim2.new(0.52,-18,1,-220)
-RankScroll.Position = UDim2.new(0,12,0,162)
-RankScroll.BackgroundTransparency = 1; RankScroll.BorderSizePixel=0
-RankScroll.ScrollBarThickness = 5
-RankScroll.ScrollBarImageColor3 = C.gold
-RankScroll.CanvasSize = UDim2.new(1,0,0,0)
-RankScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-RankScroll.ZIndex = 22
-local RankLayout = Instance.new("UIListLayout", RankScroll)
-RankLayout.SortOrder = Enum.SortOrder.LayoutOrder; RankLayout.Padding = UDim.new(0,4)
-local RankPad = Instance.new("UIPadding", RankScroll)
-RankPad.PaddingTop = UDim.new(0,2); RankPad.PaddingBottom = UDim.new(0,8)
+local P1_Name = lbl(P1,"—",Enum.Font.GothamBlack,36,C.white,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,100),UDim2.new(1,0,0,46))
+P1_Name.ZIndex=22; P1_Name.TextTruncate=Enum.TextTruncate.AtEnd
 
-local RANK_MEDALS = {"🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"}
+local P1_Detail = lbl(P1,"",Enum.Font.Gotham,15,C.dim,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,148),UDim2.new(1,0,0,24))
+P1_Detail.ZIndex=22
 
-local function buildRankings(rankings)
-    for _, c in ipairs(RankScroll:GetChildren()) do
-        if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
-    end
+-- "No winner" variant label
+local P1_NoWin = lbl(P1,"⏱  Time expired — no Golden Apron",Enum.Font.GothamBold,16,C.dim,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,200),UDim2.new(1,0,0,24))
+P1_NoWin.ZIndex=22; P1_NoWin.Visible=false
 
-    -- Column header
-    local hdr = Instance.new("Frame", RankScroll)
-    hdr.Size=UDim2.new(1,0,0,22); hdr.BackgroundTransparency=1
-    hdr.LayoutOrder=0; hdr.ZIndex=23
-    local function hcol(txt, pos, sz)
-        local l = mkLabel(hdr, txt, Enum.Font.GothamBlack, 11, C.dim,
-            Enum.TextXAlignment.Left, pos, sz); l.ZIndex=23
-    end
-    hcol("PLAYER",  UDim2.new(0,32,0,0), UDim2.new(0.48,0,1,0))
-    hcol("PTS",     UDim2.new(0.48,0,0,0), UDim2.new(0.2,0,1,0))
-    hcol("CL",      UDim2.new(0.68,0,0,0), UDim2.new(0.16,0,1,0))
-    hcol("ELIM",    UDim2.new(0.84,0,0,0), UDim2.new(0.16,0,1,0))
+-- ============================================================
+-- PHASE 2 — GRAND GROCER (slides in from right, 7–13s)
+-- ============================================================
 
-    for i, row in ipairs(rankings) do
-        local isMe = row.userId == player.UserId
-        local row_f = Instance.new("Frame", RankScroll)
-        row_f.Size = UDim2.new(1,0,0,44)
-        row_f.BackgroundColor3 = isMe
-            and Color3.fromRGB(24,30,50)
-            or  Color3.fromRGB(18,16,30)
-        row_f.BorderSizePixel=0; row_f.LayoutOrder=i; row_f.ZIndex=22
-        corner(row_f, 8)
-        if isMe then mkStroke(row_f, 1.5, C.blue) end
+local P2 = Instance.new("Frame",Gui)
+P2.Size=UDim2.new(0,420,0,200); P2.AnchorPoint=Vector2.new(0.5,0.5)
+P2.Position=UDim2.new(1.5,0,0.5,0)    -- starts off right edge
+P2.BackgroundColor3=C.dark; P2.BorderSizePixel=0; P2.ZIndex=20; P2.Visible=false
+corner(P2,16); stroke(P2,2.5,C.gold)
 
-        local medalStr = RANK_MEDALS[i] or tostring(i)
-        mkLabel(row_f, medalStr, Enum.Font.GothamBlack, 20, C.gold,
-            Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,30,1,0)).ZIndex=23
+local P2_Trophy = lbl(P2,"🏆",Enum.Font.GothamBlack,80,Color3.fromRGB(50,38,6),
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,90,1,0))
+P2_Trophy.TextTransparency=0.75; P2_Trophy.ZIndex=20
 
-        local nameCol = row.isEliminated and C.dim or C.white
-        local nameL = mkLabel(row_f, row.name, Enum.Font.GothamBold, 14, nameCol,
-            Enum.TextXAlignment.Left, UDim2.new(0,32,0,4), UDim2.new(0.48,-34,0,20))
-        nameL.ZIndex=23; nameL.TextTruncate = Enum.TextTruncate.AtEnd
+local P2_Title = lbl(P2,"🏆  GRAND GROCER",Enum.Font.GothamBlack,24,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,100,0,16),UDim2.new(1,-108,0,30))
+P2_Title.ZIndex=22
 
-        local statusSub = row.isEliminated and "Eliminated" or "Survivor ✓"
-        local statusCol = row.isEliminated and C.red or C.green
-        mkLabel(row_f, statusSub, Enum.Font.Gotham, 11, statusCol,
-            Enum.TextXAlignment.Left, UDim2.new(0,32,0,26), UDim2.new(0.48,-34,0,14)).ZIndex=23
+local P2_Sub = lbl(P2,"Highest Points Earned",Enum.Font.GothamBold,14,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0,100,0,46),UDim2.new(1,-108,0,20))
+P2_Sub.ZIndex=22
 
-        mkLabel(row_f, tostring(row.score), Enum.Font.GothamBlack, 16, C.gold,
-            Enum.TextXAlignment.Left, UDim2.new(0.48,0,0,0), UDim2.new(0.2,0,1,0)).ZIndex=23
-        mkLabel(row_f, tostring(row.clDealt), Enum.Font.GothamBold, 14, C.white,
-            Enum.TextXAlignment.Left, UDim2.new(0.68,0,0,0), UDim2.new(0.16,0,1,0)).ZIndex=23
-        mkLabel(row_f, tostring(row.eliminations or 0), Enum.Font.GothamBold, 14, C.white,
-            Enum.TextXAlignment.Left, UDim2.new(0.84,0,0,0), UDim2.new(0.16,0,1,0)).ZIndex=23
-    end
+local P2_Divider = Instance.new("Frame",P2)
+P2_Divider.Size=UDim2.new(0.75,0,0,1); P2_Divider.Position=UDim2.new(0.12,0,0,74)
+P2_Divider.BackgroundColor3=C.gold; P2_Divider.BackgroundTransparency=0.7
+P2_Divider.BorderSizePixel=0; P2_Divider.ZIndex=22
+
+local P2_Name = lbl(P2,"—",Enum.Font.GothamBlack,28,C.white,
+    Enum.TextXAlignment.Left,UDim2.new(0,100,0,82),UDim2.new(1,-108,0,36))
+P2_Name.ZIndex=22; P2_Name.TextTruncate=Enum.TextTruncate.AtEnd
+
+local P2_Score = lbl(P2,"",Enum.Font.GothamBold,16,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,100,0,120),UDim2.new(1,-108,0,22))
+P2_Score.ZIndex=22
+
+local P2_Stats = lbl(P2,"",Enum.Font.Gotham,13,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0,100,0,144),UDim2.new(1,-108,0,40))
+P2_Stats.ZIndex=22
+
+-- ============================================================
+-- PHASE 3 — ACCOLADES (cards appear one by one, 13–23s)
+-- ============================================================
+
+local P3 = Instance.new("Frame",Gui)
+P3.Size=UDim2.new(1,0,0,190); P3.AnchorPoint=Vector2.new(0.5,1)
+P3.Position=UDim2.new(0.5,0,1.3,0)    -- starts below screen
+P3.BackgroundTransparency=1; P3.BorderSizePixel=0; P3.ZIndex=20; P3.Visible=false
+
+lbl(P3,"⭐  ACCOLADES",Enum.Font.GothamBlack,18,C.gold,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(1,0,0,28)).ZIndex=22
+
+local CardContainer = Instance.new("Frame",P3)
+CardContainer.Size=UDim2.new(1,-32,0,150); CardContainer.Position=UDim2.new(0,16,0,32)
+CardContainer.BackgroundTransparency=1; CardContainer.ZIndex=21
+
+local CardLayout = Instance.new("UIListLayout",CardContainer)
+CardLayout.FillDirection=Enum.FillDirection.Horizontal
+CardLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+CardLayout.VerticalAlignment=Enum.VerticalAlignment.Center
+CardLayout.Padding=UDim.new(0,10)
+
+-- Pre-build 5 blank accolade cards
+local AccCards = {}
+for i=1,5 do
+    local card = Instance.new("Frame",CardContainer)
+    card.Size=UDim2.new(0,148,0,140); card.BackgroundColor3=C.panel
+    card.BorderSizePixel=0; card.LayoutOrder=i; card.ZIndex=22
+    card.BackgroundTransparency=1   -- invisible until populated
+    corner(card,14)
+    local cs = stroke(card,2,C.purple)
+
+    local em = lbl(card,"",Enum.Font.GothamBlack,40,C.white,
+        Enum.TextXAlignment.Center,UDim2.new(0,0,0,8),UDim2.new(1,0,0,48)); em.ZIndex=23
+    local ti = lbl(card,"",Enum.Font.GothamBlack,14,C.purple,
+        Enum.TextXAlignment.Center,UDim2.new(0,4,0,56),UDim2.new(1,-8,0,22)); ti.ZIndex=23
+    local na = lbl(card,"",Enum.Font.GothamBold,13,C.white,
+        Enum.TextXAlignment.Center,UDim2.new(0,4,0,80),UDim2.new(1,-8,0,20)); na.ZIndex=23
+    local vl = lbl(card,"",Enum.Font.Gotham,12,C.dim,
+        Enum.TextXAlignment.Center,UDim2.new(0,4,0,102),UDim2.new(1,-8,0,18)); vl.ZIndex=23
+
+    AccCards[i] = {frame=card, cardStroke=cs, emoji=em, title=ti, name=na, value=vl}
 end
 
--- ── Accolades panel (right column) ────────────────────────────
-local AccoladeFrame = Instance.new("Frame", Panel)
-AccoladeFrame.Size = UDim2.new(0.48,-18,1,-220)
-AccoladeFrame.Position = UDim2.new(0.52,6,0,162)
-AccoladeFrame.BackgroundTransparency=1; AccoladeFrame.BorderSizePixel=0; AccoladeFrame.ZIndex=22
+-- ============================================================
+-- PHASE 4 — LEADERBOARD + RECEIPT (23–30s)
+-- ============================================================
 
-mkLabel(AccoladeFrame, "⭐  ACCOLADES", Enum.Font.GothamBlack, 14, C.gold,
-    Enum.TextXAlignment.Left, UDim2.new(0,0,0,0), UDim2.new(1,0,0,22)).ZIndex=23
+local P4 = Instance.new("Frame",Gui)
+P4.Size=UDim2.new(0,720,0,300); P4.AnchorPoint=Vector2.new(0.5,0.5)
+P4.Position=UDim2.new(0.5,0,1.5,0)
+P4.BackgroundColor3=C.dark; P4.BorderSizePixel=0; P4.ZIndex=20; P4.Visible=false
+corner(P4,16); stroke(P4,2,C.stroke)
 
-local AccScroll = Instance.new("ScrollingFrame", AccoladeFrame)
-AccScroll.Size = UDim2.new(1,0,1,-26)
-AccScroll.Position = UDim2.new(0,0,0,26)
-AccScroll.BackgroundTransparency=1; AccScroll.BorderSizePixel=0
-AccScroll.ScrollBarThickness=4; AccScroll.ScrollBarImageColor3=C.purple
-AccScroll.CanvasSize=UDim2.new(1,0,0,0); AccScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
-AccScroll.ZIndex=22
-local AccLayout = Instance.new("UIListLayout", AccScroll)
-AccLayout.SortOrder=Enum.SortOrder.LayoutOrder; AccLayout.Padding=UDim.new(0,6)
+lbl(P4,"FINAL STANDINGS",Enum.Font.GothamBlack,18,C.white,
+    Enum.TextXAlignment.Left,UDim2.new(0,16,0,12),UDim2.new(0.5,0,0,26)).ZIndex=22
 
-local function buildAccolades(accolades)
-    for _, c in ipairs(AccScroll:GetChildren()) do
+local P4_Scroll = Instance.new("ScrollingFrame",P4)
+P4_Scroll.Size=UDim2.new(0.55,-12,1,-52); P4_Scroll.Position=UDim2.new(0,8,0,48)
+P4_Scroll.BackgroundTransparency=1; P4_Scroll.BorderSizePixel=0
+P4_Scroll.ScrollBarThickness=4; P4_Scroll.ScrollBarImageColor3=C.gold
+P4_Scroll.CanvasSize=UDim2.new(1,0,0,0); P4_Scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+P4_Scroll.ZIndex=22
+local P4_Layout=Instance.new("UIListLayout",P4_Scroll)
+P4_Layout.SortOrder=Enum.SortOrder.LayoutOrder; P4_Layout.Padding=UDim.new(0,4)
+
+-- Receipt panel (right side of P4)
+local Receipt = Instance.new("Frame",P4)
+Receipt.Size=UDim2.new(0.45,-12,1,-52); Receipt.Position=UDim2.new(0.55,4,0,48)
+Receipt.BackgroundColor3=Color3.fromRGB(248,244,228)   -- paper white
+Receipt.BorderSizePixel=0; Receipt.ZIndex=22
+corner(Receipt,8)
+
+local RLines={}
+local R_TEXTS = {
+    "CHOMPERS FRESH MARKET",
+    "─────────────────────",
+    "",   -- winner type
+    "",   -- winner name
+    "─────────────────────",
+    "",   -- accolade 1
+    "",   -- accolade 2
+    "",   -- accolade 3
+    "─────────────────────",
+    "TOTAL MEDALS: ??? ",
+}
+local RL = Instance.new("UIListLayout",Receipt)
+RL.SortOrder=Enum.SortOrder.LayoutOrder; RL.Padding=UDim.new(0,2)
+local RP = Instance.new("UIPadding",Receipt)
+RP.PaddingTop=UDim.new(0,10); RP.PaddingLeft=UDim.new(0,10); RP.PaddingRight=UDim.new(0,10)
+
+for i,text in ipairs(R_TEXTS) do
+    local rl=Instance.new("TextLabel",Receipt)
+    rl.Size=UDim2.new(1,0,0,20); rl.BackgroundTransparency=1
+    rl.Text=text; rl.Font = (i==1 or i==10) and Enum.Font.GothamBlack or Enum.Font.Gotham
+    rl.TextSize= (i==1 or i==10) and 13 or 11
+    rl.TextColor3=Color3.fromRGB(30,25,20)
+    rl.TextXAlignment=Enum.TextXAlignment.Center
+    rl.TextWrapped=true; rl.LayoutOrder=i; rl.ZIndex=23
+    RLines[i]=rl
+end
+
+-- Tear line at bottom of receipt
+local Tear=Instance.new("TextLabel",Receipt)
+Tear.Size=UDim2.new(1,0,0,20); Tear.BackgroundTransparency=1
+Tear.Text="✂ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─"
+Tear.Font=Enum.Font.Gotham; Tear.TextSize=11
+Tear.TextColor3=Color3.fromRGB(150,140,120); Tear.LayoutOrder=99
+Tear.TextXAlignment=Enum.TextXAlignment.Center; Tear.ZIndex=23
+
+local RANK_MEDALS = {"🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣"}
+
+local function buildLeaderboard(rankings)
+    for _,c in ipairs(P4_Scroll:GetChildren()) do
         if c:IsA("Frame") then c:Destroy() end
     end
-    for i, acc in ipairs(accolades) do
-        local card = Instance.new("Frame", AccScroll)
-        card.Size = UDim2.new(1,0,0,62)
-        card.BackgroundColor3 = Color3.fromRGB(20,16,38)
-        card.BorderSizePixel=0; card.LayoutOrder=i; card.ZIndex=22
-        corner(card, 10); mkStroke(card, 1.5, C.purple)
+    for i,row in ipairs(rankings) do
+        local rf=Instance.new("Frame",P4_Scroll)
+        rf.Size=UDim2.new(1,0,0,40); rf.LayoutOrder=i
+        rf.BackgroundColor3 = row.userId==player.UserId
+            and Color3.fromRGB(24,30,50) or Color3.fromRGB(18,16,30)
+        rf.BorderSizePixel=0; rf.ZIndex=23; corner(rf,6)
+        if row.userId==player.UserId then stroke(rf,1.5,C.blue) end
 
-        mkLabel(card, acc.emoji, Enum.Font.GothamBold, 34, C.white,
-            Enum.TextXAlignment.Center, UDim2.new(0,0,0,0), UDim2.new(0,52,1,0)).ZIndex=23
-
-        mkLabel(card, acc.title, Enum.Font.GothamBlack, 16, C.purple,
-            Enum.TextXAlignment.Left, UDim2.new(0,56,0,6), UDim2.new(1,-60,0,22)).ZIndex=23
-
-        mkLabel(card, acc.winnerName.."  ·  "..acc.valueStr,
-            Enum.Font.GothamBold, 13, C.white,
-            Enum.TextXAlignment.Left, UDim2.new(0,56,0,28), UDim2.new(1,-60,0,18)).ZIndex=23
-
-        mkLabel(card, acc.sub, Enum.Font.Gotham, 11, C.dim,
-            Enum.TextXAlignment.Left, UDim2.new(0,56,0,46), UDim2.new(1,-60,0,14)).ZIndex=23
+        lbl(rf,RANK_MEDALS[i] or tostring(i),Enum.Font.GothamBlack,18,C.gold,
+            Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,30,1,0)).ZIndex=24
+        local nl=lbl(rf,row.name,Enum.Font.GothamBold,14,
+            row.isEliminated and C.dim or C.white,Enum.TextXAlignment.Left,
+            UDim2.new(0,32,0,2),UDim2.new(0.5,-34,0,18)); nl.ZIndex=24; nl.TextTruncate=Enum.TextTruncate.AtEnd
+        local sl=lbl(rf,row.isEliminated and "💀 Elim" or "🟢 Alive",Enum.Font.Gotham,11,
+            row.isEliminated and C.red or C.green,Enum.TextXAlignment.Left,
+            UDim2.new(0,32,0,22),UDim2.new(0.5,-34,0,14)); sl.ZIndex=24
+        lbl(rf,tostring(row.score).." pts",Enum.Font.GothamBlack,15,C.gold,
+            Enum.TextXAlignment.Right,UDim2.new(0.5,0,0,0),UDim2.new(0.28,0,1,0)).ZIndex=24
+        lbl(rf,row.clDealt.." CL",Enum.Font.Gotham,13,C.white,
+            Enum.TextXAlignment.Right,UDim2.new(0.78,0,0,0),UDim2.new(0.22,-6,1,0)).ZIndex=24
     end
 end
 
--- ── Bottom bar ────────────────────────────────────────────────
-local BottomBar = Instance.new("Frame", Panel)
-BottomBar.Size = UDim2.new(1,-24,0,48)
-BottomBar.Position = UDim2.new(0,12,1,-58)
-BottomBar.BackgroundColor3 = Color3.fromRGB(16,14,28)
-BottomBar.BorderSizePixel = 0; BottomBar.ZIndex = 22
-corner(BottomBar, 10); mkStroke(BottomBar, 1.5, C.stroke)
+-- ============================================================
+-- CEREMONY SEQUENCER
+-- ============================================================
 
-local BottomHint = mkLabel(BottomBar, "🛒  Next match lobby opens automatically.",
-    Enum.Font.GothamBold, 14, C.dim,
-    Enum.TextXAlignment.Center,
-    UDim2.new(0,0,0,0), UDim2.new(1,0,1,0))
-BottomHint.ZIndex = 23
+local ceremonyThread = nil
 
--- ── Show / hide logic ─────────────────────────────────────────
-local countdownConn = nil
-
-local function hideScreen()
-    ResultGui.Enabled = false
-    if countdownConn then countdownConn:Disconnect(); countdownConn = nil end
+local function hideAll()
+    Gui.Enabled = false
+    stopConfetti()
+    P1.Visible=false; P2.Visible=false; P3.Visible=false; P4.Visible=false
+    P1.Position=UDim2.new(0.5,0,-0.4,0)
+    P2.Position=UDim2.new(1.5,0,0.5,0)
+    P3.Position=UDim2.new(0.5,0,1.3,0)
+    P4.Position=UDim2.new(0.5,0,1.5,0)
+    Dim.BackgroundTransparency=1
+    if ceremonyThread then task.cancel(ceremonyThread) end
 end
 
-local function showScreen(result)
-    ResultGui.Enabled = true
+local function runCeremony(result)
+    Gui.Enabled=true
 
-    -- Winner banner
+    -- Dim fades in
+    tween(Dim,SLOW,{BackgroundTransparency=0.45})
+
+    -- ── PHASE 1 — Golden Apron ────────────────────────────────
+    task.wait(0.4)
     local w = result.winner
     if w.type == "LastChef" then
-        WinEmoji.Text    = "👑"
-        WinNameLabel.Text = w.name
-        WinTypeLabel.Text  = "Last Chef Standing  ·  Golden Apron"
-        WinScoreLabel.Text = tostring(w.score).." pts"
-        mkStroke(WinBanner, 2, Color3.fromRGB(255,215,0))
+        P1_Name.Text   = w.name
+        P1_Sub.Text    = "Last Chef Standing"
+        P1_Detail.Text = tostring(w.score).." points · Survived the Food Fight"
+        P1_NoWin.Visible = false
     elseif w.type == "GrandGrocer" then
-        WinEmoji.Text    = "🏆"
-        WinNameLabel.Text = w.name
-        WinTypeLabel.Text  = "Grand Grocer  ·  Top Points"
-        WinScoreLabel.Text = tostring(w.score).." pts"
-        mkStroke(WinBanner, 2, C.gold)
+        -- No Last Chef Standing — explain briefly
+        P1_Title.Text  = "⏱  NO GOLDEN APRON"
+        P1_Sub.Text    = "Multiple survivors — no Last Chef"
+        P1_Name.Text   = ""; P1_Detail.Text=""
+        P1_NoWin.Visible = true
     else
-        WinEmoji.Text    = "🤷"
-        WinNameLabel.Text = "No winner this round"
-        WinTypeLabel.Text  = result.timedOut and "Time expired — everyone survived" or ""
-        WinScoreLabel.Text = ""
+        P1_Title.Text  = "⏱  NO GOLDEN APRON"
+        P1_Sub.Text    = "Time expired — the market closed"
+        P1_Name.Text   = ""; P1_Detail.Text=""
+        P1_NoWin.Visible = true
     end
 
-    buildRankings(result.rankings)
-    buildAccolades(result.accolades)
+    P1.Visible=true
+    tween(P1, BACK, {Position=UDim2.new(0.5,0,0.38,0)})
+    if w.type == "LastChef" then startConfetti() end
 
-    -- Countdown label (driven by server phase timer — approximate)
-    local accoladesDuration = 20   -- matches C.Phase.Accolades
-    local endAt = tick() + accoladesDuration
+    task.wait(6.5)
+    stopConfetti()
+    tween(P1, FAST, {Position=UDim2.new(0.5,0,-0.4,0)})
+    task.wait(0.5)
+    P1.Visible=false
+
+    -- ── PHASE 2 — Grand Grocer ────────────────────────────────
+    -- Find Grand Grocer data (highest scorer among survivors)
+    local gg = result.winner
+    local ggRow = nil
+    for _,r in ipairs(result.rankings) do
+        if r.userId==gg.userId then ggRow=r; break end
+    end
+
+    P2_Name.Text  = gg.name
+    P2_Score.Text = tostring(gg.score).." points"
+    if ggRow then
+        P2_Stats.Text = "Dishes cooked: "..ggRow.cook.."  ·  Items gathered: "..ggRow.gather
+    end
+    if w.type == "LastChef" then
+        P2_Title.Text = "🏆  GRAND GROCER"
+        P2_Sub.Text   = "Highest Points Earned"
+    end
+
+    P2.Visible=true
+    tween(P2, BACK, {Position=UDim2.new(0.5,0,0.46,0)})
+
+    task.wait(5.5)
+    tween(P2, FAST, {Position=UDim2.new(1.5,0,0.5,0)})
+    task.wait(0.5)
+    P2.Visible=false
+
+    -- ── PHASE 3 — Accolades ───────────────────────────────────
+    -- Reset all cards
+    for _,ac in ipairs(AccCards) do
+        ac.frame.BackgroundTransparency=1
+        ac.cardStroke.Transparency=1
+        ac.emoji.Text=""
+        ac.title.Text=""; ac.name.Text=""; ac.value.Text=""
+    end
+
+    P3.Visible=true
+    tween(P3, BACK, {Position=UDim2.new(0.5,0,1,-16)})
+    task.wait(0.6)
+
+    for i,acc in ipairs(result.accolades) do
+        local ac=AccCards[i]
+        if ac then
+            ac.emoji.Text=acc.emoji; ac.title.Text=acc.title
+            ac.name.Text=acc.winnerName; ac.value.Text=acc.valueStr
+            -- Pop card in
+            tween(ac.frame, TweenInfo.new(0.25,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
+                {BackgroundTransparency=0})
+            tween(ac.cardStroke, TweenInfo.new(0.25), {Transparency=0})
+        end
+        task.wait(1.8)
+    end
+
+    task.wait(1.2)
+    tween(P3, FAST, {Position=UDim2.new(0.5,0,1.3,0)})
+    task.wait(0.5)
+    P3.Visible=false
+
+    -- ── PHASE 4 — Leaderboard + Receipt ──────────────────────
+    buildLeaderboard(result.rankings)
+
+    -- Populate receipt
+    local topAcc = result.accolades
+    RLines[3].Text = w.type=="LastChef" and "GOLDEN APRON" or "GRAND GROCER"
+    RLines[4].Text = w.name
+    RLines[6].Text = topAcc[1] and (topAcc[1].emoji.." "..topAcc[1].title) or ""
+    RLines[7].Text = topAcc[2] and (topAcc[2].emoji.." "..topAcc[2].title) or ""
+    RLines[8].Text = topAcc[3] and (topAcc[3].emoji.." "..topAcc[3].title) or ""
+    local totalMedals = 5 + #result.accolades * 3   -- placeholder until DataService
+    RLines[10].Text = "TOTAL MEDALS: +"..totalMedals
+
+    P4.Visible=true
+    tween(P4, BACK, {Position=UDim2.new(0.5,0,0.56,0)})
+
+    task.wait(6.0)
+    -- Animate receipt tear (slides down and off)
+    tween(Receipt, TweenInfo.new(0.6,Enum.EasingStyle.Back,Enum.EasingDirection.In),
+        {Position=UDim2.new(0.55,4,1.2,0)})
+end
+
+-- ── Countdown bar ─────────────────────────────────────────────
+local TOTAL_DURATION = 30   -- matches ChompersData.Constants.Phase.Accolades
+local countdownConn = nil
+
+local function startCountdown()
+    local endAt = tick() + TOTAL_DURATION
     if countdownConn then countdownConn:Disconnect() end
     countdownConn = RunService.Heartbeat:Connect(function()
-        local remaining = math.max(0, math.ceil(endAt - tick()))
-        CountdownLabel.Text = "Next match in " .. remaining .. "s"
-        if remaining <= 0 then
+        local rem = math.max(0, endAt - tick())
+        local pct = rem / TOTAL_DURATION
+        CdBar.Size = UDim2.new(pct, 0, 0, 4)
+        CdLabel.Text = "Next match in "..math.ceil(rem).."s"
+        if rem <= 0 then
             countdownConn:Disconnect(); countdownConn = nil
         end
     end)
-
-    -- Entrance animation: panel drops in from above
-    Panel.Position = UDim2.new(0.5, 0, -0.2, 0)
-    TweenService:Create(Panel,
-        TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        {Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
 end
 
 -- ── Remote listeners ──────────────────────────────────────────
-if MatchResult then
-    MatchResult.OnClientEvent:Connect(function(result)
-        showScreen(result)
+if MatchResultR then
+    MatchResultR.OnClientEvent:Connect(function(result)
+        if ceremonyThread then task.cancel(ceremonyThread) end
+        startCountdown()
+        ceremonyThread = task.spawn(function() runCeremony(result) end)
     end)
 end
 
 if PhaseChangedR then
     PhaseChangedR.OnClientEvent:Connect(function(phase)
-        if phase == "Prelobby" then
-            hideScreen()
-        end
+        if phase == "Prelobby" then hideAll() end
     end)
 end
 
