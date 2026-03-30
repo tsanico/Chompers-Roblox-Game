@@ -242,9 +242,16 @@ NapBtn.MouseButton1Click:Connect(function()
 end)
 
 _G.Chompers.SetNapkins = function(n)
-	-- Called when server syncs napkin count (e.g. after pickup)
+	-- Called on match start to set initial count
 	n = n or 1
 	napkinStock = n
+	napkinQueue = {}   -- clear cooldowns on reset
+	napkinRefreshUI()
+end
+
+_G.Chompers.AddNapkins = function(count)
+	-- Called when a napkin is picked up — increments without touching cooldown queue
+	napkinStock = napkinStock + (count or 1)
 	napkinRefreshUI()
 end
 
@@ -1317,9 +1324,13 @@ onR("UpdatePlayerCount", function(c,t) _G.Chompers.SetPlayerCount(c,t) end)
 onR("SlotUpdate",        function(i,data) _G.Chompers.SetSlotItem(i,data) end)
 onR("SelectSlot",        function(i) highlightSlot(i) end)
 onR("Announce",          function(msg,col,dur) _G.Chompers.Announce(msg,col,dur) end)
-onR("NapkinSync",        function(newStock)
-	napkinStock = math.max(napkinStock, newStock)
-	napkinRefreshUI()
+onR("NapkinSync",    function(newStock)
+	-- Full reset sync (match start / server authority)
+	if _G.Chompers.SetNapkins then _G.Chompers.SetNapkins(newStock) end
+end)
+onR("NapkinAdded",  function(count)
+	-- Pickup: add without touching cooldown queue
+	if _G.Chompers.AddNapkins then _G.Chompers.AddNapkins(count) end
 end)
 -- Server-pushed reveal (hit-based auto-reveal from combat system)
 onR("RevealPlayerInfo", function(targetId, fav, allergy)
