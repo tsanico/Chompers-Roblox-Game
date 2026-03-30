@@ -466,4 +466,127 @@ for _, rec in ipairs(ChompersData.Recipes) do
 	end
 end
 
+-- ============================================================
+-- VENDOR CATALOG
+-- Each vendor sells cosmetics tied to a distinct playstyle.
+-- Items are purchasable exclusively at food truck vendors in
+-- the car park — not from the StoreGuide.
+--
+-- Categories:
+--   "title"          — text tag above player head
+--   "title_animated" — same but glows / pulses (mid+)
+--   "title_prestige" — rare titles (premium+)
+--   "cosmetic"       — visual items (hats, skins, effects)
+-- ============================================================
+
+ChompersData.Vendors = {
+
+    -- ── Tony Two-Pans ──────────────────────────────────────────
+    tony = {
+        id          = "tony",
+        name        = "Tony Two-Pans",
+        tagline     = "Master of the Grill",
+        emoji       = "🍳",
+        idleLines   = {
+            "If you throw raw eggs, don't expect respect.",
+            "Perfect heat separates chefs from amateurs.",
+            "I saw someone burn pasta earlier. Tragic.",
+            "Burned food deals less damage, but the status sticks longer.",
+        },
+        accentHex   = { 235, 100, 40 },   -- flame orange
+        items       = {
+            { id="tony_title_line_cook",     name="Line Cook",               category="title",
+              cost=20,   tier="cheap",    desc="Straight from the kitchen floor." },
+            { id="tony_cosmetic_chef_hat",   name="Chef Hat",                category="cosmetic",
+              cost=80,   tier="mid",      desc="A proper toque. Earns respect at the prep table." },
+            { id="tony_title_exec_chef",     name="Executive Chef ✨",        category="title_animated",
+              cost=200,  tier="premium",  desc="The kitchen is your domain." },
+            { id="tony_title_master_kitchen",name="Master of the Kitchen",   category="title_prestige",
+              cost=500,  tier="prestige", desc="One per store. You earned it." },
+            { id="tony_cosmetic_golden_apron",name="Golden Apron",           category="cosmetic",
+              cost=800,  tier="ultra",    desc="The real one. For the real one." },
+        },
+    },
+
+    -- ── Gloria "The Grocer" ────────────────────────────────────
+    gloria = {
+        id          = "gloria",
+        name        = "Gloria",
+        tagline     = "The Grocer",
+        emoji       = "🛒",
+        idleLines   = {
+            "If you didn't pay for it, you shouldn't cook with it.",
+            "Cart users always think bigger.",
+            "I've seen better produce in a gas station.",
+            "You'll find more loose cash outside the store.",
+        },
+        accentHex   = { 70, 195, 85 },   -- produce green
+        items       = {
+            { id="gloria_title_coupon_clip", name="Coupon Clipper",         category="title",
+              cost=25,   tier="cheap",    desc="Every cent counts." },
+            { id="gloria_cosmetic_cart",     name="Market Cart",             category="cosmetic",
+              cost=100,  tier="mid",      desc="Painted green and twice as useful." },
+            { id="gloria_title_market_mogul",name="Market Mogul ✨",         category="title_animated",
+              cost=200,  tier="premium",  desc="You own this market." },
+            { id="gloria_title_king_market", name="King of the Market",      category="title_prestige",
+              cost=500,  tier="prestige", desc="Everyone else is just shopping." },
+        },
+    },
+
+    -- ── Rico "The Fryer" ───────────────────────────────────────
+    rico = {
+        id          = "rico",
+        name        = "Rico",
+        tagline     = "The Fryer",
+        emoji       = "🔥",
+        idleLines   = {
+            "Cook it… or just throw it harder.",
+            "The louder the splat, the better the hit.",
+            "You aiming or guessing?",
+            "Heavy food hits harder. Light food flies faster.",
+        },
+        accentHex   = { 220, 60, 40 },   -- hot red
+        items       = {
+            { id="rico_title_food_fighter",  name="Food Fighter",             category="title",
+              cost=20,   tier="cheap",    desc="Chaos first, questions later." },
+            { id="rico_title_sauce_slinger", name="Sauce Slinger ✨",          category="title_animated",
+              cost=200,  tier="premium",  desc="You've earned your splatter stripes." },
+            { id="rico_title_king_fight",    name="King of the Food Fight",   category="title_prestige",
+              cost=500,  tier="prestige", desc="The market fears your trajectory." },
+        },
+    },
+
+    -- ── Mops "The Janitor" ─────────────────────────────────────
+    mops = {
+        id          = "mops",
+        name        = "Mops",
+        tagline     = "The Janitor",
+        emoji       = "🧹",
+        idleLines   = {
+            "Every match ends the same. I clean up.",
+            "Bathrooms are a privilege, not a right.",
+            "You people are animals.",
+            "You only get three bathroom breaks. Use them wisely.",
+        },
+        accentHex   = { 100, 180, 220 },  -- mop blue
+        items       = {
+            { id="mops_title_floor_super",   name="Floor Supervisor",         category="title",
+              cost=20,   tier="cheap",    desc="Someone has to maintain order around here." },
+            { id="mops_title_clean_freak",   name="Clean Freak ✨",            category="title_animated",
+              cost=200,  tier="premium",  desc="You survived cleaner than anyone else." },
+            { id="mops_title_lord_sanit",    name="Lord of Sanitation",       category="title_prestige",
+              cost=500,  tier="prestige", desc="Mops respects you. That's rare." },
+        },
+    },
+}
+
+-- Flat item lookup by ID for server-side validation
+ChompersData.VendorItemById = {}
+for _, vendor in pairs(ChompersData.Vendors) do
+    for _, item in ipairs(vendor.items) do
+        ChompersData.VendorItemById[item.id] = item
+        item.vendorId = vendor.id   -- back-reference
+    end
+end
+
 return ChompersData
