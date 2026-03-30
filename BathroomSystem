@@ -43,12 +43,27 @@ local function getOrCreate(name)
     return r
 end
 
+-- ── Remotes ───────────────────────────────────────────────────
+local function getOrCreateR(name)
+    local r = Remotes:FindFirstChild(name)
+    if not r then
+        r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = Remotes
+    end
+    return r
+end
 local UpdateBreaks   = getOrCreate("UpdateBreaks")
-local BathroomEnterR = getOrCreate("BathroomEnter")   -- → client: player entered
-local BathroomExitR  = getOrCreate("BathroomExit")    -- → client: player exited
-local BathroomTimerR = getOrCreate("BathroomTimer")   -- → client: seconds remaining
+local BathroomEnterR = getOrCreate("BathroomEnter")
+local BathroomExitR  = getOrCreate("BathroomExit")
+local BathroomTimerR = getOrCreate("BathroomTimer")
+local BathroomAnimStartR    = getOrCreateR("BathroomAnimStart")    -- → client: start overlay
+local BathroomAnimCompleteR = getOrCreateR("BathroomAnimComplete") -- → client: hide overlay
+local FreezeMovement        = getOrCreateR("FreezeMovement")
+local UnfreezeMovement      = getOrCreateR("UnfreezeMovement")
+local AnnounceRemote        = Remotes:FindFirstChild("Announce")
 
-local AnnounceRemote = Remotes:FindFirstChild("Announce")
+-- ── Animation durations (seconds) ────────────────────────────
+local SINK_DURATION   = 3.0   -- washing hands
+local TOILET_DURATION = 4.0   -- using the toilet
 
 -- ── Constants ─────────────────────────────────────────────────
 local MAX_STAY_SECONDS = 10
@@ -119,15 +134,19 @@ local function clearPlayerSession(player)
     local stall = playerStall[player]
     if stall then
         stallOccupant[stall] = nil
-        setDoor(stall, "opening")   -- brief green open so player can walk out
-        -- setDoor's own task.delay closes it to "free" after 0.7s
+        setDoor(stall, "opening")
     end
-    playerStall[player] = nil
+    playerStall[player]  = nil
+    usingFixture[player] = nil
 
     if playerTimer[player] then
         task.cancel(playerTimer[player])
         playerTimer[player] = nil
     end
+
+    -- Unfreeze if still frozen from mid-animation eject
+    UnfreezeMovement:FireClient(player)
+    BathroomAnimCompleteR:FireClient(player)
 
     PlayerState.ExitBathroom(player)
     BathroomExitR:FireClient(player)
@@ -158,10 +177,13 @@ local function startExitTimer(player, stall)
 end
 
 -- ── Core interaction handler ──────────────────────────────────
+local usingFixture = {}   -- [player] = true while animation is running (prevents double-use)
+
 local function handleUse(player, stall, isSink)
     local s = PlayerState.Get(player)
     if not s then return end
     if s.isEliminated then return end
+    if usingFixture[player] then return end   -- already mid-animation
 
     -- Stall occupancy check
     if stallOccupant[stall] and stallOccupant[stall] ~= player then
@@ -173,7 +195,7 @@ local function handleUse(player, stall, isSink)
         return
     end
 
-    -- Check bars threshold (80% on either bar required)
+    -- Threshold check (80% CL or FL required)
     if s.cl < BATHROOM_THRESHOLD and s.fl < BATHROOM_THRESHOLD then
         if AnnounceRemote then
             AnnounceRemote:FireClient(player,
@@ -198,11 +220,9 @@ local function handleUse(player, stall, isSink)
         local ok = PlayerState.EnterBathroom(player)
         if not ok then return end
 
-        -- Claim stall
         stallOccupant[stall] = player
         playerStall[player]  = stall
 
-        -- Open door briefly (0.7s green) then close red/solid
         setDoor(stall, "opening")
         task.delay(0.75, function()
             if stallOccupant[stall] == player then
@@ -210,36 +230,49 @@ local function handleUse(player, stall, isSink)
             end
         end)
 
-        -- Fire client — entering
         BathroomEnterR:FireClient(player, s.pottyBreaks)
-
-        -- Start 10s forced exit timer
         startExitTimer(player, stall)
     end
 
-    -- Use fixture
-    local success = false
-    if isSink then
-        success = PlayerState.UseSink(player)
-        if success and AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "🚿  Sink used — Cleanliness reset!",
-                Color3.fromRGB(65,185,235), 2)
-        end
-    else
-        success = PlayerState.UseToilet(player)
-        if success and AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "🚽  Toilet used — Fullness reset!",
-                Color3.fromRGB(235,155,35), 2)
-        end
-    end
+    -- ── Timed animation sequence ──────────────────────────────
+    local duration = isSink and SINK_DURATION or TOILET_DURATION
+    usingFixture[player] = true
 
-    if success then
-        fireBreaks(player)
-        -- If both bars now 0 and timer still running, let timer finish naturally
-        -- (player might still want to use the other fixture)
-    end
+    -- Freeze player movement for the duration
+    FreezeMovement:FireClient(player)
+
+    -- Tell client to show the animation overlay
+    BathroomAnimStartR:FireClient(player, isSink and "sink" or "toilet", duration)
+
+    -- After duration: reset bar, restore movement, complete animation
+    task.delay(duration, function()
+        if not player.Parent then return end   -- player left
+
+        usingFixture[player] = nil
+        UnfreezeMovement:FireClient(player)
+        BathroomAnimCompleteR:FireClient(player)
+
+        -- NOW reset the bar
+        local success = false
+        if isSink then
+            success = PlayerState.UseSink(player)
+        else
+            success = PlayerState.UseToilet(player)
+        end
+
+        if success then
+            fireBreaks(player)
+            if AnnounceRemote then
+                local msg = isSink
+                    and "🚿  Cleanliness reset!"
+                    or  "🚽  Fullness reset!"
+                local col = isSink
+                    and Color3.fromRGB(65,185,235)
+                    or  Color3.fromRGB(235,155,35)
+                AnnounceRemote:FireClient(player, msg, col, 2)
+            end
+        end
+    end)
 end
 
 -- ── Stall setup ───────────────────────────────────────────────
