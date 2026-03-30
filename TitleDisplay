@@ -1,0 +1,160 @@
+-- ============================================================
+-- TitleDisplay — LocalScript · StarterCharacterScripts
+--
+-- Shows an equipped title above every player's head.
+-- Listens to PlayerTitleUpdate remote (fires to all clients
+-- when any player equips or loads a title).
+--
+-- Layout above character head:
+--   [Title Name]     ← coloured by tier, above default name
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+
+local player  = Players.LocalPlayer
+local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local PlayerTitleUpdateR = Remotes:WaitForChild("PlayerTitleUpdate", 15)
+
+-- ── Title colours by tier ─────────────────────────────────────
+local TIER_COLOR = {
+    cheap    = Color3.fromRGB(245, 242, 255),   -- white
+    mid      = Color3.fromRGB( 55, 195, 200),   -- teal
+    premium  = Color3.fromRGB(150,  80, 220),   -- purple
+    prestige = Color3.fromRGB(239, 159,  39),   -- gold
+    ultra    = Color3.fromRGB(255, 200,  50),   -- bright gold
+}
+
+-- ── Active title data per player ──────────────────────────────
+-- [player] = { itemId, name, tier }
+local titleData = {}
+
+-- ── BillboardGui templates ────────────────────────────────────
+local function makeBillboard(character)
+    local head = character:WaitForChild("Head", 5)
+    if not head then return end
+
+    -- Remove any existing one
+    local old = head:FindFirstChild("TitleGui")
+    if old then old:Destroy() end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name              = "TitleGui"
+    bb.Size              = UDim2.new(0, 200, 0, 28)
+    bb.StudsOffset       = Vector3.new(0, 2.4, 0)
+    bb.AlwaysOnTop       = false
+    bb.MaxDistance       = 80
+    bb.ResetOnSpawn      = false
+    bb.Enabled           = false   -- hidden until a title is set
+    bb.Parent            = head
+
+    local lbl = Instance.new("TextLabel", bb)
+    lbl.Name                 = "TitleLabel"
+    lbl.Size                 = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font                 = Enum.Font.GothamBlack
+    lbl.TextSize             = 14
+    lbl.TextColor3           = Color3.fromRGB(245, 242, 255)
+    lbl.TextXAlignment       = Enum.TextXAlignment.Center
+    lbl.TextYAlignment       = Enum.TextYAlignment.Center
+    lbl.TextStrokeTransparency = 0.5
+    lbl.TextStrokeColor3     = Color3.fromRGB(0, 0, 0)
+    lbl.Text                 = ""
+
+    return bb
+end
+
+local function getBillboard(char)
+    local head = char:FindFirstChild("Head")
+    if not head then return nil end
+    return head:FindFirstChild("TitleGui")
+end
+
+-- ── Apply title to a character ────────────────────────────────
+local function applyTitle(targetPlayer, itemId, titleName, tier)
+    local char = targetPlayer.Character
+    if not char then return end
+
+    local bb = getBillboard(char) or makeBillboard(char)
+    if not bb then return end
+
+    local lbl = bb:FindFirstChild("TitleLabel")
+    if not lbl then return end
+
+    if not itemId or not titleName then
+        -- No title — hide the billboard
+        bb.Enabled = false
+        lbl.Text   = ""
+        return
+    end
+
+    local col = TIER_COLOR[tier] or TIER_COLOR.cheap
+    lbl.Text        = titleName
+    lbl.TextColor3  = col
+    bb.Enabled      = true
+
+    -- Prestige+ get a faint drop shadow via stroke
+    lbl.TextStrokeTransparency = (tier == "prestige" or tier == "ultra") and 0.3 or 0.6
+
+    titleData[targetPlayer] = { itemId=itemId, name=titleName, tier=tier }
+end
+
+-- ── Set up billboard for every character that spawns ──────────
+local function onCharacterAdded(char, targetPlayer)
+    task.wait(0.5)   -- let character fully load
+    makeBillboard(char)
+
+    -- Re-apply existing title data if we have it
+    local td = titleData[targetPlayer]
+    if td then
+        applyTitle(targetPlayer, td.itemId, td.name, td.tier)
+    end
+end
+
+-- Hook all current and future players
+local function hookPlayer(p)
+    if p.Character then
+        task.spawn(onCharacterAdded, p.Character, p)
+    end
+    p.CharacterAdded:Connect(function(char)
+        onCharacterAdded(char, p)
+    end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
+Players.PlayerAdded:Connect(hookPlayer)
+
+Players.PlayerRemoving:Connect(function(p)
+    titleData[p] = nil
+end)
+
+-- ── Remote listener ───────────────────────────────────────────
+-- Server fires: PlayerTitleUpdate(targetPlayer, itemId, titleName, tier)
+-- itemId = nil means unequip
+if PlayerTitleUpdateR then
+    PlayerTitleUpdateR.OnClientEvent:Connect(function(targetPlayer, itemId, titleName, tier)
+        if not targetPlayer then return end
+        applyTitle(targetPlayer, itemId, titleName, tier)
+    end)
+end
+
+-- ── Animated shimmer for prestige/ultra titles ────────────────
+-- Pulses between gold and bright yellow for prestige-tier titles
+RunService.Heartbeat:Connect(function()
+    for p, td in pairs(titleData) do
+        if td.tier == "prestige" or td.tier == "ultra" then
+            local char = p.Character
+            if char then
+                local head = char:FindFirstChild("Head")
+                local bb   = head and head:FindFirstChild("TitleGui")
+                local lbl  = bb and bb:FindFirstChild("TitleLabel")
+                if lbl then
+                    local pulse = math.abs(math.sin(tick() * 1.8))
+                    lbl.TextColor3 = TIER_COLOR.prestige:Lerp(
+                        Color3.fromRGB(255, 230, 100), pulse * 0.4)
+                end
+            end
+        end
+    end
+end)
