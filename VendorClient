@@ -1,0 +1,376 @@
+-- ============================================================
+-- VendorClient — LocalScript · StarterPlayerScripts
+--
+-- Renders the vendor shop UI when the server fires OpenVendor.
+-- Matches StoreGuide visual language: dark panels, GothamBlack
+-- titles, gold accents, centred layout.
+--
+-- Tabs: All · Titles · Cosmetics
+-- Each item row: name + desc + cost + Buy / Equip / Owned button
+-- ============================================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local Remotes   = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+local DataR     = ReplicatedStorage:WaitForChild("ChompersRemotes", 10)
+    -- ChompersData is not available client-side as a module, but the
+    -- server sends vendor data via the OpenVendor remote payload.
+
+local function R(n) return Remotes:WaitForChild(n, 10) end
+local OpenVendorR     = R("OpenVendor")
+local PurchaseItemR   = R("PurchaseItem")
+local PurchaseResultR = R("PurchaseResult")
+local EquipItemR      = R("EquipItem")
+local UpdateMedalsR   = R("UpdatePlayerMedals")
+local UpdateOwnedR    = R("UpdatePlayerOwned")
+
+-- ── Local state ───────────────────────────────────────────────
+local myMedals   = 0
+local ownedItems = {}   -- set-style: ownedItems[id] = true
+local equipped   = {}   -- equipped[category] = itemId
+local activeTab  = "All"
+local currentVendorData = nil   -- cached vendor table sent from server
+
+-- ── Palette ───────────────────────────────────────────────────
+local C = {
+    bg      = Color3.fromRGB(14, 12, 26),
+    panel   = Color3.fromRGB(20, 18, 34),
+    dark    = Color3.fromRGB(10,  8, 20),
+    stroke  = Color3.fromRGB(48, 44, 70),
+    white   = Color3.fromRGB(245,242,255),
+    dim     = Color3.fromRGB(105,100,138),
+    gold    = Color3.fromRGB(239,159, 39),
+    green   = Color3.fromRGB( 70,195, 85),
+    red     = Color3.fromRGB(218, 65, 65),
+    blue    = Color3.fromRGB( 65,135,235),
+}
+
+local TIER_COLOR = {
+    cheap   = Color3.fromRGB( 80, 78,100),
+    mid     = Color3.fromRGB( 50,140, 60),
+    premium = Color3.fromRGB( 50,100,200),
+    prestige= Color3.fromRGB(150, 80,220),
+    ultra   = Color3.fromRGB(200,140, 30),
+}
+
+-- ── Helpers ───────────────────────────────────────────────────
+local function corner(p,r) Instance.new("UICorner",p).CornerRadius=UDim.new(0,r or 12) end
+local function mkStroke(p,t,c)
+    local s=Instance.new("UIStroke",p); s.Thickness=t or 1.5; s.Color=c or C.stroke; return s
+end
+local function lbl(p,text,font,size,col,xA,pos,sz)
+    local l=Instance.new("TextLabel",p); l.BackgroundTransparency=1
+    l.Text=text or ""; l.Font=font or Enum.Font.GothamBold
+    l.TextSize=size or 14; l.TextColor3=col or C.white
+    l.TextXAlignment=xA or Enum.TextXAlignment.Center
+    l.TextYAlignment=Enum.TextYAlignment.Center
+    l.TextWrapped=true
+    l.Position=pos or UDim2.new(0,0,0,0)
+    l.Size=sz or UDim2.new(1,0,1,0)
+    return l
+end
+
+-- ── ScreenGui ─────────────────────────────────────────────────
+local Gui = Instance.new("ScreenGui")
+Gui.Name="VendorUI"; Gui.ResetOnSpawn=false; Gui.IgnoreGuiInset=true
+Gui.DisplayOrder=18; Gui.Enabled=false; Gui.Parent=playerGui
+
+-- Dim backdrop
+local Dim = Instance.new("TextButton", Gui)
+Dim.Size=UDim2.new(1,0,1,0); Dim.BackgroundColor3=Color3.fromRGB(4,2,14)
+Dim.BackgroundTransparency=0.45; Dim.BorderSizePixel=0; Dim.ZIndex=10; Dim.Text=""
+
+-- ── Main panel ────────────────────────────────────────────────
+local Panel = Instance.new("Frame", Gui)
+Panel.Size=UDim2.new(0,580,0,520); Panel.AnchorPoint=Vector2.new(0.5,0.5)
+Panel.Position=UDim2.new(0.5,0,0.5,0)
+Panel.BackgroundColor3=C.bg; Panel.BorderSizePixel=0; Panel.ZIndex=11
+corner(Panel,18)
+local PanelStroke = mkStroke(Panel,2.5,C.gold)
+
+-- ── Header ────────────────────────────────────────────────────
+local Header = Instance.new("Frame",Panel)
+Header.Size=UDim2.new(1,0,0,72); Header.BackgroundColor3=C.dark
+Header.BorderSizePixel=0; Header.ZIndex=12; corner(Header,18)
+-- Square off bottom
+local HdrBot=Instance.new("Frame",Header)
+HdrBot.Size=UDim2.new(1,0,0.5,0); HdrBot.Position=UDim2.new(0,0,0.5,0)
+HdrBot.BackgroundColor3=C.dark; HdrBot.BorderSizePixel=0; HdrBot.ZIndex=12
+
+local VendorEmoji = lbl(Header,"🍳",Enum.Font.GothamBlack,36,C.white,
+    Enum.TextXAlignment.Center,UDim2.new(0,0,0,0),UDim2.new(0,62,1,0))
+VendorEmoji.ZIndex=13
+
+local VendorName  = lbl(Header,"Vendor",Enum.Font.GothamBlack,24,C.gold,
+    Enum.TextXAlignment.Left,UDim2.new(0,66,0,8),UDim2.new(0.6,0,0,28))
+VendorName.ZIndex=13
+
+local VendorTagline = lbl(Header,"",Enum.Font.GothamBold,14,C.dim,
+    Enum.TextXAlignment.Left,UDim2.new(0,66,0,36),UDim2.new(0.6,0,0,20))
+VendorTagline.ZIndex=13
+
+-- Medal count top-right
+local MedalBadge=Instance.new("Frame",Header)
+MedalBadge.Size=UDim2.new(0,130,0,36); MedalBadge.AnchorPoint=Vector2.new(1,0.5)
+MedalBadge.Position=UDim2.new(1,-12,0.5,0)
+MedalBadge.BackgroundColor3=Color3.fromRGB(22,18,36); MedalBadge.BorderSizePixel=0
+MedalBadge.ZIndex=13; corner(MedalBadge,10); mkStroke(MedalBadge,1.5,C.gold)
+local MedalLbl=lbl(MedalBadge,"🏅 0",Enum.Font.GothamBlack,18,C.gold)
+MedalLbl.ZIndex=14
+
+-- Close button
+local CloseBtn=Instance.new("TextButton",Panel)
+CloseBtn.Size=UDim2.new(0,36,0,36); CloseBtn.AnchorPoint=Vector2.new(1,0)
+CloseBtn.Position=UDim2.new(1,-8,0,8)
+CloseBtn.BackgroundColor3=Color3.fromRGB(36,20,20); CloseBtn.BorderSizePixel=0
+CloseBtn.Font=Enum.Font.GothamBlack; CloseBtn.TextSize=20
+CloseBtn.TextColor3=C.red; CloseBtn.Text="✕"; CloseBtn.ZIndex=20; corner(CloseBtn,8)
+
+-- ── Tab bar ───────────────────────────────────────────────────
+local TabBar=Instance.new("Frame",Panel)
+TabBar.Size=UDim2.new(1,-24,0,36); TabBar.Position=UDim2.new(0,12,0,78)
+TabBar.BackgroundTransparency=1; TabBar.ZIndex=12
+
+local TabLayout=Instance.new("UIListLayout",TabBar)
+TabLayout.FillDirection=Enum.FillDirection.Horizontal
+TabLayout.HorizontalAlignment=Enum.HorizontalAlignment.Left
+TabLayout.Padding=UDim.new(0,6)
+
+local TABS={"All","Titles","Cosmetics"}
+local tabBtns={}
+
+-- ── Item scroll ───────────────────────────────────────────────
+local Scroll=Instance.new("ScrollingFrame",Panel)
+Scroll.Size=UDim2.new(1,-24,1,-132); Scroll.Position=UDim2.new(0,12,0,120)
+Scroll.BackgroundTransparency=1; Scroll.BorderSizePixel=0
+Scroll.ScrollBarThickness=6; Scroll.ScrollBarImageColor3=C.gold
+Scroll.CanvasSize=UDim2.new(1,0,0,0); Scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+Scroll.ZIndex=12
+local ScrollLayout=Instance.new("UIListLayout",Scroll)
+ScrollLayout.SortOrder=Enum.SortOrder.LayoutOrder; ScrollLayout.Padding=UDim.new(0,6)
+local ScrollPad=Instance.new("UIPadding",Scroll)
+ScrollPad.PaddingBottom=UDim.new(0,8)
+
+-- ── Feedback toast (brief line near top of panel) ─────────────
+local ToastLbl=lbl(Panel,"",Enum.Font.GothamBold,14,C.green,
+    Enum.TextXAlignment.Center,UDim2.new(0,12,0,83),UDim2.new(1,-24,0,18))
+ToastLbl.ZIndex=19; ToastLbl.TextTransparency=1
+local toastThread=nil
+local function showToast(msg,col)
+    ToastLbl.Text=msg; ToastLbl.TextColor3=col or C.green; ToastLbl.TextTransparency=0
+    if toastThread then task.cancel(toastThread) end
+    toastThread=task.delay(2.0,function()
+        for i=1,10 do task.wait(0.05); ToastLbl.TextTransparency=i/10 end
+        toastThread=nil
+    end)
+end
+
+-- ── Build item row ────────────────────────────────────────────
+local pendingPurchase = nil
+
+local function buildItemRow(item, order, accentColor)
+    local isOwned    = ownedItems[item.id] == true
+    local isEquipped = equipped[item.category] == item.id
+    local tierCol    = TIER_COLOR[item.tier] or C.stroke
+
+    local row=Instance.new("Frame",Scroll)
+    row.Name="Row_"..item.id; row.LayoutOrder=order
+    row.Size=UDim2.new(1,0,0,72)
+    row.BackgroundColor3=isOwned and Color3.fromRGB(14,22,16) or C.panel
+    row.BorderSizePixel=0; row.ZIndex=13; corner(row,10)
+    local rs=mkStroke(row,1.5,isOwned and C.green or tierCol)
+
+    -- Tier bar (left edge)
+    local tb=Instance.new("Frame",row)
+    tb.Size=UDim2.new(0,4,1,-12); tb.Position=UDim2.new(0,4,0,6)
+    tb.BackgroundColor3=tierCol; tb.BorderSizePixel=0; tb.ZIndex=14; corner(tb,2)
+
+    -- Item name
+    local nameL=lbl(row,item.name,Enum.Font.GothamBlack,18,C.white,
+        Enum.TextXAlignment.Left,UDim2.new(0,16,0,8),UDim2.new(0.62,-18,0,24))
+    nameL.ZIndex=14; nameL.TextTruncate=Enum.TextTruncate.AtEnd
+
+    -- Description
+    lbl(row,item.desc,Enum.Font.GothamBold,13,C.dim,
+        Enum.TextXAlignment.Left,UDim2.new(0,16,0,34),UDim2.new(0.62,-18,0,30)).ZIndex=14
+
+    -- Cost badge
+    local costBadge=Instance.new("Frame",row)
+    costBadge.Size=UDim2.new(0,90,0,28); costBadge.AnchorPoint=Vector2.new(1,0.5)
+    costBadge.Position=UDim2.new(1,-112,0.5,0)
+    costBadge.BackgroundColor3=Color3.fromRGB(22,18,36); costBadge.BorderSizePixel=0
+    costBadge.ZIndex=14; corner(costBadge,8)
+    mkStroke(costBadge,1.5,isOwned and C.green or C.gold)
+    lbl(costBadge,"🏅 "..item.cost,Enum.Font.GothamBlack,15,
+        isOwned and C.green or C.gold).ZIndex=15
+
+    -- Action button
+    local btnText  = isOwned and (isEquipped and "✓ Equipped" or "Equip") or "Buy"
+    local btnColor = isOwned and (isEquipped and C.dim or C.green) or C.gold
+    local btnBg    = isOwned and Color3.fromRGB(14,26,16) or Color3.fromRGB(28,22,8)
+
+    local btn=Instance.new("TextButton",row)
+    btn.Size=UDim2.new(0,88,0,36); btn.AnchorPoint=Vector2.new(1,0.5)
+    btn.Position=UDim2.new(1,-10,0.5,0)
+    btn.BackgroundColor3=btnBg; btn.BorderSizePixel=0; btn.AutoButtonColor=false
+    btn.Font=Enum.Font.GothamBlack; btn.TextSize=15; btn.TextColor3=btnColor
+    btn.Text=btnText; btn.ZIndex=15; corner(btn,8)
+    mkStroke(btn,1.5,btnColor)
+
+    btn.MouseButton1Click:Connect(function()
+        if isOwned then
+            -- Equip
+            if isEquipped then return end
+            EquipItemR:FireServer(item.id, item.category)
+        else
+            -- Buy
+            if myMedals < item.cost then
+                showToast("❌  Need "..item.cost.." medals — you have "..myMedals, C.red)
+                return
+            end
+            if pendingPurchase then return end
+            pendingPurchase = item.id
+            btn.Text="…"; btn.TextColor3=C.dim
+            PurchaseItemR:FireServer(item.id)
+        end
+    end)
+
+    return row
+end
+
+-- ── Build full item list ──────────────────────────────────────
+local function buildList(vendorData, tab)
+    for _,c in ipairs(Scroll:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    if not vendorData then return end
+
+    local accent=Color3.new(
+        vendorData.accentHex[1]/255,
+        vendorData.accentHex[2]/255,
+        vendorData.accentHex[3]/255)
+
+    local order=0
+    for _, item in ipairs(vendorData.items) do
+        local cat = item.category
+        local isTitleCat = cat=="title" or cat=="title_animated" or cat=="title_prestige"
+        local show = (tab=="All")
+            or (tab=="Titles" and isTitleCat)
+            or (tab=="Cosmetics" and not isTitleCat)
+        if show then
+            order=order+1
+            buildItemRow(item, order, accent)
+        end
+    end
+
+    if order==0 then
+        lbl(Scroll,"Nothing here yet.",Enum.Font.GothamBold,15,C.dim,
+            Enum.TextXAlignment.Center,UDim2.new(0,0,0,20),UDim2.new(1,0,0,40)).ZIndex=13
+    end
+end
+
+-- ── Build tab buttons ─────────────────────────────────────────
+local accentColorForTabs = C.gold
+local function rebuildTabs()
+    for _, b in ipairs(TabBar:GetChildren()) do
+        if b:IsA("TextButton") then b:Destroy() end
+    end
+    tabBtns={}
+    for i, tabName in ipairs(TABS) do
+        local isActive = tabName==activeTab
+        local tb=Instance.new("TextButton",TabBar)
+        tb.Size=UDim2.new(0,110,1,0); tb.LayoutOrder=i
+        tb.BackgroundColor3=isActive and accentColorForTabs or C.panel
+        tb.BackgroundTransparency=isActive and 0 or 0.2
+        tb.BorderSizePixel=0; tb.AutoButtonColor=false
+        tb.Font=Enum.Font.GothamBlack; tb.TextSize=14
+        tb.TextColor3=isActive and Color3.fromRGB(14,12,24) or C.dim
+        tb.Text=tabName; tb.ZIndex=13; corner(tb,8)
+
+        tb.MouseButton1Click:Connect(function()
+            activeTab=tabName
+            rebuildTabs()
+            buildList(currentVendorData, activeTab)
+        end)
+        tabBtns[tabName]=tb
+    end
+end
+
+-- ── Open / Close ──────────────────────────────────────────────
+local function openVendor(vendorData)
+    currentVendorData = vendorData
+    activeTab = "All"
+
+    local accent=Color3.new(
+        vendorData.accentHex[1]/255,
+        vendorData.accentHex[2]/255,
+        vendorData.accentHex[3]/255)
+    accentColorForTabs = accent
+    PanelStroke.Color  = accent
+
+    VendorEmoji.Text    = vendorData.emoji
+    VendorName.Text     = vendorData.name
+    VendorTagline.Text  = vendorData.tagline
+    MedalLbl.Text       = "🏅 "..myMedals
+
+    rebuildTabs()
+    buildList(vendorData, "All")
+
+    Gui.Enabled=true
+    Panel.Size=UDim2.new(0,540,0,520)
+    TweenService:Create(Panel,TweenInfo.new(0.35,Enum.EasingStyle.Back,Enum.EasingDirection.Out),
+        {Size=UDim2.new(0,580,0,520)}):Play()
+end
+
+local function closeVendor()
+    TweenService:Create(Panel,TweenInfo.new(0.2,Enum.EasingStyle.Quad,Enum.EasingDirection.In),
+        {Size=UDim2.new(0,540,0,480)}):Play()
+    task.delay(0.22, function() Gui.Enabled=false end)
+end
+
+CloseBtn.MouseButton1Click:Connect(closeVendor)
+Dim.MouseButton1Click:Connect(closeVendor)
+
+-- ── Remote listeners ──────────────────────────────────────────
+
+-- Server sends vendor data when player walks up and presses E
+OpenVendorR.OnClientEvent:Connect(function(vendorData)
+    if not vendorData then return end
+    openVendor(vendorData)
+end)
+
+-- Purchase result
+PurchaseResultR.OnClientEvent:Connect(function(success, message, itemId)
+    pendingPurchase = nil
+    if success then
+        ownedItems[itemId]=true
+        showToast("✅  "..message, C.green)
+        buildList(currentVendorData, activeTab)   -- refresh rows
+    else
+        showToast("❌  "..message, C.red)
+    end
+end)
+
+-- Medal updates
+UpdateMedalsR.OnClientEvent:Connect(function(amount)
+    myMedals = amount or 0
+    if Gui.Enabled then
+        MedalLbl.Text="🏅 "..myMedals
+    end
+end)
+
+-- Owned/equipped updates
+UpdateOwnedR.OnClientEvent:Connect(function(owned, equippedData)
+    ownedItems={}
+    for _, id in ipairs(owned or {}) do ownedItems[id]=true end
+    equipped = equippedData or {}
+    if Gui.Enabled then
+        buildList(currentVendorData, activeTab)
+    end
+end)
+
+print("[VendorClient] Ready")
