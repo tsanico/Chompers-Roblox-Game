@@ -31,6 +31,19 @@ local C = ChompersData.Constants
 -- ── Per-player throw cooldown ─────────────────────────────────
 local lastThrowTime = {}   -- [player] = tick()
 
+-- Kill feed remote (fires to all clients with event data)
+local KillFeedEvent = Remotes:FindFirstChild("KillFeedEvent")
+if not KillFeedEvent then
+    KillFeedEvent = Instance.new("RemoteEvent")
+    KillFeedEvent.Name = "KillFeedEvent"
+    KillFeedEvent.Parent = Remotes
+end
+
+-- Kill feed helper — event types: "meltdown", "elimination", "legendary_thrown", "big_hit"
+local function killFeed(eventType, data)
+    KillFeedEvent:FireAllClients(eventType, data)
+end
+
 -- ── Ingredient lookup by name ─────────────────────────────────
 local ingByName = {}
 for _, ing in ipairs(ChompersData.Ingredients) do
@@ -216,20 +229,37 @@ local function applyDamage(attacker, target, itemData, itemName)
 		_G.InspectCheckHitReveal(attacker, target, itemName, itemAllergy)
 	end
 
-	-- 9. Elimination
+	-- 9. Elimination check — fires kill feed on meltdown AND elimination
 	local tState2 = PlayerState.Get(target)
-	if tState2 and tState2.cl >= 100 then
+	local triggered100 = tState2 and tState2.cl >= 100
+
+	if triggered100 then
+		-- 100% CL meltdown from this hit
+		killFeed("meltdown", {
+			attacker = attacker.Name,
+			victim   = target.Name,
+			item     = itemName,
+			cl       = math.floor(finalCL),
+		})
+
 		PlayerState.EliminatePlayer(target, attacker)
 		PlayerState.AddPoints(attacker, C.Points.DownEnemy)
-	end
 
-	-- 10. Big-hit announcement
-	local Announce = Remotes:FindFirstChild("Announce")
-	if Announce and finalCL >= 60 then
-		local atkName = attacker.DisplayName or attacker.Name
-		local defName = target.DisplayName or target.Name
-		Announce:FireAllClients("💣 "..atkName.." threw "..itemName.." at "..defName.."!",
-			Color3.fromRGB(220,160,30), 5)
+		-- Check if 0 potty breaks → full elimination
+		local tState3 = PlayerState.Get(target)
+		if tState3 and tState3.pottyBreaks <= 0 then
+			killFeed("elimination", { victim = target.Name })
+		end
+	elseif finalCL >= 25 then
+		-- Notable hit (not a meltdown) — goes to kill feed if item is legendary
+		if (itemData.rarity == "Legendary") then
+			killFeed("legendary_thrown", {
+				attacker = attacker.Name,
+				victim   = target.Name,
+				item     = itemName,
+				cl       = math.floor(finalCL),
+			})
+		end
 	end
 end
 
