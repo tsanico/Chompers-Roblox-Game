@@ -117,6 +117,17 @@ local function onIngredientPickup(part, player)
 	-- Destroy the world part — respawn is handled by IngredientSpawner
 	part:Destroy()
 
+	-- Golden Cart legendary pickup → kill feed (found, not cooked — team buff)
+	if itemData.rarity == "Legendary" and itemData.name == "Golden Cart" then
+		local KillFeedEvent = Remotes:FindFirstChild("KillFeedEvent")
+		if KillFeedEvent then
+			KillFeedEvent:FireAllClients("golden_cart_found", {
+				finder = player.Name,
+				item   = itemData.name,
+			})
+		end
+	end
+
 	print(string.format("[Pickup] %s picked up %s (wt=%d, $%d)",
 		player.Name, itemData.name, itemData.wt, itemData.cost))
 end
