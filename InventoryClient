@@ -82,7 +82,8 @@ local RARITY_ORDER = {
 }
 
 -- ── State ─────────────────────────────────────────────────────
-local localInventory = {}   -- raw from server
+local localInventory = {}   -- hotbar slots 1-10, raw from server
+local localOverflow  = {}   -- overflow storage, raw from server
 local selectedSlot   = 1
 local selectedItem   = nil  -- item shown in detail panel
 local currentWeight  = 0
@@ -155,7 +156,8 @@ local function syncHotbar()
 			weight     = item.wt         or item.weight or 0,
 		})
 	end
-	if ch.SetItemCount then ch.SetItemCount(#localInventory) end
+	if ch.SetItemCount    then ch.SetItemCount(#localInventory) end
+	if ch.SetOverflowCount then ch.SetOverflowCount(#localOverflow) end
 end
 
 -- ============================================================
@@ -483,7 +485,7 @@ local function buildLeftList()
 		end
 	end
 
-	if #localInventory == 0 then
+	if #localInventory == 0 and #localOverflow == 0 then
 		local icon = containerType == "Cart" and "🛒" or "🧺"
 		local el = Instance.new("TextLabel", LeftScroll)
 		el.Size=UDim2.new(1,0,0,80); el.LayoutOrder=0
@@ -634,6 +636,103 @@ local function buildLeftList()
 		makeSectionHeader("✅  PAID  ("..#paid..")", C.green)
 		for _, entry in ipairs(paid) do makeRow(entry) end
 	end
+
+	-- ── STORAGE SECTION (overflow — items beyond hotbar slots 1-10) ──
+	if #localOverflow > 0 then
+		layoutOrder = layoutOrder + 1
+		-- Divider
+		local div = Instance.new("Frame", LeftScroll)
+		div.Size=UDim2.new(1,0,0,1); div.BackgroundColor3=Color3.fromRGB(50,46,80)
+		div.BorderSizePixel=0; div.LayoutOrder=layoutOrder; div.ZIndex=13
+
+		makeSectionHeader(
+			"📦  STORAGE  ("..#localOverflow.." item"..(#localOverflow==1 and "" or "s")
+			..")  —  Press [Move →] to add to hotbar",
+			Color3.fromRGB(100, 160, 255))
+
+		local MoveToHotbarR  = Remotes:FindFirstChild("MoveToHotbar")
+		local DropOverflowR  = Remotes:FindFirstChild("DropOverflowItem")
+
+		for oi, item in ipairs(localOverflow) do
+			layoutOrder = layoutOrder + 1
+			local rarity    = normalRarity(item.rarity or "Common")
+			local strokeCol = RARITY_STROKE[rarity] or C.stroke
+			local isPaid    = item.paid == true
+
+			local row = Instance.new("Frame", LeftScroll)
+			row.Size             = UDim2.new(1,0,0,52)
+			row.BackgroundColor3 = Color3.fromRGB(16, 20, 36)
+			row.BorderSizePixel  = 0
+			row.LayoutOrder      = layoutOrder
+			row.ZIndex           = 13
+			corner(row, 8)
+			mkStroke(row, 1.5, Color3.fromRGB(40,60,120))
+
+			-- Paid bar
+			local bar = Instance.new("Frame", row)
+			bar.Size = UDim2.new(0,3,1,-8); bar.Position = UDim2.new(0,2,0,4)
+			bar.BackgroundColor3 = isPaid and C.green or C.red
+			bar.BorderSizePixel = 0; bar.ZIndex = 14; corner(bar, 2)
+
+			-- Storage icon
+			local sIcon = Instance.new("TextLabel", row)
+			sIcon.Size=UDim2.new(0,36,1,0); sIcon.Position=UDim2.new(0,8,0,0)
+			sIcon.BackgroundTransparency=1; sIcon.Text=item.emoji or "🍽"
+			sIcon.Font=Enum.Font.GothamBold; sIcon.TextSize=22
+			sIcon.ZIndex=14
+
+			-- Name
+			local nameL = mkLabel(row, item.name or "?",
+				Enum.Font.GothamBold, 13, C.white, Enum.TextXAlignment.Left,
+				UDim2.new(0,48,0,4), UDim2.new(0.55,-52,0,20))
+			nameL.ZIndex=14; nameL.TextTruncate=Enum.TextTruncate.AtEnd
+
+			-- Status sub-label
+			local sub = isPaid and ("✓ Paid · ⚖"..tostring(item.wt or 0))
+				or ("Unpaid $"..(item.cost or 0).." · ⚖"..tostring(item.wt or 0))
+			local subCol = isPaid and Color3.fromRGB(70,195,85) or C.red
+			mkLabel(row, sub, Enum.Font.Gotham, 10, subCol,
+				Enum.TextXAlignment.Left,
+				UDim2.new(0,48,0,28), UDim2.new(0.55,-52,0,14)).ZIndex=14
+
+			-- Move to Hotbar button
+			local hotbarFull = #localInventory >= 10
+			local moveBtn = Instance.new("TextButton", row)
+			moveBtn.Size=UDim2.new(0,72,0,24)
+			moveBtn.Position=UDim2.new(0.55,2,0.5,-12)
+			moveBtn.BackgroundColor3 = hotbarFull
+				and Color3.fromRGB(30,28,44)
+				or  Color3.fromRGB(30,60,100)
+			moveBtn.BorderSizePixel=0; moveBtn.AutoButtonColor=false
+			moveBtn.Text="Move →"; moveBtn.Font=Enum.Font.GothamBold
+			moveBtn.TextSize=12
+			moveBtn.TextColor3 = hotbarFull and C.dim or Color3.fromRGB(150,200,255)
+			moveBtn.ZIndex=15; corner(moveBtn, 5)
+			moveBtn.MouseButton1Click:Connect(function()
+				if #localInventory >= 10 then
+					if _G.Chompers and _G.Chompers.Announce then
+						_G.Chompers.Announce("🎒  Hotbar full — drop a slot first.",
+							Color3.fromRGB(200,140,50), 2)
+					end
+					return
+				end
+				if MoveToHotbarR then MoveToHotbarR:FireServer(oi) end
+			end)
+
+			-- Drop button
+			local dropBtn = Instance.new("TextButton", row)
+			dropBtn.Size=UDim2.new(0,42,0,24)
+			dropBtn.Position=UDim2.new(1,-46,0.5,-12)
+			dropBtn.BackgroundColor3=Color3.fromRGB(50,15,15)
+			dropBtn.BorderSizePixel=0; dropBtn.AutoButtonColor=false
+			dropBtn.Text="Drop"; dropBtn.Font=Enum.Font.GothamBold
+			dropBtn.TextSize=12; dropBtn.TextColor3=C.red
+			dropBtn.ZIndex=15; corner(dropBtn, 5)
+			dropBtn.MouseButton1Click:Connect(function()
+				if DropOverflowR then DropOverflowR:FireServer(oi) end
+			end)
+		end
+	end
 end
 
 -- ============================================================
@@ -641,10 +740,24 @@ end
 -- ============================================================
 
 function rebuildPanel()
-	local icon = containerType=="Cart" and "🛒" or "🧺"
-	HeaderTitle.Text  = icon.."  "..containerType.." Inventory"
+	local icon    = containerType=="Cart" and "🛒" or "🧺"
+	local hotbarN = #localInventory
+	local overN   = #localOverflow
+	HeaderTitle.Text  = icon.."  "..containerType
+		.. "  ("..hotbarN.."/10 hotbar"
+		.. (overN > 0 and " · 📦 "..overN.." stored" or "")
+		.. ")"
 	WeightHeader.Text = tostring(currentWeight).." / "..tostring(maxWeight).." wt"
 	buildLeftList()
+end
+
+-- Expose combined inventory for external scripts (TradeHubClient, etc.)
+_G.Chompers = _G.Chompers or {}
+_G.Chompers.GetInventory = function()
+	local combined = {}
+	for _, item in ipairs(localInventory) do table.insert(combined, item) end
+	for _, item in ipairs(localOverflow)  do table.insert(combined, item) end
+	return combined
 end
 
 local function openPanel()
@@ -721,6 +834,30 @@ if UpdateInventoryRemote then
 	UpdateInventoryRemote.OnClientEvent:Connect(function(inventory)
 		localInventory = inventory or {}
 		syncHotbar()
+		if panelOpen then rebuildPanel() end
+	end)
+end
+
+-- UpdateOverflow: server sends overflow storage contents
+local UpdateOverflowRemote = Remotes:FindFirstChild("UpdateOverflow")
+if not UpdateOverflowRemote then
+	-- Wait briefly in case server creates it a moment after boot
+	task.delay(3, function()
+		UpdateOverflowRemote = Remotes:FindFirstChild("UpdateOverflow")
+		if UpdateOverflowRemote then
+			UpdateOverflowRemote.OnClientEvent:Connect(function(overflow)
+				localOverflow = overflow or {}
+				local ch = _G.Chompers
+				if ch and ch.SetOverflowCount then ch.SetOverflowCount(#localOverflow) end
+				if panelOpen then rebuildPanel() end
+			end)
+		end
+	end)
+else
+	UpdateOverflowRemote.OnClientEvent:Connect(function(overflow)
+		localOverflow = overflow or {}
+		local ch = _G.Chompers
+		if ch and ch.SetOverflowCount then ch.SetOverflowCount(#localOverflow) end
 		if panelOpen then rebuildPanel() end
 	end)
 end
