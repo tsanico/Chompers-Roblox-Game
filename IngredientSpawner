@@ -1,45 +1,42 @@
 -- ============================================================
--- IngredientSpawner — ModuleScript
+-- IngredientSpawner v9 — ModuleScript
 -- Location: ServerScriptService > IngredientSpawner
 --
--- Spawns all ingredients and outdoor loot at Gathering start.
--- Handles respawning on rarity timer.
--- All ingredient data sourced from ChompersData — no local tables.
--- All prop names verified against map audit (March 2026).
---
--- REQUIRES: ReplicatedStorage > ChompersData
---           ServerScriptService > PhaseChangedEvent (BindableEvent)
+-- v9 fixes:
+--   • spawnXmin/spawnXmax added — items spawn in front 5 studs
+--     of each shelf face (customer-facing edge), not buried in
+--     the middle of a 19-stud deep gondola
+--   • spawnZmin/spawnZmax per pad — avoids endcap fixture zone
+--     (last 18 studs at each Z end), items cover main shelf only
+--   • getSurfacePoints: proportional inset (5% per side, min 0.3)
+--     so narrow X ranges work correctly
+--   • Pad1: maxItems=8 (bottom shelf, most items, easy reach)
+--     Pad2: maxItems=4 (mid shelf, fewer, reward for jumping)
+--     Pad3: not listed (top shelf, none)
 -- ============================================================
 
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 
-local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
-local C             = ChompersData.Constants
+local ChompersData = require(ReplicatedStorage:WaitForChild("ChompersData"))
+local C            = ChompersData.Constants
 
 local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
 if not PhaseChangedEvent then
-	PhaseChangedEvent = Instance.new("BindableEvent")
+	PhaseChangedEvent        = Instance.new("BindableEvent")
 	PhaseChangedEvent.Name   = "PhaseChangedEvent"
 	PhaseChangedEvent.Parent = ServerScriptService
 end
 
--- ============================================================
--- CONFIG
--- ============================================================
-
 local LIVE_FOLDER_NAME = "Ingredients_Live"
 
--- Rarity → spawn weight (higher = more common on surfaces)
 local RARITY_WEIGHTS = {
-	Common    = 60,
-	Uncommon  = 25,
-	Rare      = 10,
+	Common    = 55,
+	Uncommon  = 30,
+	Rare      = 15,
 	UltraRare = 4,
-	Legendary = 1,
+	Legendary = 0,
 }
-
--- Rarity display colours
 local RARITY_COLORS = {
 	Common    = Color3.fromRGB(172, 170, 192),
 	Uncommon  = Color3.fromRGB(85,  185, 95),
@@ -47,195 +44,215 @@ local RARITY_COLORS = {
 	UltraRare = Color3.fromRGB(175, 95,  220),
 	Legendary = Color3.fromRGB(239, 159, 39),
 }
-
--- Respawn times by rarity (seconds). 0 = never respawns.
 local RESPAWN_TIMES = {
-	Common    = C.Respawn.Common,     -- 25
-	Uncommon  = C.Respawn.Uncommon,   -- 35
-	Rare      = C.Respawn.Rare,       -- 50
-	UltraRare = C.Respawn.UltraRare,  -- 90
-	Legendary = 0,                    -- never
+	Common    = C.Respawn.Common,
+	Uncommon  = C.Respawn.Uncommon,
+	Rare      = C.Respawn.Rare,
+	UltraRare = C.Respawn.UltraRare,
+	Legendary = 0,
 }
+local LEGENDARY_CHANCE = 0.008
+local legendaryState   = { caviarSpawned=false, caviarPart=nil }
 
 -- ============================================================
--- SURFACE DEFINITIONS
--- Verified against map audit (March 2026). All prop names are
--- exact matches to what exists in workspace.
+-- SURFACE DEFINITIONS — v9
 --
--- surfaceTop = part.Position.Y + part.Size.Y/2
--- ingredients spawn at surfaceTop + 1 (their centre above surface)
+-- Freezer + Aisles per-pad spawn bounds (from geometry scan):
+--
+-- spawnXmin/spawnXmax: restricts spawn to front 5 studs of shelf face
+--   Neg-X rows (1-3): customer face = inner edge (Xmax side), so spawn near Xmax
+--   Pos-X rows (4-6): customer face = inner edge (Xmin side), so spawn near Xmin
+--
+-- spawnZmin/spawnZmax: avoids endcap fixture zone at Z extremes
+--   Front pads (Z=-100 to -20): spawn from -80 to -22 (clear of endcap at -100)
+--   Back  pads (Z=0   to  80): spawn from   2 to  62 (clear of endcap at  80)
+--
+-- Resulting grid: 1×8 on Pad1 → items 7.2 studs apart along shelf ✓
+--                 1×4 on Pad2 → items 14 studs apart along shelf  ✓
 -- ============================================================
-
--- Props path: workspace > Map > Props > {subFolder} > {name}
--- Row shelves path: workspace > Map > Props > Props_Aisles > {name}
 
 local ZONE_SURFACES = {
 
-	-- ── PRODUCE (23 ingredients) ──────────────────────────
-	-- All parts in Map > Props > Props_Produce
+	-- ── PRODUCE ──────────────────────────────────────────────
 	Produce = {
-		{ folder = "Props/Props_Produce", name = "BinRow1_Veg_A",        surfaceTop = 5,  maxItems = 4 },
-		{ folder = "Props/Props_Produce", name = "BinRow2_Misting_A",     surfaceTop = 5,  maxItems = 4 },
-		{ folder = "Props/Props_Produce", name = "BinRow1_Fruit_A",       surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Produce", name = "BinRow2_Specialty_A",   surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Produce", name = "BinRow1_Fruit_B_Front", surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Produce", name = "BinRow1_Fruit_B_Back",  surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Produce", name = "ChilledCase",            surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Produce", name = "ProduceMidShelf_Front",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Produce", name = "ProduceMidShelf_Back",   surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Produce", name = "ProduceWallShelf_A",     surfaceTop = 12, maxItems = 5 },
-		{ folder = "Props/Props_Produce", name = "ProduceWallShelf_B",     surfaceTop = 12, maxItems = 6 },
+		{ folder="Props/Props_Produce", name="BinRow1_Fruit_A_VB_Floor",        surfaceTop=2.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="BinRow1_Fruit_B_Back_VB_Floor",   surfaceTop=3.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="BinRow1_Fruit_B_Front_VB_Floor",  surfaceTop=2.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="BinRow1_Veg_A_VB_Floor",          surfaceTop=2.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="BinRow2_Misting_A_VB_Floor",      surfaceTop=2.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="BinRow2_Specialty_A_VB_Floor",    surfaceTop=2.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="ChilledCase_VB_Floor",            surfaceTop=2.01, maxItems=4, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="ProduceMidShelf_Back_VB_Floor",   surfaceTop=2.01, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="ProduceMidShelf_Front_VB_Floor",  surfaceTop=2.01, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Produce", name="ProduceWallShelf_A_VB_SpawnPad1", surfaceTop=2.30, maxItems=4, yOffset=5.0 },
+		{ folder="Props/Props_Produce", name="ProduceWallShelf_A_VB_SpawnPad2", surfaceTop=7.15, maxItems=2, yOffset=5.0 },
+		{ folder="Props/Props_Produce", name="ProduceWallShelf_B_VB_SpawnPad1", surfaceTop=2.30, maxItems=6, yOffset=5.0 },
+		{ folder="Props/Props_Produce", name="ProduceWallShelf_B_VB_SpawnPad2", surfaceTop=7.15, maxItems=3, yOffset=5.0 },
 	},
 
-	-- ── BAKERY (10 ingredients) ───────────────────────────
-	-- All parts in Map > Props > Props_Bakery
+	-- ── BAKERY ───────────────────────────────────────────────
 	Bakery = {
-		{ folder = "Props/Props_Bakery", name = "BinRow1_Bread_A",     surfaceTop = 5,  maxItems = 4 },
-		{ folder = "Props/Props_Bakery", name = "BinRow2_Bread_A",     surfaceTop = 5,  maxItems = 4 },
-		{ folder = "Props/Props_Bakery", name = "BinRow1_Pastry_A",    surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Bakery", name = "BinRow2_DryGoods_A",  surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Bakery", name = "BinRow1_Cake_A_Front",surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Bakery", name = "BinRow1_Cake_A_Back", surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Bakery", name = "BreadWarmerCase",      surfaceTop = 5,  maxItems = 3 },
-		{ folder = "Props/Props_Bakery", name = "BakeryMidShelf_Front", surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Bakery", name = "BakeryMidShelf_Back",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Bakery", name = "BakeryWallShelf_A",    surfaceTop = 12, maxItems = 5 },
-		{ folder = "Props/Props_Bakery", name = "BakeryWallShelf_B",    surfaceTop = 12, maxItems = 6 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Bread_A_VB_SpawnPad1",      surfaceTop=1.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Cake_A_Back_VB_SpawnPad1",  surfaceTop=1.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Cake_A_Front_VB_SpawnPad1", surfaceTop=1.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Pastry_A_VB_SpawnPad1",     surfaceTop=1.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BinRow2_Bread_A_VB_SpawnPad1",      surfaceTop=1.75, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BinRow2_DryGoods_A_VB_SpawnPad1",   surfaceTop=1.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BreadWarmerCase_VB_SpawnPad1",      surfaceTop=1.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Bread_A_VB_SpawnPad2",      surfaceTop=6.45, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Cake_A_Back_VB_SpawnPad2",  surfaceTop=6.45, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Cake_A_Front_VB_SpawnPad2", surfaceTop=6.45, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BinRow1_Pastry_A_VB_SpawnPad2",     surfaceTop=6.45, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BinRow2_Bread_A_VB_SpawnPad2",      surfaceTop=6.50, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BinRow2_DryGoods_A_VB_SpawnPad2",   surfaceTop=6.45, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BreadWarmerCase_VB_SpawnPad2",      surfaceTop=6.45, maxItems=2, yOffset=3.5 },
+		{ folder="Props/Props_Bakery", name="BakeryMidShelf_Back_VB_SpawnPad1",  surfaceTop=2.15, maxItems=2, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BakeryMidShelf_Back_VB_SpawnPad2",  surfaceTop=6.90, maxItems=1, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BakeryMidShelf_Front_VB_SpawnPad1", surfaceTop=2.15, maxItems=2, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BakeryMidShelf_Front_VB_SpawnPad2", surfaceTop=6.90, maxItems=1, yOffset=2.5 },
+		{ folder="Props/Props_Bakery", name="BakeryWallShelf_A_VB_SpawnPad1",    surfaceTop=3.30, maxItems=4, yOffset=5.0 },
+		{ folder="Props/Props_Bakery", name="BakeryWallShelf_A_VB_SpawnPad2",    surfaceTop=8.10, maxItems=2, yOffset=5.0 },
+		{ folder="Props/Props_Bakery", name="BakeryWallShelf_B_VB_SpawnPad1",    surfaceTop=2.30, maxItems=6, yOffset=5.0 },
+		{ folder="Props/Props_Bakery", name="BakeryWallShelf_B_VB_SpawnPad2",    surfaceTop=7.10, maxItems=3, yOffset=5.0 },
 	},
 
-	-- ── DAIRY (8 ingredients) — Row1 shelves ─────────────
-	Dairy = {
-		{ folder = "Props/Props_Aisles/Freezers", name = "Row1_Front", surfaceTop = 10, maxItems = 6 },
-		{ folder = "Props/Props_Aisles/Freezers", name = "Row1_Back",  surfaceTop = 10, maxItems = 6 },
-	},
-
-	-- ── FREEZER / MEAT (9 ingredients) — Row2–3 shelves ──
+	-- ── FREEZER (Rows 1-3) ────────────────────────────────────
+	-- spawnXmin/spawnXmax: front 5 studs of shelf face (customer edge)
+	-- spawnZmin/spawnZmax: avoids endcap fixture zone at Z extremes
+	-- Pad1 (Y≈2.6, bottom): 8 items, 7.2 studs apart — most ingredients
+	-- Pad2 (Y≈7.35, mid):   4 items, 14 studs apart  — fewer, higher up
 	Freezer = {
-		{ folder = "Props/Props_Aisles/Freezers", name = "Row2_Front", surfaceTop = 10, maxItems = 6 },
-		{ folder = "Props/Props_Aisles/Freezers", name = "Row2_Back",  surfaceTop = 10, maxItems = 6 },
-		{ folder = "Props/Props_Aisles/Freezers", name = "Row3_Front", surfaceTop = 10, maxItems = 5 },
-		{ folder = "Props/Props_Aisles/Freezers", name = "Row3_Back",  surfaceTop = 10, maxItems = 5 },
+		-- Row1 X=-150 (inner face Xmax=-140)
+		{ folder="Props/Props_Aisles", name="Row1_Front_VB_SpawnPad1", surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=-145, spawnXmax=-140, spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row1_Front_VB_SpawnPad2", surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=-145, spawnXmax=-140, spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row1_Back_VB_SpawnPad1",  surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=-145, spawnXmax=-140, spawnZmin=2,   spawnZmax=62  },
+		{ folder="Props/Props_Aisles", name="Row1_Back_VB_SpawnPad2",  surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=-145, spawnXmax=-140, spawnZmin=2,   spawnZmax=62  },
+		-- Row2 X=-90 (inner face Xmax=-80)
+		{ folder="Props/Props_Aisles", name="Row2_Front_VB_SpawnPad1", surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=-85,  spawnXmax=-80,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row2_Front_VB_SpawnPad2", surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=-85,  spawnXmax=-80,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row2_Back_VB_SpawnPad1",  surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=-85,  spawnXmax=-80,  spawnZmin=2,   spawnZmax=62  },
+		{ folder="Props/Props_Aisles", name="Row2_Back_VB_SpawnPad2",  surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=-85,  spawnXmax=-80,  spawnZmin=2,   spawnZmax=62  },
+		-- Row3 X=-30 (inner face Xmax=-20)
+		{ folder="Props/Props_Aisles", name="Row3_Front_VB_SpawnPad1", surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=-25,  spawnXmax=-20,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row3_Front_VB_SpawnPad2", surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=-25,  spawnXmax=-20,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row3_Back_VB_SpawnPad1",  surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=-25,  spawnXmax=-20,  spawnZmin=2,   spawnZmax=62  },
+		{ folder="Props/Props_Aisles", name="Row3_Back_VB_SpawnPad2",  surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=-25,  spawnXmax=-20,  spawnZmin=2,   spawnZmax=62  },
 	},
 
-	-- ── AISLES (14 ingredients) — Row4–6 shelves ─────────
+	-- ── AISLES / DRY GOODS (Rows 4-6) ────────────────────────
+	-- spawnXmin/spawnXmax: front 5 studs of shelf face
+	-- Pos-X rows: inner face = Xmin side
 	Aisles = {
-		{ folder = "Props/Props_Aisles/Shelves", name = "Row4_Front", surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles/Shelves", name = "Row4_Back",  surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles/Shelves", name = "Row5_Front", surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles/Shelves", name = "Row5_Back",  surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles/Shelves", name = "Row6_Front", surfaceTop = 10, maxItems = 7 },
-		{ folder = "Props/Props_Aisles/Shelves", name = "Row6_Back",  surfaceTop = 10, maxItems = 7 },
+		-- Row4 X=30 (inner face Xmin=20)
+		{ folder="Props/Props_Aisles", name="Row4_Front_VB_SpawnPad1", surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=20,  spawnXmax=25,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row4_Front_VB_SpawnPad2", surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=20,  spawnXmax=25,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row4_Back_VB_SpawnPad1",  surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=20,  spawnXmax=25,  spawnZmin=2,   spawnZmax=62  },
+		{ folder="Props/Props_Aisles", name="Row4_Back_VB_SpawnPad2",  surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=20,  spawnXmax=25,  spawnZmin=2,   spawnZmax=62  },
+		-- Row5 X=90 (inner face Xmin=80)
+		{ folder="Props/Props_Aisles", name="Row5_Front_VB_SpawnPad1", surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=80,  spawnXmax=85,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row5_Front_VB_SpawnPad2", surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=80,  spawnXmax=85,  spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row5_Back_VB_SpawnPad1",  surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=80,  spawnXmax=85,  spawnZmin=2,   spawnZmax=62  },
+		{ folder="Props/Props_Aisles", name="Row5_Back_VB_SpawnPad2",  surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=80,  spawnXmax=85,  spawnZmin=2,   spawnZmax=62  },
+		-- Row6 X=150 (inner face Xmin=140)
+		{ folder="Props/Props_Aisles", name="Row6_Front_VB_SpawnPad1", surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=140, spawnXmax=145, spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row6_Front_VB_SpawnPad2", surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=140, spawnXmax=145, spawnZmin=-80, spawnZmax=-22 },
+		{ folder="Props/Props_Aisles", name="Row6_Back_VB_SpawnPad1",  surfaceTop=2.60,  maxItems=8, yOffset=6, spawnXmin=140, spawnXmax=145, spawnZmin=2,   spawnZmax=62  },
+		{ folder="Props/Props_Aisles", name="Row6_Back_VB_SpawnPad2",  surfaceTop=7.35,  maxItems=4, yOffset=6, spawnXmin=140, spawnXmax=145, spawnZmin=2,   spawnZmax=62  },
 	},
 
-	-- ── DELI COUNTER — mid-tier loot node (Part 33) ───────
-	-- Accessible from store floor (Z<100), spawns mixed mid-tier
-	-- ingredients from Dairy, Freezer, Produce zones
-	-- Pos Y=2.5, Size Y=5 → surfaceTop = 5
+	-- ── DELI ─────────────────────────────────────────────────
 	Deli = {
-		{ folder = "Props/Props_Kitchen", name = "DeliCounter_FarLeft",  surfaceTop = 5, maxItems = 3 },
-		{ folder = "Props/Props_Kitchen", name = "DeliCounter_MidLeft",  surfaceTop = 5, maxItems = 4 },
-		{ folder = "Props/Props_Kitchen", name = "DeliCounter_MidRight", surfaceTop = 5, maxItems = 4 },
-		{ folder = "Props/Props_Kitchen", name = "DeliCounter_FarRight", surfaceTop = 5, maxItems = 3 },
+		{ folder="Props/Props_Kitchen", name="DeliCounter_FarLeft_VB_Slab",   surfaceTop=4.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Kitchen", name="DeliCounter_MidLeft_VB_Slab",   surfaceTop=4.00, maxItems=6, yOffset=2.5 },
+		{ folder="Props/Props_Kitchen", name="DeliCounter_MidRight_VB_Slab",  surfaceTop=4.70, maxItems=6, yOffset=2.5 },
+		{ folder="Props/Props_Kitchen", name="DeliCounter_FarRight_VB_Slab",  surfaceTop=4.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Kitchen", name="DeliCounter_SideLeft_VB_Slab",  surfaceTop=4.70, maxItems=4, yOffset=2.5 },
+		{ folder="Props/Props_Kitchen", name="DeliCounter_SideRight_VB_Slab", surfaceTop=4.70, maxItems=4, yOffset=2.5 },
 	},
 
-	-- ── STOCKROOM (all 65 ingredients, higher density) ────
-	-- Caviar (Legendary) ONLY spawns here — never in other zones
-	-- LowCrates: Pos Y=2.5, Size Y=5 → surfaceTop = 5
-	-- TallStacks: Pos Y=7, Size Y=14 → surfaceTop = 14
-	-- LootCrates: Pos Y=4, Size Y=5 → surfaceTop ~6.5
-	-- MidCrates: Pos Y=3.5, Size Y=5 → surfaceTop ~6
+	-- ── STOCKROOM ─────────────────────────────────────────────
 	Stockroom = {
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_1",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_2",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_3",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_5",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_6",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_7",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_8",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_9",  surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_10", surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_12", surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_13", surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LowCrate_14", surfaceTop = 5,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_3", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_4", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_5", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_6", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_7", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_8", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_9", surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_10",surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_11",surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "TallStack_12",surfaceTop = 14, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_1", surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_2", surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_3", surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_4", surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_5", surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_6", surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "LootCrate_Centre", surfaceTop = 6, maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_1",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_2",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_3",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_4",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_5",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_6",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_7",  surfaceTop = 6,  maxItems = 2 },
-		{ folder = "Props/Props_Stockroom", name = "MidCrate_8",  surfaceTop = 6,  maxItems = 2 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_1",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_2",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_3",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_5",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_6",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_7",      surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_8",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_9",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_10",     surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_12",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_13",     surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LowCrate_14",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_1",      surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_2",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_3",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_4",      surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_5",      surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_6",      surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_7",      surfaceTop=6.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="MidCrate_8",      surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_3",     surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_4",     surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_5",     surfaceTop=15.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_6",     surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_7",     surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_8",     surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_9",     surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_10",    surfaceTop=15.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_11",    surfaceTop=14.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="TallStack_12",    surfaceTop=15.0, maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_1",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_2",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_3",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_4",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_5",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_6",     surfaceTop=5.0,  maxItems=2, yOffset=1.5 },
+		{ folder="Props/Props_Stockroom", name="LootCrate_Centre", surfaceTop=6.5, maxItems=2, yOffset=1.5 },
 	},
 }
 
--- ── Outdoor loot zones (cash + napkins + bracelets) ─────────
--- Back car park, side alleys — NOT the prelobby spawn area
 local LOOT_ZONES = {
-	{ minX = -350, maxX = 350,  minZ = -395, maxZ = -350, y = 2, count = 20 }, -- back of car park
-	{ minX =  310, maxX = 368,  minZ = -180, maxZ =  180, y = 2, count = 12 }, -- left side alley
-	{ minX = -368, maxX = -310, minZ = -180, maxZ =  180, y = 2, count = 12 }, -- right side alley
-	{ minX = -300, maxX = 300,  minZ = -340, maxZ = -250, y = 2, count = 15 }, -- mid car park rows
+	{ minX = -350, maxX = 350,  minZ = -395, maxZ = -350, y = 2, count = 20 },
+	{ minX =  310, maxX = 368,  minZ = -180, maxZ =  180, y = 2, count = 12 },
+	{ minX = -368, maxX = -310, minZ = -180, maxZ =  180, y = 2, count = 12 },
+	{ minX = -300, maxX = 300,  minZ = -340, maxZ = -250, y = 2, count = 15 },
 }
-
--- Loot rarity weights
-local LOOT_WEIGHTS = { Common = 65, Uncommon = 25, Rare = 8, UltraRare = 2, Napkin = 0.5 }
+local LOOT_WEIGHTS         = { Common = 65, Uncommon = 25, Rare = 8, UltraRare = 2, Napkin = 0.5 }
+local STOCKROOM_LOOT_COUNT = 8
 
 -- ============================================================
--- INGREDIENT POOLS (built from ChompersData — no hardcoding)
+-- INGREDIENT POOLS
 -- ============================================================
 
--- Build per-zone ingredient pools from ChompersData
--- Physical store surface → ChompersData zone mapping:
---   Produce  → Produce pool
---   Bakery   → Bakery pool
---   Dairy    → Bakery pool (Row1 freezer bank; Milk/Cheese/Butter physically here)
---   Freezer  → Freezer pool (Row2-3 freezer banks)
---   Aisles   → Dry Goods pool (Row4-6 shelves)
---   Deli     → Mixed: Bakery + Freezer Uncommon+ (mid-tier loot node)
---   Stockroom → all 27 ingredients
 local function buildPools()
 	local pools = {}
-
-	-- Direct zone pools
 	for _, zoneName in ipairs({"Produce","Bakery","Freezer"}) do
 		pools[zoneName] = ChompersData.GetIngredientsByZone(zoneName)
 	end
-
-	-- Physical "Dairy" rows spawn Bakery ingredients
-	pools.Dairy = ChompersData.GetIngredientsByZone("Bakery")
-
-	-- Physical "Aisles" rows spawn Dry Goods ingredients
 	pools.Aisles = ChompersData.GetIngredientsByZone("Dry Goods")
 
-	-- Deli counter = Bakery + Freezer Uncommon+ (no Common filler)
 	pools.Deli = {}
 	for _, ing in ipairs(ChompersData.Ingredients) do
 		if (ing.zone == "Bakery" or ing.zone == "Freezer")
-		and ing.rarity ~= "Common" then
+			and ing.rarity ~= "Common"
+			and (ing.phase or 1) == 1 then
 			table.insert(pools.Deli, ing)
 		end
 	end
 
-	-- Stockroom = all 27 ingredients (full range jackpot zone)
-	pools.Stockroom = ChompersData.Ingredients
+	pools.Stockroom = {}
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.rarity ~= "Legendary" and (ing.phase or 1) == 1 then
+			table.insert(pools.Stockroom, ing)
+		end
+	end
 
+	for zoneName, pool in pairs(pools) do
+		if #pool == 0 then
+			warn(string.format("[IngredientSpawner] Empty pool for zone '%s'", zoneName))
+		end
+	end
 	return pools
 end
 
@@ -246,7 +263,6 @@ end
 local Map = workspace:WaitForChild("Map", 10)
 if not Map then warn("[IngredientSpawner] Map folder not found") end
 
--- Navigate a slash-delimited path inside Map
 local function getFolder(path)
 	local current = Map
 	if not current then return nil end
@@ -257,102 +273,184 @@ local function getFolder(path)
 	return current
 end
 
--- Weighted random pick from pool using rarity weights
 local function weightedPick(pool)
-	local total = 0
-	local weighted = {}
+	local total, weighted = 0, {}
 	for _, ing in ipairs(pool) do
-		local w = RARITY_WEIGHTS[ing.rarity] or 1
-		total = total + w
-		table.insert(weighted, { ing = ing, cumulative = total })
+		local w = RARITY_WEIGHTS[ing.rarity] or 0
+		if w > 0 then
+			total = total + w
+			table.insert(weighted, { ing=ing, cumulative=total })
+		end
 	end
-	if total == 0 then return pool[1] end
+	if total == 0 or #weighted == 0 then return pool[1] end
 	local roll = math.random() * total
 	for _, entry in ipairs(weighted) do
 		if roll <= entry.cumulative then return entry.ing end
 	end
-	return pool[1]
+	return weighted[#weighted].ing
 end
 
--- Distribute N spawn points randomly across a part's full top surface.
--- Uses fully random placement (not grid) with a minimum separation check
--- so items don't pile on top of each other.
-local function getSurfacePoints(part, count)
+-- ============================================================
+-- GRID PLACEMENT — v9
+--
+-- spawnXmin/spawnXmax/spawnZmin/spawnZmax all supported.
+-- Inset is proportional (5% per side, min 0.3) so narrow
+-- X ranges (5 studs) work without collapsing to zero.
+-- ============================================================
+
+local function getSurfacePoints(part, count, surface)
 	local pos   = part.Position
 	local sizeX = part.Size.X
 	local sizeZ = part.Size.Z
-	-- Inset slightly from the edges so items don't fall off
-	local insetX = math.max(sizeX * 0.08, 0.3)
-	local insetZ = math.max(sizeZ * 0.08, 0.3)
-	local usableX = sizeX - insetX * 2
-	local usableZ = sizeZ - insetZ * 2
 
+	local xMin = pos.X - sizeX * 0.5
+	local xMax = pos.X + sizeX * 0.5
+	local zMin = pos.Z - sizeZ * 0.5
+	local zMax = pos.Z + sizeZ * 0.5
+
+	if surface then
+		if surface.spawnXmin then xMin = surface.spawnXmin end
+		if surface.spawnXmax then xMax = surface.spawnXmax end
+		if surface.spawnZmin then zMin = surface.spawnZmin end
+		if surface.spawnZmax then zMax = surface.spawnZmax end
+	end
+
+	-- Proportional inset: 5% per side, min 0.3 studs
+	-- Prevents narrow overrides from collapsing to zero usable space
+	local insetX = math.max(0.3, (xMax - xMin) * 0.05)
+	local insetZ = math.max(0.3, (zMax - zMin) * 0.05)
+	xMin = xMin + insetX; xMax = xMax - insetX
+	zMin = zMin + insetZ; zMax = zMax - insetZ
+
+	local usableX = math.max(xMax - xMin, 0.1)
+	local usableZ = math.max(zMax - zMin, 0.1)
+	local aspect  = usableX / usableZ
+
+	local nX = math.max(1, math.floor(math.sqrt(count * aspect) + 0.5))
+	local nZ = math.max(1, math.ceil(count / nX))
+	local cellW = usableX / nX
+	local cellH = usableZ / nZ
+
+	local cells = {}
+	for xi = 0, nX-1 do
+		for zi = 0, nZ-1 do
+			table.insert(cells, {
+				x = xMin + cellW*(xi+0.5),
+				z = zMin + cellH*(zi+0.5),
+			})
+		end
+	end
+	-- Shuffle for variety between matches
+	for i = #cells, 2, -1 do
+		local j = math.random(i)
+		cells[i], cells[j] = cells[j], cells[i]
+	end
+
+	local JITTER = 0.20
 	local points = {}
-	local minSep = 0.7   -- minimum studs between items on same surface
-
-	for _ = 1, count do
-		local best, bestMinDist = nil, -1
-		-- Try up to 8 candidates, keep the one furthest from existing points
-		for _ = 1, 8 do
-			local cx = pos.X - sizeX/2 + insetX + math.random() * usableX
-			local cz = pos.Z - sizeZ/2 + insetZ + math.random() * usableZ
-			local minDist = math.huge
-			for _, ep in ipairs(points) do
-				local d = math.sqrt((cx-ep.X)^2 + (cz-ep.Z)^2)
-				if d < minDist then minDist = d end
-			end
-			if minDist > bestMinDist then
-				best = Vector3.new(cx, 0, cz); bestMinDist = minDist
-			end
-		end
-		if best and bestMinDist >= minSep then
-			table.insert(points, best)
-		elseif best then
-			table.insert(points, best)   -- still place even if too close — better than skipping
-		end
+	for i = 1, math.min(count, #cells) do
+		table.insert(points, Vector3.new(
+			cells[i].x + (math.random()-0.5)*JITTER*2,
+			0,
+			cells[i].z + (math.random()-0.5)*JITTER*2
+			))
 	end
 	return points
 end
 
 -- ============================================================
--- BILLBOARD + PROMPT (UI on spawned part)
+-- LEGENDARY INJECTION
+-- ============================================================
+
+local function getCaviarData()
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.name == "Caviar" then return ing end
+	end
+	return nil
+end
+
+local function applyLegendaryVisual(part)
+	local orbit = Instance.new("Part")
+	orbit.Name         = "_LegendaryOrbit"
+	orbit.Size         = Vector3.new(0.2, 0.2, 0.2)
+	orbit.Shape        = Enum.PartType.Ball
+	orbit.Material     = Enum.Material.SmoothPlastic
+	orbit.Color        = Color3.fromRGB(218, 182, 58)
+	orbit.Transparency = 0.20
+	orbit.Anchored     = true
+	orbit.CanCollide   = false
+	orbit.Parent       = part.Parent
+	local radius    = part.Size.X + 0.5
+	local startTime = tick()
+	local rs        = game:GetService("RunService")
+	local conn
+	conn = rs.Heartbeat:Connect(function()
+		if not part or not part.Parent then orbit:Destroy(); conn:Disconnect(); return end
+		local t = (tick() - startTime) / 4 * 2 * math.pi
+		orbit.CFrame = CFrame.new(
+			part.Position.X + radius * math.cos(t),
+			part.Position.Y,
+			part.Position.Z + radius * math.sin(t))
+	end)
+end
+
+local function tryInjectCaviar(worldX, worldZ, spawnTop, surfacePart)
+	if legendaryState.caviarSpawned then return false end
+	if math.random() > LEGENDARY_CHANCE then return false end
+	local caviar = getCaviarData()
+	if not caviar then return false end
+	local LiveFolder = workspace:FindFirstChild("Ingredients_Live")
+	if not LiveFolder then return false end
+	local part = Instance.new("Part")
+	part.Name     = caviar.name
+	part.Size     = Vector3.new(2, 2, 2)
+	part.Position = Vector3.new(worldX, spawnTop + 1, worldZ)
+	part.Anchored = true; part.CanCollide = true; part.CastShadow = false
+	part.Color    = RARITY_COLORS.Legendary; part.Material = Enum.Material.SmoothPlastic
+	part:SetAttribute("IsIngredient",   true)
+	part:SetAttribute("IngredientName", caviar.name)
+	part:SetAttribute("Rarity",         "Legendary")
+	part:SetAttribute("Weight",         caviar.wt)
+	part:SetAttribute("Cost",           caviar.cost)
+	part:SetAttribute("Emoji",          caviar.emoji or "🫧")
+	part:SetAttribute("Allergy",        caviar.allergy)
+	part:SetAttribute("Zone",           "Any")
+	part:SetAttribute("IsPaid",         false)
+	part:SetAttribute("IsTrash",        false)
+	part:SetAttribute("CLValue",        caviar.cl)
+	applyLegendaryVisual(part)
+	part.Parent = LiveFolder
+	legendaryState.caviarSpawned = true
+	legendaryState.caviarPart    = part
+	print(string.format("[IngredientSpawner] 🌟 Caviar spawned at (%.1f, %.1f)", worldX, worldZ))
+	return true
+end
+
+-- ============================================================
+-- BILLBOARD + PROMPT
 -- ============================================================
 
 local function createBillboard(parent, ing)
-	local color = RARITY_COLORS[ing.rarity] or Color3.fromRGB(200, 200, 200)
-
+	local color = RARITY_COLORS[ing.rarity] or Color3.fromRGB(200,200,200)
 	local bb = Instance.new("BillboardGui")
-	bb.Size          = UDim2.new(0, 70, 0, 70)
-	bb.StudsOffset   = Vector3.new(0, 2.5, 0)
-	bb.AlwaysOnTop   = false
-	bb.LightInfluence = 0
-	bb.Parent        = parent
-
-	local emojiLabel = Instance.new("TextLabel")
-	emojiLabel.Size                 = UDim2.new(1, 0, 0.58, 0)
-	emojiLabel.BackgroundTransparency = 1
-	emojiLabel.Text                 = ing.emoji or "🍽"
-	emojiLabel.TextScaled           = true
-	emojiLabel.Font                 = Enum.Font.GothamBold
-	emojiLabel.Parent               = bb
-
-	local nameLabel = Instance.new("TextLabel")
-	nameLabel.Size                  = UDim2.new(1, 0, 0.42, 0)
-	nameLabel.Position              = UDim2.new(0, 0, 0.58, 0)
-	nameLabel.BackgroundTransparency = 1
-	nameLabel.Text                  = ing.name
-	nameLabel.TextScaled            = true
-	nameLabel.Font                  = Enum.Font.GothamBold
-	nameLabel.TextColor3            = color
-	nameLabel.TextStrokeTransparency = 0.4
-	nameLabel.TextStrokeColor3      = Color3.fromRGB(0, 0, 0)
-	nameLabel.Parent                = bb
+	bb.Size = UDim2.new(0,70,0,70); bb.StudsOffset = Vector3.new(0,2.5,0)
+	bb.AlwaysOnTop = false; bb.LightInfluence = 0; bb.Parent = parent
+	local emojiL = Instance.new("TextLabel")
+	emojiL.Size = UDim2.new(1,0,0.58,0); emojiL.BackgroundTransparency = 1
+	emojiL.Text = ing.emoji or "🍽"; emojiL.TextScaled = true
+	emojiL.Font = Enum.Font.GothamBold; emojiL.Parent = bb
+	local nameL = Instance.new("TextLabel")
+	nameL.Size = UDim2.new(1,0,0.42,0); nameL.Position = UDim2.new(0,0,0.58,0)
+	nameL.BackgroundTransparency = 1; nameL.Text = ing.name
+	nameL.TextScaled = true; nameL.Font = Enum.Font.GothamBold
+	nameL.TextColor3 = color; nameL.TextStrokeTransparency = 0.4
+	nameL.TextStrokeColor3 = Color3.fromRGB(0,0,0); nameL.Parent = bb
 end
 
 local function createPrompt(parent, ing, holdTime)
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText            = "Pick up"
-	prompt.ObjectText            = (ing.emoji or "🍽") .. " " .. ing.name
+	prompt.ObjectText            = (ing.emoji or "🍽").." "..ing.name
 	prompt.KeyboardKeyCode       = Enum.KeyCode.E
 	prompt.HoldDuration          = holdTime or 0.25
 	prompt.MaxActivationDistance = 8
@@ -362,7 +460,7 @@ local function createPrompt(parent, ing, holdTime)
 end
 
 -- ============================================================
--- SPAWN ONE INGREDIENT PART
+-- SPAWN ONE INGREDIENT
 -- ============================================================
 
 local LiveFolder   = nil
@@ -370,20 +468,13 @@ local respawnQueue = {}
 
 local function spawnIngredientAt(worldX, worldZ, surfaceTop, ing, surfacePart)
 	if not LiveFolder then return end
-
-	local color = RARITY_COLORS[ing.rarity] or Color3.fromRGB(200, 200, 200)
-
-	local part = Instance.new("Part")
-	part.Name     = ing.name
-	part.Size     = Vector3.new(2, 2, 2)
-	part.Position = Vector3.new(worldX, surfaceTop + 1, worldZ)
-	part.Anchored = true
-	part.CanCollide     = true
-	part.CastShadow     = false
-	part.Color          = color
-	part.Material       = Enum.Material.SmoothPlastic
-
-	-- Attributes used by IngredientPickupServer
+	local color = RARITY_COLORS[ing.rarity] or Color3.fromRGB(200,200,200)
+	local part  = Instance.new("Part")
+	part.Name       = ing.name
+	part.Size       = Vector3.new(2, 2, 2)
+	part.Position   = Vector3.new(worldX, surfaceTop + 1, worldZ)
+	part.Anchored   = true; part.CanCollide = true; part.CastShadow = false
+	part.Color      = color; part.Material = Enum.Material.SmoothPlastic
 	part:SetAttribute("IsIngredient",   true)
 	part:SetAttribute("IngredientName", ing.name)
 	part:SetAttribute("Rarity",         ing.rarity)
@@ -394,51 +485,39 @@ local function spawnIngredientAt(worldX, worldZ, surfaceTop, ing, surfacePart)
 	part:SetAttribute("Zone",           ing.zone)
 	part:SetAttribute("IsPaid",         false)
 	part:SetAttribute("IsTrash",        false)
-	part:SetAttribute("CLValue",        ing.cl)   -- raw CL for combat system
-
+	part:SetAttribute("CLValue",        ing.cl)
 	createBillboard(part, ing)
 	createPrompt(part, ing, 0.25)
 	part.Parent = LiveFolder
-
-	-- Queue respawn (Legendary = 0, never respawns)
 	local rt = RESPAWN_TIMES[ing.rarity] or 0
 	if rt > 0 and surfacePart then
 		table.insert(respawnQueue, {
-			ing        = ing,
-			worldX     = worldX,
-			worldZ     = worldZ,
-			surfaceTop = surfaceTop,
-			surfacePart = surfacePart,
-			respawnAt  = os.clock() + rt,
+			ing=ing, worldX=worldX, worldZ=worldZ,
+			surfaceTop=surfaceTop, surfacePart=surfacePart,
+			respawnAt=os.clock()+rt,
 		})
 	end
-
 	return part
 end
 
 -- ============================================================
--- SPAWN OUTDOOR LOOT (cash, napkins)
+-- SPAWN OUTDOOR LOOT
 -- ============================================================
 
--- Loot pool — economy items that spawn outdoors AND in stockroom
 local function pickLoot(allowBracelet)
-	local lootTypes = {
+	local pool = {
 		{ name="Loose Cash",        emoji="💵", rarity="Common",    type="cash",     value=math.random(1,3),   color=Color3.fromRGB(75,205,60)   },
 		{ name="Cash Stack",        emoji="💵", rarity="Uncommon",  type="cash",     value=math.random(10,15), color=Color3.fromRGB(55,165,45)   },
 		{ name="Big Stack",         emoji="💵", rarity="Rare",      type="cash",     value=math.random(18,25), color=Color3.fromRGB(239,159,39)  },
 		{ name="Napkin",            emoji="🧻", rarity="Napkin",    type="napkin",   value=1,                  color=Color3.fromRGB(100,180,255) },
 		{ name="Alliance Bracelet", emoji="💜", rarity="UltraRare", type="bracelet", value=1,                  color=Color3.fromRGB(180,90,255)  },
 	}
-	-- Filter bracelet if not allowed (some spawn zones exclude it)
-	local pool = {}
-	for _, lt in ipairs(lootTypes) do
-		if lt.type ~= "bracelet" or allowBracelet then
-			table.insert(pool, lt)
-		end
-	end
-	local total = 0
-	local weighted = {}
+	local filtered = {}
 	for _, lt in ipairs(pool) do
+		if lt.type ~= "bracelet" or allowBracelet then table.insert(filtered, lt) end
+	end
+	local total, weighted = 0, {}
+	for _, lt in ipairs(filtered) do
 		local w = LOOT_WEIGHTS[lt.rarity] or 1
 		total = total + w
 		table.insert(weighted, { lt=lt, cumulative=total })
@@ -447,165 +526,142 @@ local function pickLoot(allowBracelet)
 	for _, entry in ipairs(weighted) do
 		if roll <= entry.cumulative then return entry.lt end
 	end
-	return pool[1]
+	return filtered[1]
 end
 
 local function spawnLootAt(worldX, worldZ, y, allowBracelet)
 	if not LiveFolder then return end
-
 	local loot = pickLoot(allowBracelet ~= false)
-
 	local part = Instance.new("Part")
 	part.Name     = loot.name
 	part.Size     = Vector3.new(1.5, 0.3, 1.5)
 	part.Position = Vector3.new(worldX, y, worldZ)
-	part.Anchored   = true
-	part.CanCollide = true
-	part.CastShadow = false
-	part.Color      = loot.color
-	part.Material   = Enum.Material.SmoothPlastic
-
+	part.Anchored = true; part.CanCollide = true; part.CastShadow = false
+	part.Color    = loot.color; part.Material = Enum.Material.SmoothPlastic
 	part:SetAttribute("IsLoot",    true)
 	part:SetAttribute("LootType",  loot.type)
 	part:SetAttribute("LootName",  loot.name)
 	part:SetAttribute("LootValue", loot.value)
 	part:SetAttribute("LootEmoji", loot.emoji)
 	part:SetAttribute("Rarity",    loot.rarity)
-
-	-- Billboard
 	local bb = Instance.new("BillboardGui")
-	bb.Size        = UDim2.new(0, 60, 0, 50)
-	bb.StudsOffset = Vector3.new(0, 2, 0)
-	bb.AlwaysOnTop = false
-	bb.Parent      = part
-
+	bb.Size = UDim2.new(0,60,0,50); bb.StudsOffset = Vector3.new(0,2,0)
+	bb.AlwaysOnTop = false; bb.Parent = part
 	local emojiL = Instance.new("TextLabel")
-	emojiL.Size                   = UDim2.new(1, 0, 0.5, 0)
-	emojiL.BackgroundTransparency = 1
-	emojiL.Text                   = loot.emoji
-	emojiL.TextScaled             = true
-	emojiL.Font                   = Enum.Font.GothamBold
-	emojiL.Parent                 = bb
-
+	emojiL.Size = UDim2.new(1,0,0.5,0); emojiL.BackgroundTransparency = 1
+	emojiL.Text = loot.emoji; emojiL.TextScaled = true
+	emojiL.Font = Enum.Font.GothamBold; emojiL.Parent = bb
 	local valL = Instance.new("TextLabel")
-	valL.Size                   = UDim2.new(1, 0, 0.5, 0)
-	valL.Position               = UDim2.new(0, 0, 0.5, 0)
+	valL.Size = UDim2.new(1,0,0.5,0); valL.Position = UDim2.new(0,0,0.5,0)
 	valL.BackgroundTransparency = 1
-	valL.Text                   = loot.type == "cash"
-		and "$" .. tostring(loot.value)
-		or loot.name
-	valL.TextScaled             = true
-	valL.Font                   = Enum.Font.GothamBold
-	valL.TextColor3             = loot.color
-	valL.TextStrokeTransparency = 0.4
-	valL.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
-	valL.Parent                 = bb
-
-	-- Prompt
+	valL.Text = loot.type == "cash" and "$"..loot.value or loot.name
+	valL.TextScaled = true; valL.Font = Enum.Font.GothamBold
+	valL.TextColor3 = loot.color; valL.TextStrokeTransparency = 0.4
+	valL.TextStrokeColor3 = Color3.fromRGB(0,0,0); valL.Parent = bb
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.ActionText            = "Pick up"
-	prompt.ObjectText            = loot.emoji .. " " .. loot.name
-		.. (loot.type == "cash" and " ($" .. loot.value .. ")" or "")
+	prompt.ObjectText            = loot.emoji.." "..loot.name
+		..(loot.type == "cash" and " ($"..loot.value..")" or "")
 	prompt.KeyboardKeyCode       = Enum.KeyCode.E
 	prompt.HoldDuration          = 0.2
 	prompt.MaxActivationDistance = 8
 	prompt.RequiresLineOfSight   = false
 	prompt.Parent                = part
-
-	part.Parent = LiveFolder
-
-	-- Loot respawn: cash respawns, napkins/bracelets never respawn
+	part.Parent                  = LiveFolder
 	local rt = loot.type == "cash"
 		and (loot.rarity == "Common" and C.Respawn.Cash_Small or C.Respawn.Cash_Stack)
 		or 0
 	if rt > 0 then
 		table.insert(respawnQueue, {
-			isLoot       = true,
-			worldX       = worldX, worldZ = worldZ, y = y,
-			allowBracelet = false,   -- respawned cash slots never become bracelets
-			respawnAt    = os.clock() + rt,
+			isLoot=true, worldX=worldX, worldZ=worldZ, y=y,
+			allowBracelet=false, respawnAt=os.clock()+rt,
 		})
 	end
 end
 
 -- ============================================================
--- MAIN SPAWN — ingredients across all zones
+-- MAIN SPAWN — ingredients
 -- ============================================================
 
 local function spawnAllIngredients(pools)
-	local totalSpawned = 0
+	local totalSpawned    = 0
+	local totalSurfaces   = 0
+	local missingSurfaces = 0
 
 	for zoneName, surfaces in pairs(ZONE_SURFACES) do
 		local pool = pools[zoneName]
 		if not pool or #pool == 0 then
-			warn("[IngredientSpawner] No ingredient pool for zone: " .. zoneName)
+			warn("[IngredientSpawner] No pool for zone: "..zoneName)
 			continue
 		end
-
 		for _, surface in ipairs(surfaces) do
+			totalSurfaces = totalSurfaces + 1
 			local folder = getFolder(surface.folder)
 			if not folder then
 				warn(string.format("[IngredientSpawner] Folder not found: %s", surface.folder))
-				continue
+				missingSurfaces = missingSurfaces + 1; continue
 			end
-
-			local part = folder:FindFirstChild(surface.name)
+			local part = folder:FindFirstChild(surface.name, true)
 			if not part then
-				warn(string.format("[IngredientSpawner] Part not found: %s in %s",
+				warn(string.format("[IngredientSpawner] Surface not found: %s in %s",
 					surface.name, surface.folder))
-				continue
+				missingSurfaces = missingSurfaces + 1; continue
 			end
 
-			local points = getSurfacePoints(part, surface.maxItems)
+			local spawnTop = surface.surfaceTop + (surface.yOffset or 1) - 1
+			local points   = getSurfacePoints(part, surface.maxItems, surface)
+
 			for _, pt in ipairs(points) do
-				local ing = weightedPick(pool)
-				spawnIngredientAt(pt.X, pt.Z, surface.surfaceTop, ing, part)
+				local injected = tryInjectCaviar(pt.X, pt.Z, spawnTop, part)
+				if not injected then
+					local ing = weightedPick(pool)
+					spawnIngredientAt(pt.X, pt.Z, spawnTop, ing, part)
+				end
 				totalSpawned = totalSpawned + 1
 			end
 		end
 	end
 
+	if totalSpawned == 0 then
+		warn("[IngredientSpawner] ZERO ingredients spawned — check Map > Props structure")
+	end
+	print(string.format(
+		"[IngredientSpawner] v9  surfaces: %d/%d found  ingredients: %d",
+		totalSurfaces - missingSurfaces, totalSurfaces, totalSpawned))
 	return totalSpawned
 end
 
 -- ============================================================
--- MAIN SPAWN — outdoor loot
+-- MAIN SPAWN — loot
 -- ============================================================
-
-local STOCKROOM_LOOT_COUNT = 8   -- cash + napkins + bracelets scattered on stockroom floor
 
 local function spawnAllLoot()
 	local totalSpawned = 0
-
-	-- Outdoor car park loot (cash, napkins — no bracelets outdoors)
 	for _, zone in ipairs(LOOT_ZONES) do
 		for _ = 1, zone.count do
 			local rx = zone.minX + math.random() * (zone.maxX - zone.minX)
 			local rz = zone.minZ + math.random() * (zone.maxZ - zone.minZ)
-			spawnLootAt(rx, rz, zone.y, false)   -- no bracelets outdoors
+			spawnLootAt(rx, rz, zone.y, false)
 			totalSpawned = totalSpawned + 1
 		end
 	end
-
-	-- Stockroom floor loot (cash + napkins + alliance bracelets)
-	-- Bracelets are rare (UltraRare weight) and only spawn here + outdoor rarely
-	local stockroomSurfaces = ZONE_SURFACES.Stockroom
-	if stockroomSurfaces and #stockroomSurfaces > 0 then
-		for _ = 1, STOCKROOM_LOOT_COUNT do
-			-- Pick a random crate surface to place the loot on
-			local surface = stockroomSurfaces[math.random(#stockroomSurfaces)]
-			local folder  = getFolder(surface.folder)
-			local part    = folder and folder:FindFirstChild(surface.name)
-			if part then
-				local pos = part.Position
-				local jX  = (math.random() - 0.5) * (part.Size.X * 0.7)
-				local jZ  = (math.random() - 0.5) * (part.Size.Z * 0.7)
-				spawnLootAt(pos.X + jX, pos.Z + jZ, surface.surfaceTop, true)  -- bracelets allowed
-				totalSpawned = totalSpawned + 1
+	if STOCKROOM_LOOT_COUNT > 0 then
+		local stkr = ZONE_SURFACES.Stockroom
+		if stkr and #stkr > 0 then
+			for _ = 1, STOCKROOM_LOOT_COUNT do
+				local surface = stkr[math.random(#stkr)]
+				local folder  = getFolder(surface.folder)
+				local part    = folder and folder:FindFirstChild(surface.name, true)
+				if part then
+					local jX = (math.random()-0.5) * (part.Size.X * 0.6)
+					local jZ = (math.random()-0.5) * (part.Size.Z * 0.6)
+					spawnLootAt(part.Position.X+jX, part.Position.Z+jZ,
+						surface.surfaceTop+1, true)
+					totalSpawned = totalSpawned + 1
+				end
 			end
 		end
 	end
-
 	return totalSpawned
 end
 
@@ -617,29 +673,22 @@ task.spawn(function()
 	while true do
 		task.wait(1)
 		if not LiveFolder then continue end
-
-		local now = os.clock()
-		local remaining = {}
-
+		local now, remaining = os.clock(), {}
 		for _, entry in ipairs(respawnQueue) do
 			if now >= entry.respawnAt then
 				if entry.isLoot then
-					spawnLootAt(entry.worldX, entry.worldZ, entry.y,
-						entry.allowBracelet or false)
+					spawnLootAt(entry.worldX, entry.worldZ, entry.y, entry.allowBracelet or false)
 				elseif entry.surfacePart and entry.surfacePart.Parent then
-					-- Add random jitter so respawned items don't stack on the original position
-					local jX = (math.random() - 0.5) * 2.8
-					local jZ = (math.random() - 0.5) * 2.8
+					local jX = (math.random()-0.5)*2.8
+					local jZ = (math.random()-0.5)*2.8
 					spawnIngredientAt(
-						entry.worldX + jX, entry.worldZ + jZ,
-						entry.surfaceTop, entry.ing,
-						entry.surfacePart)
+						entry.worldX+jX, entry.worldZ+jZ,
+						entry.surfaceTop, entry.ing, entry.surfacePart)
 				end
 			else
 				table.insert(remaining, entry)
 			end
 		end
-
 		respawnQueue = remaining
 	end
 end)
@@ -651,44 +700,43 @@ end)
 local IngredientSpawner = {}
 
 function IngredientSpawner.StartGatheringPhase()
-	-- Set up or clear the live folder
+	legendaryState.caviarSpawned = false
+	legendaryState.caviarPart    = nil
 	LiveFolder = workspace:FindFirstChild(LIVE_FOLDER_NAME)
 	if not LiveFolder then
-		LiveFolder = Instance.new("Folder")
+		LiveFolder        = Instance.new("Folder")
 		LiveFolder.Name   = LIVE_FOLDER_NAME
 		LiveFolder.Parent = workspace
 	else
 		LiveFolder:ClearAllChildren()
 	end
-
 	respawnQueue = {}
 	math.randomseed(os.clock())
-
-	-- Build ingredient pools fresh each match from ChompersData
-	local pools = buildPools()
-
+	local pools     = buildPools()
 	local ingCount  = spawnAllIngredients(pools)
 	local lootCount = spawnAllLoot()
-
 	print(string.format(
-		"[IngredientSpawner] Gathering started — %d ingredients, %d loot items (%d total)",
+		"[IngredientSpawner] Gathering started — %d ingredients, %d loot, %d total",
 		ingCount, lootCount, ingCount + lootCount))
 end
 
 function IngredientSpawner.ClearAll()
 	if LiveFolder then LiveFolder:ClearAllChildren() end
 	respawnQueue = {}
+	legendaryState.caviarSpawned = false
+	legendaryState.caviarPart    = nil
 end
 
--- ============================================================
--- PHASE LISTENER — auto-trigger on Gathering start
--- ============================================================
+function IngredientSpawner.OnLegendaryPickedUp(ingredientName)
+	if ingredientName == "Caviar" then
+		legendaryState.caviarSpawned = false
+		legendaryState.caviarPart    = nil
+	end
+end
 
 PhaseChangedEvent.Event:Connect(function(newPhase)
-	if newPhase == "Gathering" then
-		IngredientSpawner.StartGatheringPhase()
-	elseif newPhase == "Prelobby" then
-		IngredientSpawner.ClearAll()
+	if     newPhase == "Gathering" then IngredientSpawner.StartGatheringPhase()
+	elseif newPhase == "Prelobby"  then IngredientSpawner.ClearAll()
 	end
 end)
 
