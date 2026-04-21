@@ -1,18 +1,24 @@
 -- ============================================================
 -- ChompersData — ModuleScript · ReplicatedStorage
+-- v9.0 — April 2026
 --
 -- Single source of truth for all game constants, ingredients,
--- and recipes. Part 46 (March 2026) — Vertical Slice v2.
+-- and recipes. GDB v9.0 authoritative.
 --
--- Store zone layout:
---   Produce   = far right section
---   Bakery    = far left section
---   Dry Goods = mid-left aisles (shelves)
---   Freezer   = mid-right aisles (freezer banks)
---   Neutral   = stockroom / no zone allergy
+-- CRITICAL: CL = Cleanliness (HP, 0–100). NOT "Calorie Load".
 --
--- 27 ingredients (6 per primary zone + 3 neutral)
--- 23 recipes (6 Common / 6 Uncommon / 5 Rare / 5 UltraRare / 1 Legendary)
+-- Zone layout:
+--   Produce   = far right  (allergy: "Produce")
+--   Bakery    = far left   (allergy: "Bakery")
+--   Dry Goods = mid-left aisles / shelves (allergy: "Dry Goods")
+--   Freezer   = mid-right freezer banks   (allergy: "Freezer")
+--   NO Neutral zone — Oil/Wagyu/Caviar moved to zone ingredients.
+--
+-- Phase 1: 24 ingredients (3C/2U/1R per zone) · 28 recipes
+-- Phase 2: +16 ingredients (completes 4C/3U/2R/1UR) · +23 recipes
+-- All ingredients: 3 raw throws
+-- All recipes:     3 cooked throws
+-- Allergen ×1.75 applies to WHOLE recipe if ANY ingredient matches
 -- ============================================================
 
 local ChompersData = {}
@@ -23,36 +29,105 @@ local ChompersData = {}
 
 ChompersData.Constants = {
 
+	CL = {
+		-- CL = Cleanliness. Player HP bar (0–100).
+		-- Goes UP when hit. Resets ONLY via Sink (→0) or Napkin (−25).
+		-- Sink and Toilet are separate fixtures. Each costs 1 break.
+		-- Using both in one bathroom visit costs 2 breaks.
+		WarnThreshold    = 95,   -- screen edge pulse starts here
+		MaxValue         = 100,
+		WarnSlowDuration = 0.75, -- seconds of warning slow at 95%
+	},
+
 	FL = {
-		DecayPerSecond = 2,
+		-- FL = Fullness. Pressure bar (0–100).
+		-- Goes UP when hit OR when self-consuming food.
+		-- Resets ONLY via Toilet (→0). Sink does NOT reset FL.
+		-- FL from throws is ALWAYS FLAT — never multiplied by allergen/mark/fire.
+		-- CL multipliers (allergen ×1.75, fire ×1.60, mark bonus) apply to CL ONLY.
+		DecayPerSecond = 0.5,   -- v9.1: was 2.0 — bloat now achievable in sustained combat
 		CookingBonus   = 0.30,
+
+		-- Self-consume FL cost (eating instead of throwing adds FL to self):
+		SelfConsumeCost = {
+			Ingredient = 5,
+			Quick      = 10,
+			Standard   = 15,
+			Expert     = 20,
+			Legendary  = 30,
+		},
+
+		-- Bloat scaling — linear from FL=50 to FL=100
+		-- t = clamp((FL - 50) / 50, 0, 1)
+		-- Speed penalty:  -(t × 25)%        [0% to -25%]
+		-- Hitbox W+D:     +(t × 0.30)×      [1.0× to 1.30×] width+depth only, height unchanged
+		-- AoE radius:     +(t × 0.35)×      [1.0× to +35%] on all throws
+		BloatThreshold   = 50,   -- FL at which scaling begins
+		BloatSpeedMax    = 0.25, -- max speed penalty at FL=100 (25%)
+		BloatHitboxMax   = 0.30, -- max hitbox width/depth scale added (1.30×)
+		BloatAoEMax      = 0.35, -- max AoE radius added (1.35×)
 	},
 
 	FLPerHit = {
+		-- FL received when hit by a throw (flat, never multiplied)
 		RawCold = 1,
 		Cooked  = 2,
 	},
 
 	TrashCanCL = 5,
 
+	ThrowsPerIngredient = 3,  -- every raw ingredient = 3 throws
+	ThrowsPerRecipe     = 3,  -- every cooked recipe  = 3 throws
+
 	State100 = {
+		-- Triggered when CL hits 100% OR FL hits 100% (separately)
+		-- CL=100: drop 1 item + CL SpeedPenalty. Resets ONLY via Sink.
+		-- FL=100: forced bathroom (Toilet). Resets ONLY via Toilet.
+		-- Both at 100 simultaneously: costs 2 breaks (Sink + Toilet)
 		CueDuration       = 0.5,
-		SpeedPenalty      = 0.30,
-		DualSpeedPenalty  = 0.60,
+		SpeedPenalty      = 0.30,  -- CL=100 speed penalty (stacks with FL bloat scaling)
+		-- DualSpeedPenalty removed v9.1 — FL now has independent scaling (see FL.Bloat*)
 		DropAll           = true,
 		OwnerLockDuration = 1.0,
 	},
 
 	SpeedFloor = 0.35,
 
+	-- ============================================================
+	-- DAMAGE MODIFIER ORDER (apply in this sequence in ThrowServer)
+	-- ============================================================
+	-- CL MODIFIERS (apply to CL only — never to FL):
+	-- 1. Base CL         — ingredient.cl  or recipe.cl
+	-- 2. Mark bonus      — × 1.15 (Bruschetta) or × 1.20 (Soy Sauce), if target is marked
+	-- 3. Oil+Fire chain  — × 1.60, if Oil hit same target within 3s before this fire recipe
+	-- 4. Allergen mult   — × 1.75 (match) or × 0.75 (no match)
+	--                      Applied to WHOLE recipe CL if ANY ingredient matches target allergy
+	-- 5. Favourite bonus — + min(BaseCL × 0.50, 30), added FLAT after multipliers
+	-- 6. Final CL applied — no hard cap; soft-cap diminishing returns via Damage table
+	--
+	-- FL MODIFIERS (always flat, NEVER multiplied by anything above):
+	-- Enemy raw throw  → +FLPerHit.RawCold (1 FL) to target
+	-- Enemy cooked hit → +FLPerHit.Cooked  (2 FL) to target
+	-- Self-consume     → +FL.SelfConsumeCost[tier] to self, then drain if applicable
+	--
+	-- EXAMPLE — Chili Fried Rice (CL 32) vs Dry Goods allergy, fire chain:
+	--   CL: 32 × 1.60 × 1.75 = 89.6 CL delivered
+	--   FL: +2 FL to target (flat, regardless of allergy or chain)
+	--
+	-- NOTE: Marks consumed on trigger. Oil primer consumed by first fire recipe.
+	DamageCalcOrder = {
+		"BaseCL", "MarkBonus", "OilFireChain", "AllergenMultiplier", "FavouriteBonus"
+	},
+
 	Allergy = {
+		-- Applies to WHOLE recipe if ANY ingredient matches target's allergy.
+		-- Applies to raw throws from single ingredient as well.
 		MatchMultiplier   = 1.75,
 		NoMatchMultiplier = 0.75,
 	},
 
-	-- Cook Depth bonus REMOVED (Part 45 — Phase 2 mechanic)
 	Damage = {
-		OilFireMultiplier  = 1.60,
+		OilFireMultiplier  = 1.60,  -- Oil primer + fire recipe on same target within 3s
 		SoftCap1Threshold  = 3.0,
 		SoftCap2Threshold  = 4.0,
 		SoftCap1Efficiency = 1.00,
@@ -60,19 +135,21 @@ ChompersData.Constants = {
 		SoftCap3Efficiency = 0.65,
 	},
 
-	-- Mark system — Phase 1: Tomato (+15%) and Soy Sauce (+20%) only
+	-- Phase 1 Marks: Tomato (+15%) and Soy Sauce (+20%) only
 	Marks = {
-		Tomato   = { bonus = 0.15, window = 4 },
-		SoySauce = { bonus = 0.20, window = 4 },
+		Tomato    = { bonus = 0.15, window = 4 },
+		SoySauce  = { bonus = 0.20, window = 4 },
 	},
 
 	Elemental = {
 		OilWindowSeconds  = 3,
 		OilFireMultiplier = 1.60,
-		-- Phase 1: one fire recipe only
-		FireRecipes = { "Chili Fried Rice" },
+		-- Phase 1: one fire recipe only. Uses Chili Pepper (not Chili Powder).
+		FireIngredients = { "Chili Pepper" },
+		FireRecipes     = { "Chili Fried Rice" },
 	},
 
+	-- CC diminishing returns
 	CCDiminish = {
 		Hit1 = 1.00, Hit2 = 0.70, Hit3 = 0.40, Hit4 = 0.20,
 		ResetSeconds = 8,
@@ -81,12 +158,12 @@ ChompersData.Constants = {
 	FreezeCapSeconds = 2.5,
 
 	Favourite = {
-		ThrowBonusMultiplier = 0.5,
+		ThrowBonusMultiplier = 0.5,   -- min(BaseCL × 0.5, 30) additive
 		ThrowBonusCap        = 30,
-		SelfConsumeBuffMult  = 1.5,
-		EnemyFLSpike         = 2.0,
+		SelfConsumeBuffMult  = 1.5,   -- Craving: next throw within 8s
+		EnemyFLSpike         = 2.0,   -- ×2 FL spike on target
+		CravingWindow        = 8,     -- seconds after self-consume
 	},
-	FavouriteEnemyFLSpike = 2.0,
 
 	Throw = {
 		MinSpeed          = 66,
@@ -110,7 +187,7 @@ ChompersData.Constants = {
 	},
 
 	Economy = {
-		StartingCash      = 20,
+		StartingCash      = 30,   -- v9.0: was 20
 		StartingNapkins   = 1,
 		BasketWeightLimit = 35,
 		CartWeightLimit   = 70,
@@ -118,26 +195,32 @@ ChompersData.Constants = {
 		CartSpeedPenalty  = 0.15,
 	},
 
+	Napkin = {
+		HealAmount   = 25,   -- reduces CL by 25
+		UseTime      = 2.0,  -- seconds (interruptible by hit)
+		Cooldown     = 20,   -- starts on activation, not completion
+		StartCount   = 1,    -- per player per match
+	},
+
 	Respawn = {
-		Ingredient_Common    = 20,
-		Ingredient_Uncommon  = 35,
-		Ingredient_Rare      = 60,
-		Ingredient_UltraRare = 90,
-		Ingredient_Legendary = 0,
+		Common    = 20,
+		Uncommon  = 40,
+		Rare      = 60,
+		UltraRare = 90,
 		Cash_Small  = 15,
 		Cash_Stack  = 30,
-		Napkin      = 120,
+		Napkin      = 0,     -- never respawns after first spawn
 		Bracelet    = 180,
 	},
 
 	Phase = {
-		PreglobbyMinPlayers = 2,
-		Prelobby            = 60,
-		Gathering           = 120,
-		Cooking             = 90,
-		CookingGrace        = 10,
-		FoodFight           = 360,
-		Accolades           = 30,
+		PrelobbyMinPlayers = 2,
+		Prelobby           = 60,
+		Gathering          = 180,  -- v9.1: was 120 — Expert builders need breathing room
+		Cooking            = 120,  -- v9.1: was 90  — 2-3 recipes instead of 1-2
+		CookingGrace       = 15,   -- v9.1: was 10
+		FoodFight          = 480,  -- v9.1: was 360 — rewards multiple store trips
+		Accolades          = 45,   -- v9.1: was 30
 	},
 
 	Points = {
@@ -157,7 +240,12 @@ ChompersData.Constants = {
 			Uncommon  = 1.5,
 			Rare      = 2.5,
 			UltraRare = 4.0,
-			Legendary = 8.0,
+		},
+		TierMultiplier = {
+			Quick     = 1.0,
+			Standard  = 1.5,
+			Expert    = 2.5,
+			Legendary = 5.0,
 		},
 	},
 
@@ -179,210 +267,509 @@ ChompersData.Constants = {
 	},
 
 	Stove = {
+		CookTime = {
+			Quick     = 2,
+			Standard  = 5,
+			Expert    = 8,
+			UltraRare = 14,  -- Phase 2 Expert UR recipes
+			Legendary = 25,  -- Phase 2 Legendary recipes
+		},
+		-- Legacy Legendary (Phase 1): 12s
+		LegendaryP1CookTime = 12,
 		StoveInterruptPresent = 25,
 		StoveInterruptAway    = 40,
+	},
+
+	-- Cheese root mechanic
+	CheeseRoot = {
+		SecondHitWindow = 5,   -- seconds between Cheese Block hits for root
+		RootDuration    = 1.5,
 	},
 }
 
 -- ============================================================
--- INGREDIENTS — 27 TOTAL (Phase 1 Vertical Slice v2)
+-- INGREDIENTS
 --
--- 6 per primary zone. 1 UltraRare per zone. 3 Neutral.
--- Allergy = zone name. Neutral ingredients have allergy="None".
+-- Phase 1: 24 ingredients (3C/2U/1R per zone), phase=1
+-- Phase 2: 16 ingredients (completes 4C/3U/2R/1UR), phase=2
+--
+-- Fields: name, zone, rarity, cl, wt, cost, allergy,
+--         throws(always 3), effect, phase
 -- ============================================================
 
 ChompersData.Ingredients = {
 
-	-- ── PRODUCE (6) ──────────────────────────────────────────
-	{ name="Tomato",   zone="Produce", rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce", effect="MARK +15% CL on next hit" },
-	{ name="Egg",      zone="Produce", rarity="Common",    cl=6,  wt=2, cost=2,  allergy="Produce", effect="Mini AoE splat on impact" },
-	{ name="Garlic",   zone="Produce", rarity="Common",    cl=6,  wt=1, cost=2,  allergy="Produce", effect="Strips 15% from all active buff durations on target" },
-	{ name="Onion",    zone="Produce", rarity="Common",    cl=5,  wt=1, cost=2,  allergy="Produce", effect="AoE accuracy debuff cloud on impact" },
-	{ name="Avocado",  zone="Produce", rarity="Uncommon",  cl=7,  wt=2, cost=3,  allergy="Produce", effect="Soft slow on hit" },
-	{ name="Truffle",  zone="Produce", rarity="UltraRare", cl=10, wt=1, cost=18, allergy="Produce", effect="Cooking catalyst: next recipe cooked +20% CL, consumed on cook" },
+	-- ══════════════════════════════════════════════════════
+	-- PRODUCE — Allergy: "Produce"
+	-- Zone identity: marks, DoTs, debuffs, speed plays
+	-- Intra-zone Quick: Bruschetta, French Onion
+	-- Intra-zone Standard: Pico de Gallo
+	-- Intra-zone Expert: Green Curry
+	-- ══════════════════════════════════════════════════════
+	{
+		name="Tomato", zone="Produce", rarity="Common", phase=1,
+		cl=6, wt=1, cost=2, allergy="Produce", throws=3,
+		effect="Mark: next hit on target +15% CL (4s window). Self-consume: +5 FL.",
+	},
+	{
+		name="Onion", zone="Produce", rarity="Common", phase=1,
+		cl=5, wt=1, cost=2, allergy="Produce", throws=3,
+		effect="AoE cloud on impact: −30% throw accuracy 2.5s in 3-stud radius. Self-consume: +5 FL.",
+	},
+	{
+		name="Cucumber", zone="Produce", rarity="Common", phase=1,
+		cl=5, wt=2, cost=2, allergy="Produce", throws=3,
+		effect="On hit: basic CL + 5s anti-heal −30%. Self-consume: clear 1 debuff + 5 CL heal. Costs +5 FL.",
+	},
+	{
+		name="Garlic", meshRequired=true,
+		zone="Produce", rarity="Uncommon", phase=1,
+		cl=6, wt=1, cost=3, allergy="Produce", throws=3,
+		effect="Strips 15% from all active buff durations on target instantly. Self-consume: +5 FL.",
+	},
+	{
+		name="Avocado", meshRequired=true,
+		zone="Produce", rarity="Uncommon", phase=1,
+		cl=7, wt=2, cost=4, allergy="Produce", throws=3,
+		effect="Slow −20% movement 2.5s. Self-consume: +20% move speed 8s + clears 1 slow. Costs +5 FL.",
+	},
+	{
+		name="Chili Pepper", meshRequired=true,
+		zone="Produce", rarity="Rare", phase=1,
+		cl=10, wt=1, cost=8, allergy="Produce", throws=3,
+		effect="Burn DoT +2 CL/s 4s (8 total). Fire ingredient — Oil chain activates on this hit (×1.6 CL). Self-consume: +40% throw speed 8s + burn immunity 6s. Costs +5 FL.",
+	},
 
-	-- ── BAKERY (6) ───────────────────────────────────────────
-	{ name="Flour",       zone="Bakery", rarity="Common",    cl=5,  wt=2, cost=2,  allergy="Bakery", effect="Dust cloud on impact — accuracy debuff 3s" },
-	{ name="Milk",        zone="Bakery", rarity="Common",    cl=4,  wt=2, cost=3,  allergy="Bakery", effect="Wide weak splash. Self-consume: −10 CL" },
-	{ name="Butter",      zone="Bakery", rarity="Common",    cl=5,  wt=1, cost=3,  allergy="Bakery", effect="Floor slip zone after impact" },
-	{ name="Sugar",       zone="Bakery", rarity="Common",    cl=4,  wt=1, cost=2,  allergy="Bakery", effect="Combo ingredient — no standalone effect" },
-	{ name="Cheese Block",zone="Bakery", rarity="Uncommon",  cl=7,  wt=2, cost=4,  allergy="Bakery", effect="Slow on hit. Two hits same target = root 1.5s" },
-	{ name="Honey",       zone="Bakery", rarity="Rare",      cl=8,  wt=1, cost=8,  allergy="Bakery", effect="Root 1s + sticky floor zone 5s" },
-	{ name="Blue Cheese", zone="Bakery", rarity="Rare",      cl=9,  wt=2, cost=9,  allergy="Bakery", effect="CC amplifier — next slow/root on target lasts +50%" },
-	{ name="Fondant",     zone="Bakery", rarity="UltraRare", cl=12, wt=2, cost=16, allergy="Bakery", effect="On hit: −30% speed + vision blur 4s" },
+	-- ══════════════════════════════════════════════════════
+	-- BAKERY — Allergy: "Bakery"
+	-- Zone identity: CC, floor control, roots
+	-- Intra-zone Quick: Omelette, Buttered Toast
+	-- Intra-zone Standard: Cream Puff
+	-- Intra-zone Expert: Crème Brûlée
+	-- ══════════════════════════════════════════════════════
+	{
+		name="Flour", zone="Bakery", rarity="Common", phase=1,
+		cl=5, wt=2, cost=2, allergy="Bakery", throws=3,
+		effect="Dust cloud on impact: −25% throw accuracy in 3-stud area 3s. Self-consume: +5 FL.",
+	},
+	{
+		name="Egg", meshRequired=true,
+		zone="Bakery", rarity="Common", phase=1,
+		cl=6, wt=1, cost=2, allergy="Bakery", throws=3,
+		effect="Mini AoE splat: 3-stud radius, 40% CL to splash targets. Self-consume: next throw you land deals +40% CL. Costs +5 FL.",
+	},
+	{
+		name="Butter", zone="Bakery", rarity="Common", phase=1,
+		cl=5, wt=2, cost=3, allergy="Bakery", throws=3,
+		effect="Floor slip zone at impact (4s): 50% stumble chance. Self-consume: incoming CL −25% for 6s. Costs +5 FL.",
+	},
+	{
+		name="Milk", zone="Bakery", rarity="Uncommon", phase=1,
+		cl=6, wt=2, cost=3, allergy="Bakery", throws=3,
+		effect="Wide AoE splash (5-stud radius, 35% CL to splash). Self-consume: −10 CL heal + drain 15 FL (net −10 FL after +5 cost).",
+	},
+	{
+		name="Cheese Block", zone="Bakery", rarity="Uncommon", phase=1,
+		cl=7, wt=2, cost=5, allergy="Bakery", throws=3,
+		effect="Slow −25% for 3s. Two hits same target within 5s = root 1.5s. Self-consume: +5 FL.",
+	},
+	{
+		name="Honey", zone="Bakery", rarity="Rare", phase=1,
+		cl=9, wt=1, cost=9, allergy="Bakery", throws=3,
+		effect="Root 1s + sticky floor zone 5s (−35% speed in zone). Self-consume: +5 FL.",
+	},
 
-	-- ── DRY GOODS (6) ────────────────────────────────────────
-	{ name="Rice",        zone="Dry Goods", rarity="Common",    cl=5,  wt=2, cost=3,  allergy="Dry Goods", effect="Scatter AoE on impact" },
-	{ name="Pasta",       zone="Dry Goods", rarity="Common",    cl=6,  wt=2, cost=3,  allergy="Dry Goods", effect="Slow on hit" },
-	{ name="Noodles",     zone="Dry Goods", rarity="Uncommon",  cl=6,  wt=2, cost=3,  allergy="Dry Goods", effect="Entangle — movement penalty 2s" },
-	{ name="Soy Sauce",   zone="Dry Goods", rarity="Uncommon",  cl=5,  wt=1, cost=4,  allergy="Dry Goods", effect="MARK +20% CL on next hit" },
-	{ name="Chili Powder",zone="Dry Goods", rarity="Uncommon",  cl=6,  wt=1, cost=3,  allergy="Dry Goods", effect="Burn DoT +1 CL/s for 4s. Fire ingredient." },
-	{ name="Saffron",     zone="Dry Goods", rarity="UltraRare", cl=8,  wt=1, cost=14, allergy="Dry Goods", effect="AoE amplifier — recipes containing Saffron gain splash radius" },
+	-- ══════════════════════════════════════════════════════
+	-- DRY GOODS — Allergy: "Dry Goods"
+	-- Zone identity: utility, marks, fire setup, control
+	-- Intra-zone Standard: Fried Noodles
+	-- Intra-zone Expert: Dandan Noodles
+	-- ══════════════════════════════════════════════════════
+	{
+		name="Rice", zone="Dry Goods", rarity="Common", phase=1,
+		cl=5, wt=2, cost=3, allergy="Dry Goods", throws=3,
+		effect="Scatter AoE on impact: 3-stud radius, light CL to nearby players. Self-consume: +5 FL.",
+	},
+	{
+		name="Pasta", zone="Dry Goods", rarity="Common", phase=1,
+		cl=6, wt=2, cost=3, allergy="Dry Goods", throws=3,
+		effect="Tangle: −25% movement 2s + −30% throw range 2s. Self-consume: +5 FL.",
+	},
+	{
+		name="Salt", zone="Dry Goods", rarity="Common", phase=1,
+		cl=4, wt=1, cost=2, allergy="Dry Goods", throws=3,
+		effect="Anti-heal: target's next healing effect −50% for 5s. Self-consume: +5 FL.",
+	},
+	{
+		name="Noodles", zone="Dry Goods", rarity="Uncommon", phase=1,
+		cl=6, wt=2, cost=4, allergy="Dry Goods", throws=3,
+		effect="Entangle: −30% movement for 2s. Self-consume: +5 FL.",
+	},
+	{
+		name="Soy Sauce", zone="Dry Goods", rarity="Uncommon", phase=1,
+		cl=5, wt=1, cost=5, allergy="Dry Goods", throws=3,
+		effect="Mark: next hit on target +20% CL (4s window). Self-consume: +1 bonus throw on current hotbar item. Costs +5 FL.",
+	},
+	{
+		name="Oil", zone="Dry Goods", rarity="Rare", phase=1,
+		cl=6, wt=2, cost=7, allergy="Dry Goods", throws=3,
+		effect="Fire primer: fire recipe hitting same target within 3s = ×1.6 CL. Creates brief oil slick at impact. Self-consume: +5 FL.",
+	},
 
-	-- ── FREEZER (6) ──────────────────────────────────────────
-	{ name="Chicken",   zone="Freezer", rarity="Common",    cl=8,  wt=3, cost=5,  allergy="Freezer", effect="Knockback on direct hit" },
-	{ name="Tuna",      zone="Freezer", rarity="Common",    cl=6,  wt=2, cost=4,  allergy="Freezer", effect="Fastest raw throw in the game" },
-	{ name="Beef",      zone="Freezer", rarity="Uncommon",  cl=9,  wt=4, cost=6,  allergy="Freezer", effect="High CL spike on direct hit" },
-	{ name="Pork",      zone="Freezer", rarity="Uncommon",  cl=9,  wt=4, cost=5,  allergy="Freezer", effect="DoT bleed — +1 CL/s for 3s after hit" },
-	{ name="Shrimp",    zone="Freezer", rarity="Rare",      cl=8,  wt=2, cost=7,  allergy="Freezer", effect="Double hit — two CL impacts per throw" },
-	{ name="Ice Cream", zone="Freezer", rarity="UltraRare", cl=10, wt=2, cost=18, allergy="Freezer", effect="Freeze 2s (hard cap 2.5s total)" },
-
-	-- ── NEUTRAL (3) — Stockroom / cooking tools ───────────────
-	{ name="Oil",        zone="Neutral", rarity="Uncommon",  cl=5,  wt=2, cost=4,  allergy="None", effect="Fire primer — fire recipe on same target within 3s = ×1.6 CL" },
-	{ name="Wagyu Beef", zone="Neutral", rarity="UltraRare", cl=14, wt=5, cost=20, allergy="None", effect="Knockdown on direct hit. Required for Million Dollar Steak." },
-	{ name="Caviar",     zone="Neutral", rarity="Legendary", cl=9,  wt=1, cost=12, allergy="None", effect="Precision throw, no splash. Required for Million Dollar Steak." },
+	-- ══════════════════════════════════════════════════════
+	-- FREEZER — Allergy: "Freezer"
+	-- Zone identity: raw power, knockback, disruption
+	-- Intra-zone Expert: Mixed Grill
+	-- ══════════════════════════════════════════════════════
+	{
+		name="Chicken", meshRequired=true,
+		zone="Freezer", rarity="Common", phase=1,
+		cl=7, wt=3, cost=4, allergy="Freezer", throws=3,
+		effect="Knockback on direct hit. Self-consume: +5 FL.",
+	},
+	{
+		name="Ground Beef", zone="Freezer", rarity="Common", phase=1,
+		cl=7, wt=3, cost=4, allergy="Freezer", throws=3,
+		effect="Stagger: 0.5s action cancel on target (interrupts cooking or throw animation). Self-consume: +5 FL.",
+	},
+	{
+		name="Tuna", zone="Freezer", rarity="Common", phase=1,
+		cl=6, wt=2, cost=4, allergy="Freezer", throws=3,
+		effect="Fastest raw throw speed in the game. Straight low-arc trajectory. Self-consume: +50% throw speed 10s. Costs +5 FL.",
+	},
+	{
+		name="Lamb Chop", meshRequired=true,
+		zone="Freezer", rarity="Uncommon", phase=1,
+		cl=8, wt=3, cost=6, allergy="Freezer", throws=3,
+		effect="Knockback + slow −20% for 2s. Self-consume: +5 FL.",
+	},
+	{
+		name="Turkey", zone="Freezer", rarity="Uncommon", phase=1,
+		cl=7, wt=3, cost=5, allergy="Freezer", throws=3,
+		effect="Disarm: knocks active item from target's current hand slot on hit. Self-consume: +5 FL.",
+	},
+	{
+		name="Shrimp", meshRequired=true,
+		zone="Freezer", rarity="Rare", phase=1,
+		cl=10, wt=2, cost=9, allergy="Freezer", throws=3,
+		effect="Double hit: two separate CL impacts per throw (20 total). Both impacts apply allergy/mark bonuses. Self-consume: +8 FL.",
+	},
 }
-
--- ============================================================
--- RECIPES — 23 TOTAL (Phase 1 Vertical Slice v2)
---
--- Servings: Common=3, Uncommon=2, Rare/UR/Legendary=1
--- Cook Depth bonus REMOVED (Phase 2)
--- All cooked: station="Prep+Stove"
--- Raw: station="None"
--- Fire recipe Phase 1: Chili Fried Rice only
---
--- Raw throw recipes requiring 2× same ingredient (like Egg Splat):
---   Tomato Toss: Tomato+Tomato — prevents single-tomato spam
---   Onion Soup:  Onion+Onion  — matches Egg Splat pattern
--- ============================================================
 
 ChompersData.Recipes = {
 
-	-- ── COMMON — 3 servings, 2s cook ─────────────────────────
+	-- ══════════════════════════════════════════════════════
+	-- QUICK (10) — No stove, 2s cold prep, 3 throws each
+	-- Intra-zone: Bruschetta (Produce), French Onion (Produce),
+	--             Omelette (Bakery), Buttered Toast (Bakery)
+	-- ══════════════════════════════════════════════════════
 	{
-		name="Tomato Toss", rarity="Common", cl=6, station="None",
-		ingredients={"Tomato","Tomato"}, wt=2, cost=4,
-		notes="Raw. MARK +15% on hit. Requires 2 tomatoes — prevents single-tomato spam.",
+		name="Bruschetta", tier="Quick", phase=1, serverAnnounce=false,
+		cl=9, station="None", cookTime=2, servings=3,
+		ingredients={"Tomato","Tomato"}, cost=4,
+		effect="Mark ×1.35 amplified (both tomatoes compound). Next hit on target +20% CL 5s.",
+		notes="🌱 Plant-based. Intra-zone Produce. Self-consume: +10 FL.",
 	},
 	{
-		name="Egg Splat", rarity="Common", cl=8, station="None",
-		ingredients={"Egg","Egg"}, wt=4, cost=4,
-		notes="Raw. Mini AoE splat. Cheapest cooked-equivalent throw.",
+		name="French Onion", tier="Quick", phase=1, serverAnnounce=false,
+		cl=8, station="None", cookTime=2, servings=3,
+		ingredients={"Onion","Onion"}, cost=4,
+		effect="4-stud cloud: −30% accuracy + −15% throw speed 3s. Wider than raw, adds speed penalty.",
+		notes="🌱 Plant-based. Intra-zone Produce. Self-consume: +10 FL.",
 	},
 	{
-		name="Onion Soup", rarity="Common", cl=6, station="None",
-		ingredients={"Onion","Onion"}, wt=2, cost=4,
-		notes="Raw. AoE accuracy debuff on impact. Requires 2 onions.",
+		name="Omelette", tier="Quick", phase=1, serverAnnounce=false,
+		cl=9, station="None", cookTime=2, servings=3,
+		ingredients={"Egg","Egg"}, cost=4,
+		effect="5-stud AoE splat: full CL to center, 50% CL to all splash targets. Self-consume: next throw deals +50% CL. Costs +10 FL.",
+		notes="Intra-zone Bakery.",
 	},
 	{
-		name="Chunky Guac", rarity="Common", cl=8, station="None",
-		ingredients={"Avocado","Tomato"}, wt=3, cost=5,
-		notes="Raw cold. Double Produce hit — only recipe that double-targets Produce allergy at Common tier.",
+		name="Buttered Toast", tier="Quick", phase=1, serverAnnounce=false,
+		cl=9, station="None", cookTime=2, servings=3,
+		ingredients={"Flour","Butter"}, cost=5,
+		effect="Dust cloud −25% accuracy AND floor slip zone simultaneously at impact. Self-consume: incoming CL −30% for 8s. Costs +10 FL.",
+		notes="Intra-zone Bakery.",
 	},
 	{
-		name="Spaghetti Surprise", rarity="Common", cl=8, station="Prep+Stove",
-		ingredients={"Pasta","Tomato"}, wt=3, cost=5,
-		notes="Dry Goods + Produce. Tomato carries MARK +15% into the throw.",
+		name="Marinara", tier="Quick", phase=1, serverAnnounce=false,
+		cl=9, station="None", cookTime=2, servings=3,
+		ingredients={"Pasta","Tomato"}, cost=5,
+		effect="Tangle −25% throw range 2s + Mark +15%. Marked tangled target: next hit deals +15% CL.",
+		notes="🌱 Plant-based. Self-consume: +10 FL.",
 	},
 	{
-		name="Chicken Rice", rarity="Common", cl=9, station="Prep+Stove",
-		ingredients={"Chicken","Rice"}, wt=5, cost=8,
-		notes="First cooked recipe most players make. Freezer + Dry Goods double allergy.",
-	},
-
-	-- ── UNCOMMON — 2 servings, 4s cook ───────────────────────
-	{
-		name="Mac and Cheese", rarity="Uncommon", cl=22, station="Prep+Stove",
-		ingredients={"Pasta","Cheese Block","Milk"}, wt=6, cost=10,
-		notes="Double Bakery (Cheese + Milk) + Dry Goods. Classic mid-tier pressure.",
+		name="Pickle", tier="Quick", phase=1, serverAnnounce=false,
+		cl=8, station="None", cookTime=2, servings=3,
+		ingredients={"Cucumber","Salt"}, cost=4,
+		effect="Anti-heal −50% for 6s. Self-consume instead: clear 2 debuffs + restore 13 CL. Costs +10 FL.",
+		notes="🌱 Plant-based.",
 	},
 	{
-		name="Chili Fried Rice", rarity="Uncommon", cl=24, station="Prep+Stove",
-		ingredients={"Rice","Oil","Chili Powder"}, wt=5, cost=10,
-		notes="FIRE RECIPE. Oil primer + Chili Fried Rice on same target = ×1.6 (38.4 CL). Only fire recipe Phase 1.",
+		name="Tuna Sashimi", tier="Quick", phase=1, serverAnnounce=false,
+		cl=12, station="None", cookTime=2, servings=3,
+		ingredients={"Tuna","Soy Sauce"}, cost=9,
+		effect="Fastest recipe throw arc (Tuna trajectory). Mark +20% lasts 5s (extended from 4s raw). Self-consume: +50% throw speed 10s. Costs +10 FL.",
 	},
 	{
-		name="Noodle Bowl", rarity="Uncommon", cl=20, station="Prep+Stove",
-		ingredients={"Noodles","Soy Sauce","Oil"}, wt=5, cost=11,
-		notes="Triple Dry Goods. Soy Sauce carries MARK +20%.",
+		name="Ceviche", tier="Quick", phase=1, serverAnnounce=false,
+		cl=11, station="None", cookTime=2, servings=3,
+		ingredients={"Tuna","Cucumber","Salt"}, cost=8,
+		effect="Fast Tuna arc + anti-heal −50% 5s. Self-consume: anti-heal immunity 6s + +15% move speed. Costs +10 FL.",
+		notes="Peruvian.",
 	},
 	{
-		name="Soy Chicken", rarity="Uncommon", cl=22, station="Prep+Stove",
-		ingredients={"Chicken","Soy Sauce","Rice"}, wt=6, cost=12,
-		notes="Freezer + Dry Goods (×2). Soy Sauce MARK carry.",
+		name="Avocado Toast", tier="Quick", phase=1, serverAnnounce=false,
+		cl=16, station="None", cookTime=2, servings=3,
+		ingredients={"Avocado","Butter","Flour"}, cost=10,
+		effect="Triple simultaneous: slow −20%, floor slip 4s, dust cloud −25% accuracy 3s. Self-consume: +20% speed + incoming CL −20% 8s. Costs +10 FL.",
 	},
 	{
-		name="Garlic Chicken", rarity="Uncommon", cl=22, station="Prep+Stove",
-		ingredients={"Chicken","Garlic","Soy Sauce"}, wt=5, cost=11,
-		notes="Freezer + Produce + Dry Goods triple zone. Garlic strips target's buffs on hit.",
-	},
-	{
-		name="Tuna Noodles", rarity="Uncommon", cl=20, station="Prep+Stove",
-		ingredients={"Tuna","Noodles","Rice"}, wt=6, cost=11,
-		notes="Freezer + Dry Goods (×2). Tuna speed carry — fastest Uncommon projectile.",
-	},
-
-	-- ── RARE — 1 serving, 7s cook ────────────────────────────
-	{
-		name="Honey Glazed Chicken", rarity="Rare", cl=34, station="Prep+Stove",
-		ingredients={"Chicken","Honey","Oil"}, wt=6, cost=17,
-		notes="Freezer + Bakery. Honey root mechanic applies on throw.",
-	},
-	{
-		name="Shrimp Noodles", rarity="Rare", cl=36, station="Prep+Stove",
-		ingredients={"Shrimp","Noodles","Soy Sauce"}, wt=5, cost=14,
-		notes="Freezer + Dry Goods (×2). Shrimp double-hit mechanic applies.",
-	},
-	{
-		name="Blue Cheese Pasta", rarity="Rare", cl=33, station="Prep+Stove",
-		ingredients={"Pasta","Blue Cheese","Milk"}, wt=6, cost=15,
-		notes="Dry Goods + Bakery (×2). Blue Cheese CC amplifier applies.",
-	},
-	{
-		name="Beef Fried Rice", rarity="Rare", cl=34, station="Prep+Stove",
-		ingredients={"Beef","Rice","Garlic"}, wt=7, cost=17,
-		notes="Freezer + Dry Goods + Produce. Garlic strips buffs on throw impact.",
-	},
-	{
-		name="BBQ Pork Bowl", rarity="Rare", cl=33, station="Prep+Stove",
-		ingredients={"Pork","Rice","Noodles"}, wt=8, cost=13,
-		notes="Freezer + Dry Goods (×2). Pork DoT bleed applies on throw.",
+		name="Tzatziki", tier="Quick", phase=1, serverAnnounce=false,
+		cl=10, station="None", cookTime=2, servings=3,
+		ingredients={"Cucumber","Milk","Garlic"}, cost=9,
+		effect="AoE splash 5-stud 35% CL + strip buff durations 20% (Garlic) + anti-heal −30% 4s (Cucumber). Self-consume: heal 12 CL + clear 2 debuffs. Costs +10 FL.",
+		notes="Greek.",
 	},
 
-	-- ── ULTRA RARE — 1 serving, 12s cook ─────────────────────
+	-- ══════════════════════════════════════════════════════
+	-- STANDARD (11) — Prep+Stove, 5s cook, 3 throws each
+	-- Intra-zone: Pico de Gallo (Produce), Cream Puff (Bakery),
+	--             Fried Noodles (Dry Goods), Mixed Grill (Freezer — Expert)
+	-- ══════════════════════════════════════════════════════
 	{
-		name="Truffle Pasta", rarity="UltraRare", cl=44, station="Prep+Stove",
-		ingredients={"Pasta","Truffle","Cheese Block"}, wt=5, cost=25,
-		notes="Dry Goods + Produce + Bakery triple allergy. Truffle catalyst consumed on cook.",
+		name="Pico de Gallo", tier="Standard", phase=1, serverAnnounce=false,
+		cl=16, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Tomato","Cucumber","Garlic"}, cost=7,
+		effect="Mark +15% (Tomato) + strip all buff durations 20% (Garlic) + anti-heal −50% 5s (Cucumber). Self-consume: clear all debuffs + +20% speed 6s. Costs +15 FL.",
+		notes="🌱 Plant-based. Mexican. Intra-zone Produce.",
 	},
 	{
-		name="Saffron Rice", rarity="UltraRare", cl=44, station="Prep+Stove",
-		ingredients={"Rice","Saffron","Oil"}, wt=5, cost=21,
-		notes="Saffron AoE amplifier on throw. Dry Goods allergy.",
+		name="Cream Puff", tier="Standard", phase=1, serverAnnounce=false,
+		cl=16, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Flour","Egg","Butter"}, cost=7,
+		effect="All three Bakery debuffs combined: dust cloud −25% accuracy 3s + AoE splat 40% CL nearby + floor slip 4s. Self-consume: incoming CL −30% 8s + next throw +40% CL. Costs +15 FL.",
+		notes="French. Intra-zone Bakery.",
 	},
 	{
-		name="Lobster Bisque", rarity="UltraRare", cl=45, station="Prep+Stove",
-		ingredients={"Shrimp","Milk","Saffron","Oil"}, wt=7, cost=28,
-		notes="Only 4-ingredient recipe. Freezer + Bakery. Saffron AoE. vs Freezer allergy ≈ 79 CL.",
+		name="Fried Noodles", tier="Standard", phase=1, serverAnnounce=false,
+		cl=16, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Noodles","Pasta","Soy Sauce"}, cost=12,
+		effect="Entangle −30% + slow −20% stacked (−50% effective movement) + Mark +20% (Soy Sauce). Self-consume: +1 bonus throw on current item. Costs +15 FL.",
+		notes="🌱 Plant-based. Chinese. Intra-zone Dry Goods.",
 	},
 	{
-		name="Ice Cream Shake", rarity="UltraRare", cl=40, station="Prep+Stove",
-		ingredients={"Ice Cream","Milk"}, wt=4, cost=21,
-		notes="Freeze delivery vehicle. Freezer + Bakery double allergy.",
+		name="Aglio e Olio", tier="Standard", phase=1, serverAnnounce=false,
+		cl=16, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Garlic","Pasta"}, cost=6,
+		effect="Tangle −25% throw range 2s + slow −20% 2.5s + strips all active buff durations 20%.",
+		notes="🌱 Plant-based. Italian.",
 	},
 	{
-		name="Honey Fondant Cake", rarity="UltraRare", cl=42, station="Prep+Stove",
-		ingredients={"Fondant","Honey","Flour"}, wt=5, cost=26,
-		notes="Triple Bakery hit. Nastiest CC combo — speed penalty + vision blur + root + sticky floor.",
+		name="Mac and Cheese", tier="Standard", phase=1, serverAnnounce=false,
+		cl=22, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Pasta","Milk","Cheese Block"}, cost=11,
+		effect="5-stud AoE slow zone: all players −30% movement 3.5s. Direct hit: root potential (second Cheese hit within 5s = root 1.5s).",
+		notes="American.",
+	},
+	{
+		name="Ivory Ramen", tier="Standard", phase=1, serverAnnounce=false,
+		cl=18, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Noodles","Onion","Milk"}, cost=9,
+		effect="5-stud AoE: entangle −30% movement + accuracy debuff −25% simultaneously on all targets hit.",
+		notes="Japanese.",
+	},
+	{
+		name="Teriyaki Chicken", tier="Standard", phase=1, serverAnnounce=false,
+		cl=18, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Chicken","Soy Sauce"}, cost=9,
+		effect="Knockback 8 studs + Mark +20% while target airborne. Self-consume: +1 bonus throw + mark immunity 5s. Costs +15 FL.",
+		notes="Japanese.",
+	},
+	{
+		name="Thanksgiving Leftovers", tier="Standard", phase=1, serverAnnounce=false,
+		cl=22, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Turkey","Rice","Garlic"}, cost=12,
+		effect="Disarm + scatter AoE (rice scatters with dropped item) + strips all buff durations 20% (Garlic). Disarm window maximised by scatter.",
+		notes="American.",
+	},
+	{
+		name="Bibimbap", tier="Standard", phase=1, serverAnnounce=false,
+		cl=18, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Egg","Rice","Garlic"}, cost=9,
+		effect="5-stud AoE splat (Egg) + scatter AoE (Rice) + strips buff durations 20% (Garlic). Self-consume: +30% throw speed 8s + next throw +25% CL. Costs +15 FL.",
+		notes="Korean.",
+	},
+	{
+		name="Cheeseburger", tier="Standard", phase=1, serverAnnounce=false,
+		cl=20, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Ground Beef","Cheese Block","Flour"}, cost=11,
+		effect="Three simultaneous hits: stagger 0.5s action cancel + slow −25% 3s + accuracy debuff −25% 3s. Cooked = heavier and messier than raw ingredients.",
+		notes="American.",
+	},
+	{
+		name="Lamb Stew", tier="Standard", phase=1, serverAnnounce=false,
+		cl=20, station="Prep+Stove", cookTime=5, servings=3,
+		ingredients={"Lamb Chop","Noodles"}, cost=10,
+		effect="Knockback 10 studs (strongest Standard knockback) + entangle −35% 2.5s on landing. Self-consume: incoming CL −20% 8s + 10 CL heal. Costs +15 FL.",
+		notes="British.",
 	},
 
-	-- ── LEGENDARY — 1 serving, 20s cook ──────────────────────
+	-- ══════════════════════════════════════════════════════
+	-- EXPERT (6) — Prep+Stove, 8s cook, 3 throws each
+	-- Intra-zone: Green Curry (Produce), Crème Brûlée (Bakery),
+	--             Dandan Noodles (Dry Goods), Mixed Grill (Freezer)
+	-- ══════════════════════════════════════════════════════
 	{
-		name="Million Dollar Steak", rarity="Legendary", cl=70, station="Prep+Stove",
-		ingredients={"Wagyu Beef","Truffle","Caviar"}, wt=7, cost=50,
-		notes="Server-wide announcement on throw. Golden explosion. Instant kill with fav bonus.",
+		name="Green Curry", tier="Expert", phase=1, serverAnnounce=false,
+		cl=32, station="Prep+Stove", cookTime=8, servings=3,
+		ingredients={"Avocado","Chili Pepper","Garlic"}, cost=15,
+		effect="Slow −20% (Avocado) + burn DoT +2 CL/s 4s (Chili Pepper — FIRE RECIPE, Oil primer activates) + strips all buff durations (Garlic). Produce Expert flagship. Self-consume: +40% throw speed 8s + burn immunity 6s. Costs +20 FL.",
+		notes="🌱 Plant-based. Thai. Intra-zone Produce. Fire recipe.",
+	},
+	{
+		name="Creme Brulee", tier="Expert", phase=1, serverAnnounce=false,
+		cl=32, station="Prep+Stove", cookTime=8, servings=3,
+		ingredients={"Egg","Milk","Honey"}, cost=14,
+		effect="AoE splat full CL (Egg) + 5-stud wide splash 35% CL (Milk) + root 1s + sticky floor 5s (Honey). Widest AoE root in Phase 1. Self-consume: −12 CL heal + drain 20 FL + next throw fires silently (net 0 FL after +20 cost). ",
+		notes="French. Intra-zone Bakery.",
+	},
+	{
+		name="Dandan Noodles", tier="Expert", phase=1, serverAnnounce=false,
+		cl=32, station="Prep+Stove", cookTime=8, servings=3,
+		ingredients={"Noodles","Oil","Soy Sauce"}, cost=16,
+		effect="Entangle −35% 2s (Noodles) + fire primer (Oil — target is entangled when fire recipe lands, near-guaranteed chain) + Mark +20% (Soy Sauce). Self-consume: +1 bonus throw + Mark lasts 8s on you. Costs +20 FL.",
+		notes="🌱 Plant-based. Chinese. Intra-zone Dry Goods.",
+	},
+	{
+		name="Mixed Grill", tier="Expert", phase=1, serverAnnounce=false,
+		cl=34, station="Prep+Stove", cookTime=8, servings=3,
+		ingredients={"Chicken","Ground Beef","Turkey"}, cost=13,
+		effect="Full Freezer trifecta in one throw: knockback 8 studs (Chicken) + stagger 0.5s action cancel (Ground Beef) + disarm (Turkey). Self-consume: +20% speed 8s + incoming CL −20% 6s. Costs +20 FL.",
+		notes="BBQ American. Intra-zone Freezer.",
+	},
+	{
+		name="Chili Fried Rice", tier="Expert", phase=1, serverAnnounce=false,
+		cl=32, station="Prep+Stove", cookTime=8, servings=3,
+		ingredients={"Rice","Oil","Chili Pepper"}, cost=20,
+		effect="FIRE RECIPE. Burn DoT +2 CL/s 4s + scatter AoE. Oil primer ×1.6 = effective ~51 CL per throw vs allergy. Self-consume: +40% throw speed 8s + fire immunity 6s. Costs +20 FL.",
+		notes="🌱 Plant-based. Chinese. Oil must hit same target within 3s for fire chain.",
+	},
+	{
+		name="Honey Glazed Chicken", tier="Expert", phase=1, serverAnnounce=false,
+		cl=34, station="Prep+Stove", cookTime=8, servings=3,
+		ingredients={"Chicken","Honey","Oil"}, cost=20,
+		effect="Knockback + root 1s + sticky floor zone 5s + oil slick. Target pinned in dual-hazard zone. Self-consume: drain 30 FL + +20% speed 8s (net −10 FL after +20 cost).",
+	},
+
+	-- ══════════════════════════════════════════════════════
+	-- LEGENDARY (1) — Prep+Stove, 12s cook, 3 throws
+	-- ══════════════════════════════════════════════════════
+	{
+		name="Jumbo Seafood Boil", tier="Legendary", phase=1, serverAnnounce=true,
+		cl=48, station="Prep+Stove", cookTime=12, servings=3,
+		ingredients={"Shrimp","Honey","Garlic","Oil"}, cost=28,
+		effect="Double CL impact both hits through mitigation. First impact: root 1s + strips ALL active buffs. Floor zone: sticky (−35% speed) + oil slick 5s combined. Root guarantees target stays in dual-hazard zone. Server-wide message on throw. Self-consume: drain 40 FL + incoming CL −40% 10s + +30% throw speed (net −10 FL after +30 cost).",
+		notes="Cajun. Covers all 4 zones. Phase 1 Legendary ceiling.",
 	},
 }
-
--- ============================================================
--- LEGENDARY OBJECTS
--- ============================================================
 
 ChompersData.LegendaryObjects = {
-	{ name="Golden Cart",     type="WorldLoot", spawnAnywhere=true, maxPerMatch=1 },
-	{ name="Portable Cooker", type="WorldLoot", spawnAnywhere=true, maxPerMatch=1 },
+	{ name="Golden Cart",     type="WorldLoot", spawnAnywhere=true, maxPerMatch=1,
+		effect="140wt capacity (double cart). Speed bonus 10%, extended throw range ×2 for 20s." },
+	{ name="Portable Cooker", type="WorldLoot", spawnAnywhere=true, maxPerMatch=1,
+		effect="4 uses. Deploy anywhere on the map. Lockable." },
 }
+
+-- ============================================================
+-- SPAWN POOLS
+-- Used by IngredientSpawner to know which ingredients can spawn where.
+-- ============================================================
+
+ChompersData.SpawnPools = {
+	-- Zone surfaces spawn their zone's Phase 1 ingredients only
+	Produce   = {},
+	Bakery    = {},
+	DryGoods  = {},
+	Freezer   = {},
+	-- Deli spawns Bakery + Freezer Uncommon+ weighted mix of all Phase 1
+	Deli      = {},
+	-- Stockroom spawns ALL ingredients (Phase 1 implemented, Phase 2 when unlocked)
+	Stockroom = {},
+}
+
+-- Populate spawn pools from ingredient table
+for _, ing in ipairs(ChompersData.Ingredients) do
+	if ing.phase == 1 then
+		local zoneKey = ing.zone:gsub(" ", "")  -- "Dry Goods" → "DryGoods"
+		if ChompersData.SpawnPools[zoneKey] then
+			table.insert(ChompersData.SpawnPools[zoneKey], ing.name)
+		end
+		table.insert(ChompersData.SpawnPools.Stockroom, ing.name)
+		-- Deli: Bakery + Freezer weighted
+		if ing.zone == "Bakery" or ing.zone == "Freezer" then
+			table.insert(ChompersData.SpawnPools.Deli, ing.name)
+		end
+	end
+end
+-- Deli also gets all zones (unweighted fallback)
+for _, ing in ipairs(ChompersData.Ingredients) do
+	if ing.phase == 1 then
+		table.insert(ChompersData.SpawnPools.Deli, ing.name)
+	end
+end
+
+-- ============================================================
+-- EMOJI TABLE (single source of truth)
+-- ============================================================
+
+local EMOJI_TABLE = {
+	-- Ingredients — Phase 1 only (Roblox-safe emojis, 2019 and earlier)
+	Tomato="🍅", Onion="🧅", Cucumber="🥒",
+	Garlic="🧄", Avocado="🥑", ["Chili Pepper"]="🌶",
+	Flour="🌾", Egg="🥚", Butter="🧈",
+	Milk="🥛", ["Cheese Block"]="🧀", Honey="🍯",
+	Rice="🍚", Pasta="🍝", Salt="⬜",
+	Noodles="🍜", ["Soy Sauce"]="🍶", Oil="🍵",
+	Chicken="🍗", ["Ground Beef"]="🥩", Tuna="🐟",
+	["Lamb Chop"]="🍖", Turkey="🍗", Shrimp="🦐",
+	-- Loot
+	["Golden Cart"]="🛒", ["Portable Cooker"]="🍳",
+	["Loose Cash"]="💵", ["Cash Stack"]="💵", Napkin="🧻",
+	["Alliance Bracelet"]="💜",
+	-- Recipes — Quick
+	Bruschetta="🍅", ["French Onion"]="🧅", Omelette="🥚",
+	["Buttered Toast"]="🍞", Marinara="🍝", Pickle="🥒",
+	["Tuna Sashimi"]="🐟", Ceviche="🥒", ["Avocado Toast"]="🥑",
+	Tzatziki="🥒",
+	-- Recipes — Standard
+	["Pico de Gallo"]="🍅", ["Cream Puff"]="🧁", ["Fried Noodles"]="🍜",
+	["Aglio e Olio"]="🍝", ["Mac and Cheese"]="🧀", ["Ivory Ramen"]="🍜",
+	["Teriyaki Chicken"]="🍗", ["Thanksgiving Leftovers"]="🥘",
+	Bibimbap="🍳", Cheeseburger="🍔", ["Lamb Stew"]="🍖",
+	-- Recipes — Expert
+	["Green Curry"]="🌶", ["Creme Brulee"]="🍮",
+	["Dandan Noodles"]="🍜", ["Mixed Grill"]="🥩",
+	["Chili Fried Rice"]="🔥", ["Honey Glazed Chicken"]="🍯",
+	-- Recipes — Legendary
+	["Jumbo Seafood Boil"]="🍲",
+}
+
+function ChompersData.GetEmoji(name, zone)
+	return EMOJI_TABLE[name] or (zone and ZONE_EMOJI[zone]) or "🍽"
+end
+
+-- Auto-assign emoji to all ingredients and recipes
+for _, ing in ipairs(ChompersData.Ingredients) do
+	if not ing.emoji then
+		ing.emoji = ChompersData.GetEmoji(ing.name, ing.zone)
+	end
+end
+for _, rec in ipairs(ChompersData.Recipes) do
+	if not rec.emoji then
+		rec.emoji = ChompersData.GetEmoji(rec.name)
+	end
+end
 
 -- ============================================================
 -- HELPERS
@@ -402,224 +789,216 @@ function ChompersData.GetRecipe(name)
 	return nil
 end
 
-function ChompersData.GetIngredientsByZone(zoneName)
+function ChompersData.GetIngredientsByZone(zoneName, phaseMax)
+	phaseMax = phaseMax or 1
 	local result = {}
 	for _, ing in ipairs(ChompersData.Ingredients) do
-		if ing.zone == zoneName then table.insert(result, ing) end
+		if ing.zone == zoneName and (ing.phase or 1) <= phaseMax then
+			table.insert(result, ing)
+		end
 	end
 	return result
 end
 
--- ============================================================
--- EMOJI TABLE (single source of truth)
--- ============================================================
-
-local EMOJI_TABLE = {
-	-- Produce
-	Tomato="🍅", Egg="🥚", Garlic="🧄", Onion="🧅", Avocado="🥑", Truffle="🍄",
-	-- Bakery
-	Flour="🌾", Milk="🥛", Butter="🧈", Sugar="🍬",
-	["Cheese Block"]="🧀", Honey="🍯", ["Blue Cheese"]="🧀", Fondant="🎂",
-	-- Dry Goods
-	Rice="🍚", Pasta="🍝", Noodles="🍜", ["Soy Sauce"]="🍶",
-	["Chili Powder"]="🌶", Saffron="🌸",
-	-- Freezer
-	Chicken="🍗", Tuna="🐟", Beef="🥩", Pork="🥩", Shrimp="🦐", ["Ice Cream"]="🍦",
-	-- Neutral
-	Oil="🫙", ["Wagyu Beef"]="🥩", Caviar="🫧",
-	-- Recipes — Common
-	["Tomato Toss"]="🍅", ["Egg Splat"]="🥚", ["Onion Soup"]="🧅",
-	["Chunky Guac"]="🥑", ["Spaghetti Surprise"]="🍝", ["Chicken Rice"]="🍗",
-	-- Recipes — Uncommon
-	["Mac and Cheese"]="🧀", ["Chili Fried Rice"]="🍳", ["Noodle Bowl"]="🍜",
-	["Soy Chicken"]="🍗", ["Garlic Chicken"]="🧄", ["Tuna Noodles"]="🐟",
-	-- Recipes — Rare
-	["Honey Glazed Chicken"]="🍯", ["Shrimp Noodles"]="🦐",
-	["Blue Cheese Pasta"]="🧀", ["Beef Fried Rice"]="🥩", ["BBQ Pork Bowl"]="🥩",
-	-- Recipes — UltraRare
-	["Truffle Pasta"]="🍄", ["Saffron Rice"]="🌸", ["Lobster Bisque"]="🦐",
-	["Ice Cream Shake"]="🍦", ["Honey Fondant Cake"]="🎂",
-	-- Recipes — Legendary
-	["Million Dollar Steak"]="🥩",
-	-- Loot
-	["Loose Cash"]="💵", ["Cash Stack"]="💵", ["Big Stack"]="💵",
-	Napkin="🧻", ["Alliance Bracelet"]="💜",
-}
-
-local ZONE_EMOJI = {
-	Produce="🥬", Bakery="🧁", ["Dry Goods"]="🥫",
-	Freezer="❄️", Neutral="⬜", Stockroom="📦",
-}
-
-function ChompersData.GetEmoji(name, zone)
-	return EMOJI_TABLE[name] or (zone and ZONE_EMOJI[zone]) or "🍽"
-end
-
-for _, ing in ipairs(ChompersData.Ingredients) do
-	if not ing.emoji then
-		ing.emoji = ChompersData.GetEmoji(ing.name, ing.zone)
+function ChompersData.GetRecipesByTier(tierName, phaseMax)
+	phaseMax = phaseMax or 1
+	local result = {}
+	for _, rec in ipairs(ChompersData.Recipes) do
+		if rec.tier == tierName and (rec.phase or 1) <= phaseMax then
+			table.insert(result, rec)
+		end
 	end
+	return result
 end
-for _, rec in ipairs(ChompersData.Recipes) do
-	if not rec.emoji then
-		rec.emoji = ChompersData.GetEmoji(rec.name)
+
+function ChompersData.GetPhase1Ingredients()
+	local result = {}
+	for _, ing in ipairs(ChompersData.Ingredients) do
+		if ing.phase == 1 then table.insert(result, ing) end
 	end
+	return result
+end
+
+function ChompersData.GetPhase1Recipes()
+	local result = {}
+	for _, rec in ipairs(ChompersData.Recipes) do
+		if rec.phase == 1 then table.insert(result, rec) end
+	end
+	return result
+end
+
+-- Returns allergen multiplier for a recipe hit against a target with the given allergy.
+-- Checks ALL ingredients in the recipe — if ANY match, whole recipe gets ×1.75.
+function ChompersData.GetRecipeAllergenMultiplier(recipe, targetAllergy)
+	if not targetAllergy or targetAllergy == "None" then
+		return ChompersData.Constants.Allergy.NoMatchMultiplier
+	end
+	for _, ingName in ipairs(recipe.ingredients or {}) do
+		local ing = ChompersData.GetIngredient(ingName)
+		if ing and ing.allergy == targetAllergy then
+			return ChompersData.Constants.Allergy.MatchMultiplier
+		end
+	end
+	return ChompersData.Constants.Allergy.NoMatchMultiplier
+end
+
+-- Returns allergen multiplier for a single raw ingredient throw.
+function ChompersData.GetIngredientAllergenMultiplier(ingredient, targetAllergy)
+	if not targetAllergy or targetAllergy == "None" then
+		return ChompersData.Constants.Allergy.NoMatchMultiplier
+	end
+	if ingredient.allergy == targetAllergy then
+		return ChompersData.Constants.Allergy.MatchMultiplier
+	end
+	return ChompersData.Constants.Allergy.NoMatchMultiplier
 end
 
 -- ============================================================
--- VENDOR CATALOG
--- Items are purchasable exclusively at food truck vendors.
--- Pricing tiers: starter 20–35 · common 50–90 · premium 140–220 · prestige 400–700
---
--- Categories:
---   "title"          — common text tag above player head
---   "title_animated" — epic glow/colour title (premium+)
---   "title_prestige" — legendary gold title (prestige)
---   "cosmetic"       — visual items (hats, aprons, etc.)
---   "cart_skin"      — changes cart appearance
---   "basket_skin"    — changes basket appearance
---   "throw_fx"       — effect on thrown projectiles
+-- VENDOR CATALOG v9.1 -- Zone-themed food truck NPCs
+-- Four vendors in the car park, one per ingredient zone.
+-- Items, tips, and personality reflect each zone's mechanics.
 -- ============================================================
 
 ChompersData.Vendors = {
 
-    -- ── Tony Two-Pans ──────────────────────────────────────────
-    tony = {
-        id        = "tony",
-        name      = "Tony Two-Pans",
-        tagline   = "Master of the Grill",
-        emoji     = "🍳",
-        specialty = "Cooking Cosmetics",
-        idleLines = {
-            "If you throw raw eggs, don't expect respect.",
-            "Perfect heat separates chefs from amateurs.",
-            "I saw someone burn pasta earlier. Tragic.",
-            "Burned food deals less damage, but the status sticks longer.",
-        },
-        accentHex = {235, 100, 40},
-        items = {
-            -- Titles
-            {id="tony_title_line_cook",      name="Line Cook",              category="title",          cost=20,  tier="cheap",    desc="Straight from the kitchen floor."},
-            {id="tony_title_sauce_whisper",  name="Sauce Whisperer",        category="title",          cost=40,  tier="cheap",    desc="The sauce speaks. You listen."},
-            {id="tony_title_kitchen_cmdr",   name="Kitchen Commander",      category="title",          cost=80,  tier="mid",      desc="Order in the kitchen."},
-            {id="tony_title_exec_chef",      name="Executive Chef ✨",       category="title_animated", cost=200, tier="premium",  desc="The kitchen is your domain."},
-            {id="tony_title_master_kitchen", name="Master of the Kitchen",  category="title_prestige", cost=600, tier="prestige", desc="One per store. You earned it."},
-            -- Cosmetics
-            {id="tony_cosmetic_chef_hat",    name="Chef Hat",               category="cosmetic",       cost=70,  tier="mid",      desc="A proper toque. Earns respect at the prep table."},
-            {id="tony_cosmetic_burn_apron",  name="Burn Mark Apron",        category="cosmetic",       cost=50,  tier="cheap",    desc="Battle-tested. Every burn has a story."},
-            {id="tony_cosmetic_gold_spat",   name="Golden Spatula",         category="cosmetic",       cost=220, tier="premium",  desc="Flip it. Flip it good."},
-            {id="tony_cosmetic_flame_aura",  name="Stove Flame Aura",       category="cosmetic",       cost=240, tier="premium",  desc="The heat follows you everywhere."},
-            -- Throw FX
-            {id="tony_fx_steam_trail",       name="Steam Burst Trail",      category="throw_fx",       cost=80,  tier="mid",      desc="Your throws arrive with a sizzle."},
-            {id="tony_fx_sizzle_impact",     name="Sizzle Impact",          category="throw_fx",       cost=120, tier="mid",      desc="Hits land with a satisfying hiss."},
-        },
-    },
+	-- ── PRODUCE -- Clove Eastwood ─────────────────────────────
+	clove = {
+		id="clove", name="Clove Eastwood", tagline="Former top-shelf. Permanently retired.",
+		emoji="🧄", zone="Produce", specialty="Marks, Speed & Fire",
+		accentHex={80,140,60},    -- earthy produce green
+		truckAccent={195,80,40},  -- chili pepper red
+		idleLines={
+			"Tomato first. Then anything. That's a free +15% on your next hit.",
+			"Garlic strips 15% off every active buff instantly. Throw it right before their Creme Brulee lands.",
+			"Chili Pepper plus Oil on the same target within 3 seconds. Times 1.60. Learn it.",
+			"Avocado self-consume. Plus 20% speed. 8 seconds. I don't run. But you might.",
+			"I've cleared rooms. I've cleared buffs. Same motion, different ingredient.",
+		},
+		items={
+			-- Titles
+			{id="clove_title_mark_words",  name="Mark My Words",       category="title",          cost=25,  tier="cheap"},
+			{id="clove_title_buff_strip",  name="Buff Stripped",       category="title",          cost=60,  tier="cheap"},
+			{id="clove_title_tomato_terr", name="Tomato Terror",       category="title",          cost=120, tier="mid"},
+			{id="clove_title_unmarked",    name="Unmarked Menace",     category="title_animated", cost=220, tier="premium"},
+			{id="clove_title_debuffer",    name="The Debuffer",        category="title_prestige", cost=650, tier="prestige"},
+			-- Throw FX
+			{id="clove_fx_garlic_fume",    name="Garlic Fume Burst",   category="throw_fx",       cost=40,  tier="cheap"},
+			{id="clove_fx_tomato_splash",  name="Tomato Splash",       category="throw_fx",       cost=80,  tier="mid"},
+			{id="clove_fx_chili_trail",    name="Chili Flame Trail",   category="throw_fx",       cost=150, tier="premium"},
+			{id="clove_fx_smoke_impact",   name="Green Smoke Impact",  category="throw_fx",       cost=200, tier="premium"},
+			-- Cosmetics
+			{id="clove_cos_braid",         name="Garlic Braid",        category="cosmetic",       cost=90,  tier="mid"},
+			{id="clove_cos_apron",         name="Produce-Stained Apron",category="cosmetic",      cost=60,  tier="cheap"},
+			{id="clove_cos_gloves",        name="Clove's Fingerless",  category="cosmetic",       cost=220, tier="premium"},
+		},
+	},
 
-    -- ── Gloria "The Grocer" ────────────────────────────────────
-    gloria = {
-        id        = "gloria",
-        name      = "Gloria",
-        tagline   = "The Grocer",
-        emoji     = "🛒",
-        specialty = "Shopping & Economy",
-        idleLines = {
-            "If you didn't pay for it, you shouldn't cook with it.",
-            "Cart users always think bigger.",
-            "I've seen better produce in a gas station.",
-            "You'll find more loose cash outside the store.",
-        },
-        accentHex = {70, 195, 85},
-        items = {
-            -- Titles
-            {id="gloria_title_coupon",       name="Coupon Clipper",         category="title",          cost=20,  tier="cheap",    desc="Every cent counts."},
-            {id="gloria_title_bulk_buyer",   name="Bulk Buyer",             category="title",          cost=50,  tier="cheap",    desc="You came prepared."},
-            {id="gloria_title_checkout",     name="Checkout Champion",      category="title",          cost=90,  tier="mid",      desc="First to the register, every time."},
-            {id="gloria_title_mogul",        name="Market Mogul ✨",         category="title_animated", cost=200, tier="premium",  desc="You own this market."},
-            {id="gloria_title_king_market",  name="King of the Market",     category="title_prestige", cost=600, tier="prestige", desc="Everyone else is just shopping."},
-            -- Cart skins
-            {id="gloria_cart_wooden",        name="Wooden Produce Cart",    category="cart_skin",      cost=80,  tier="mid",      desc="Rustic and reliable. Farmers approve."},
-            {id="gloria_cart_chrome",        name="Chrome Super Cart",      category="cart_skin",      cost=140, tier="premium",  desc="Aerodynamic. Suspicious."},
-            {id="gloria_cart_golden",        name="Golden Grocery Cart",    category="cart_skin",      cost=250, tier="premium",  desc="Conspicuous but undeniably effective."},
-            -- Basket skins
-            {id="gloria_basket_farmers",     name="Farmers Basket",         category="basket_skin",    cost=60,  tier="mid",      desc="Wicker and pride."},
-            {id="gloria_basket_fancy",       name="Fancy Market Basket",    category="basket_skin",    cost=120, tier="mid",      desc="For the discerning gatherer."},
-            -- FX
-            {id="gloria_fx_coin_trail",      name="Coin Sparkle Trail",     category="throw_fx",       cost=90,  tier="mid",      desc="Money well spent. Literally."},
-            {id="gloria_fx_barcode",         name="Barcode Scanner Sound",  category="throw_fx",       cost=70,  tier="mid",      desc="Every hit is a purchase."},
-        },
-    },
+	-- ── BAKERY -- Yolko ──────────────────────────────────────
+	yolko = {
+		id="yolko", name="Yolko", tagline="The crack is intentional.",
+		emoji="🥚", zone="Bakery", specialty="CC, Floor Hazards & Roots",
+		accentHex={230,200,60},     -- yolk golden yellow
+		truckAccent={240,230,200},  -- cream/flour white
+		idleLines={
+			"Butter plus Honey in the same spot. Slip zone AND sticky zone. Nobody's going anywhere.",
+			"Two Cheese Blocks on the same target within 5 seconds. Root. Every time. It's beautiful.",
+			"Creme Brulee self-consume drains 20 FL and heals 12 CL. She's not just a weapon. She's therapy.",
+			"The floor isn't a hazard. It's a canvas. You just happen to be on it.",
+			"Flour first. They can't aim. Then Honey. They can't move. Then you decide what happens next.",
+		},
+		items={
+			-- Titles
+			{id="yolko_title_bakers_doz",  name="Baker's Dozen",       category="title",          cost=25,  tier="cheap"},
+			{id="yolko_title_sticky",      name="The Sticky One",      category="title",          cost=60,  tier="cheap"},
+			{id="yolko_title_root_canal",  name="Root Canal",          category="title",          cost=120, tier="mid"},
+			{id="yolko_title_honey_trap",  name="Honey Trap",          category="title_animated", cost=220, tier="premium"},
+			{id="yolko_title_immovable",   name="The Immovable",       category="title_prestige", cost=650, tier="prestige"},
+			-- Throw FX
+			{id="yolko_fx_flour_puff",     name="Flour Puff Impact",   category="throw_fx",       cost=40,  tier="cheap"},
+			{id="yolko_fx_butter_sizzle",  name="Butter Sizzle",       category="throw_fx",       cost=80,  tier="mid"},
+			{id="yolko_fx_egg_splat",      name="Egg Splat Burst",     category="throw_fx",       cost=130, tier="mid"},
+			{id="yolko_fx_honey_drip",     name="Honey Drip Zone",     category="throw_fx",       cost=200, tier="premium"},
+			-- Cosmetics
+			{id="yolko_cos_beret",         name="Flour-Dusted Beret",  category="cosmetic",       cost=80,  tier="mid"},
+			{id="yolko_cos_crown",         name="Cracked Egg Crown",   category="cosmetic",       cost=120, tier="mid"},
+			{id="yolko_cos_honey",         name="Golden Honey Drip",   category="cosmetic",       cost=240, tier="premium"},
+		},
+	},
 
-    -- ── Rico "The Fryer" ───────────────────────────────────────
-    rico = {
-        id        = "rico",
-        name      = "Rico",
-        tagline   = "The Fryer",
-        emoji     = "🔥",
-        specialty = "Combat Effects",
-        idleLines = {
-            "Cook it… or just throw it harder.",
-            "The louder the splat, the better the hit.",
-            "You aiming or guessing?",
-            "Heavy food hits harder. Light food flies faster.",
-        },
-        accentHex = {220, 60, 40},
-        items = {
-            -- Titles
-            {id="rico_title_food_fight",     name="Food Fighter",           category="title",          cost=20,  tier="cheap",    desc="Chaos first, questions later."},
-            {id="rico_title_sauce_sling",    name="Sauce Slinger",          category="title",          cost=60,  tier="cheap",    desc="You've earned your splatter stripes."},
-            {id="rico_title_tomato_terror",  name="Tomato Terror",          category="title",          cost=120, tier="mid",      desc="They heard you coming."},
-            {id="rico_title_splatter",       name="Splatter Champion ✨",    category="title_animated", cost=220, tier="premium",  desc="Artwork, basically."},
-            {id="rico_title_king_fight",     name="King of the Food Fight", category="title_prestige", cost=650, tier="prestige", desc="The market fears your trajectory."},
-            -- Throw FX
-            {id="rico_fx_tomato_splash",     name="Tomato Splash",          category="throw_fx",       cost=40,  tier="cheap",    desc="Classic. Loud. Effective."},
-            {id="rico_fx_sauce_boom",        name="Sauce Explosion",        category="throw_fx",       cost=90,  tier="mid",      desc="Impact radius: yes."},
-            {id="rico_fx_chili_trail",       name="Chili Flame Trail",      category="throw_fx",       cost=150, tier="premium",  desc="Leaves a burning impression."},
-            {id="rico_fx_oil_slick",         name="Oil Slick Impact",       category="throw_fx",       cost=180, tier="premium",  desc="Slippery science."},
-            -- Combat cosmetics
-            {id="rico_cosmetic_fry_helmet",  name="Fry Basket Helmet",      category="cosmetic",       cost=120, tier="mid",      desc="Protective. Questionable."},
-            {id="rico_cosmetic_gloves",      name="Grease-Stained Gloves",  category="cosmetic",       cost=70,  tier="mid",      desc="You've been in the thick of it."},
-        },
-    },
+	-- ── DRY GOODS -- MSG ────────────────────────────────────
+	msg = {
+		id="msg", name="MSG", tagline="Setup is everything. Damage is someone else's problem.",
+		emoji="🫙", zone="Dry Goods", specialty="Combos, Fire Primer & Marks",
+		accentHex={180,30,30},   -- deep soy red
+		truckAccent={20,18,18},  -- lacquer black
+		idleLines={
+			"Oil hits target. Fire recipe within 3 seconds. Times 1.60. I don't need to explain why that matters.",
+			"Soy Sauce self-consume gives you a bonus throw. You have 4 throws. They have 3.",
+			"Dandan Noodles entangles first. Fire chain lands while they can't move. Near-guaranteed.",
+			"The Soy Sauce mark is plus 20%. Tomato is only plus 15%. You're welcome.",
+			"Salt on a healer. Their next heal is cut in half. Simple. Effective. I'm not involved.",
+		},
+		items={
+			-- Titles
+			{id="msg_title_utility",       name="Utility Player",      category="title",          cost=25,  tier="cheap"},
+			{id="msg_title_the_setup",     name="The Setup",           category="title",          cost=60,  tier="cheap"},
+			{id="msg_title_chain_react",   name="Chain Reaction",      category="title",          cost=120, tier="mid"},
+			{id="msg_title_enhancer",      name="The Enhancer",        category="title_animated", cost=220, tier="premium"},
+			{id="msg_title_architect",     name="Architect of Pain",   category="title_prestige", cost=650, tier="prestige"},
+			-- Cart skins (MSG holds all container skins -- Dry Goods = utility zone)
+			{id="msg_cart_bamboo",         name="Bamboo Cart",         category="cart_skin",      cost=80,  tier="mid"},
+			{id="msg_cart_lacquer",        name="Lacquered Black Cart",category="cart_skin",      cost=160, tier="premium"},
+			{id="msg_cart_prestige",       name="MSG's Market Cart",   category="cart_skin",      cost=280, tier="prestige"},
+			{id="msg_basket_rattan",       name="Rattan Pantry Basket",category="basket_skin",    cost=60,  tier="mid"},
+			{id="msg_basket_premium",      name="Premium Pantry Basket",category="basket_skin",   cost=130, tier="mid"},
+			-- Throw FX
+			{id="msg_fx_soy_drip",         name="Soy Sauce Drip",      category="throw_fx",       cost=40,  tier="cheap"},
+			{id="msg_fx_oil_slick",        name="Oil Slick Trail",     category="throw_fx",       cost=100, tier="mid"},
+			{id="msg_fx_entangle_web",     name="Entangle Web Impact", category="throw_fx",       cost=140, tier="mid"},
+			{id="msg_fx_barcode",          name="Barcode Scanner Sound",category="throw_fx",      cost=70,  tier="mid"},
+		},
+	},
 
-    -- ── Mops "The Janitor" ─────────────────────────────────────
-    mops = {
-        id        = "mops",
-        name      = "Mops",
-        tagline   = "The Janitor",
-        emoji     = "🧹",
-        specialty = "Survival & Cleanliness",
-        idleLines = {
-            "Every match ends the same. I clean up.",
-            "Bathrooms are a privilege, not a right.",
-            "You people are animals.",
-            "You only get three bathroom breaks. Use them wisely.",
-        },
-        accentHex = {100, 180, 220},
-        items = {
-            -- Titles
-            {id="mops_title_floor_super",    name="Floor Supervisor",       category="title",          cost=20,  tier="cheap",    desc="Someone has to maintain order."},
-            {id="mops_title_spill_surv",     name="Spill Survivor",         category="title",          cost=60,  tier="cheap",    desc="You walked through it and kept going."},
-            {id="mops_title_bath_bandit",    name="Bathroom Bandit",        category="title",          cost=120, tier="mid",      desc="Three breaks. Used all three. Masterfully."},
-            {id="mops_title_clean_freak",    name="Clean Freak ✨",          category="title_animated", cost=200, tier="premium",  desc="You survived cleaner than anyone else."},
-            {id="mops_title_lord_sanit",     name="Lord of Sanitation",     category="title_prestige", cost=650, tier="prestige", desc="Mops respects you. That's rare."},
-            -- Cosmetics
-            {id="mops_cosmetic_uniform",     name="Janitor Uniform",        category="cosmetic",       cost=90,  tier="mid",      desc="Official. Slightly defeated."},
-            {id="mops_cosmetic_mop_pack",    name="Mop Backpack",           category="cosmetic",       cost=120, tier="mid",      desc="Always ready. Always cleaning."},
-            {id="mops_cosmetic_golden_mop",  name="Golden Mop",             category="cosmetic",       cost=220, tier="premium",  desc="The finest cleaning instrument money can buy."},
-            -- FX
-            {id="mops_fx_soap_trail",        name="Soap Bubble Trail",      category="throw_fx",       cost=80,  tier="mid",      desc="Clean on the way in."},
-            {id="mops_fx_spray_impact",      name="Disinfectant Spray",     category="throw_fx",       cost=120, tier="mid",      desc="Sanitizes on contact."},
-        },
-    },
+	-- ── FREEZER -- Barry Chill ─────────────────────────────
+	barry = {
+		id="barry", name="Barry Chill", tagline="He's very relaxed. You should be more worried about that.",
+		emoji="🐟", zone="Freezer", specialty="Heavy Hits, Knockback & Disruption",
+		accentHex={100,180,220},   -- ice blue
+		truckAccent={220,235,245}, -- frost white
+		idleLines={
+			"Tuna. Self-consume. Plus fifty percent throw speed. Ten seconds. ...Yeah.",
+			"Shrimp hits twice. Both hits apply your allergen bonus. That's 20 CL times 1.75. Per throw.",
+			"Turkey disarms. Ground Beef staggers. Chain them. They're defenceless for a full second. It goes well.",
+			"Mixed Grill. Knockback plus stagger plus disarm in one throw. I made it once. They left the kitchen.",
+			"The Freezer has the highest average CL of any zone. I mention this to be helpful.",
+		},
+		items={
+			-- Titles
+			{id="barry_title_cold_case",   name="Cold Case",           category="title",          cost=25,  tier="cheap"},
+			{id="barry_title_disruptor",   name="The Disruptor",       category="title",          cost=60,  tier="cheap"},
+			{id="barry_title_knocked",     name="Knocked Back",        category="title",          cost=120, tier="mid"},
+			{id="barry_title_abs_zero",    name="Absolute Zero",       category="title_animated", cost=220, tier="premium"},
+			{id="barry_title_inevitable",  name="The Inevitable",      category="title_prestige", cost=650, tier="prestige"},
+			-- Throw FX
+			{id="barry_fx_ice_crystal",    name="Ice Crystal Impact",  category="throw_fx",       cost=40,  tier="cheap"},
+			{id="barry_fx_frost_arc",      name="Frost Arc Trail",     category="throw_fx",       cost=90,  tier="mid"},
+			{id="barry_fx_shockwave",      name="Knockback Shockwave", category="throw_fx",       cost=140, tier="mid"},
+			{id="barry_fx_double_shimmer", name="Double Hit Shimmer",  category="throw_fx",       cost=210, tier="premium"},
+			-- Cosmetics
+			{id="barry_cos_badge",         name="Fish Stick Badge",    category="cosmetic",       cost=80,  tier="mid"},
+			{id="barry_cos_icepack",       name="Ice Pack Backpack",   category="cosmetic",       cost=120, tier="mid"},
+			{id="barry_cos_crown",         name="Frozen Champion Crown",category="cosmetic",      cost=260, tier="premium"},
+		},
+	},
 }
 
 -- Flat item lookup by ID for server-side validation
 ChompersData.VendorItemById = {}
 for _, vendor in pairs(ChompersData.Vendors) do
-    for _, item in ipairs(vendor.items) do
-        ChompersData.VendorItemById[item.id] = item
-        item.vendorId = vendor.id   -- back-reference
-    end
+	for _, item in ipairs(vendor.items) do
+		ChompersData.VendorItemById[item.id] = item
+		item.vendorId = vendor.id
+	end
 end
 
 return ChompersData
