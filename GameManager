@@ -12,10 +12,16 @@
 --           PhaseChanged (RemoteEvent — server-to-client)
 --           TransitionToStore (RemoteEvent)
 --           UpdateLobbyState (RemoteEvent)
+--
+-- v2 fix: ChompersData.GameModes nil guard — Phase 1 uses
+-- DEFAULT_MODE (Standard) until GameModes is added to ChompersData
+-- v3 fix: nil guards on C.Phase comparisons (PreglobbyMinPlayers,
+-- FoodFight) — prevents crash when ChompersData version lags behind
+-- GameManager on a fresh Studio session.
 -- ============================================================
 
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players             = game:GetService("Players")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local ChompersData      = require(ReplicatedStorage:WaitForChild("ChompersData"))
@@ -23,10 +29,24 @@ local PlayerState       = require(ServerScriptService:WaitForChild("PlayerState"
 local IngredientSpawner = require(ServerScriptService:WaitForChild("IngredientSpawner"))
 local C                 = ChompersData.Constants
 
+-- v3: Safety net — if ChompersData version doesn't have Phase table yet,
+-- fall back to hardcoded defaults so the server boots cleanly.
+if not C.Phase then
+	warn("[GameManager] C.Phase is nil — ChompersData version mismatch. Using defaults.")
+	C.Phase = {
+		PreglobbyMinPlayers = 2,
+		Prelobby            = 60,
+		Gathering           = 180,
+		Cooking             = 120,
+		CookingGrace        = 15,
+		FoodFight           = 480,
+		Accolades           = 45,
+	}
+end
+
 local Remotes       = ReplicatedStorage:WaitForChild("ChompersRemotes")
 local function R(name) return Remotes:WaitForChild(name) end
 
--- Auto-create helper: finds or creates a RemoteEvent so nothing hangs on WaitForChild
 local function getOrCreate(name)
 	local r = Remotes:FindFirstChild(name)
 	if not r then
@@ -37,43 +57,77 @@ local function getOrCreate(name)
 end
 
 -- ── Remotes ─────────────────────────────────────────────────
-local PhaseChangedRemote    = R("PhaseChanged")
-local TransitionToStore     = R("TransitionToStore")
-local UpdateLobbyState      = R("UpdateLobbyState")
-local TimerUpdateRemote     = getOrCreate("TimerUpdate")
-local AnnounceRemote        = getOrCreate("Announce")
+local PhaseChangedRemote = R("PhaseChanged")
+local TransitionToStore  = R("TransitionToStore")
+local UpdateLobbyState   = R("UpdateLobbyState")
+local TimerUpdateRemote  = getOrCreate("TimerUpdate")
+local AnnounceRemote     = getOrCreate("Announce")
+
+local GameModeR = Remotes:FindFirstChild("GameModeSelected")
+if not GameModeR then
+	GameModeR        = Instance.new("RemoteEvent")
+	GameModeR.Name   = "GameModeSelected"
+	GameModeR.Parent = Remotes
+end
 
 -- ── BindableEvent so server systems can listen to phase changes
--- Create it if it doesn't exist (lives in ServerScriptService)
 local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
 if not PhaseChangedEvent then
-	PhaseChangedEvent = Instance.new("BindableEvent")
-	PhaseChangedEvent.Name = "PhaseChangedEvent"
+	PhaseChangedEvent        = Instance.new("BindableEvent")
+	PhaseChangedEvent.Name   = "PhaseChangedEvent"
 	PhaseChangedEvent.Parent = ServerScriptService
 end
 
--- ── Colour shortcuts for phase announcements
-local ANN_GREEN  = Color3.fromRGB(70,195,85)
-local ANN_ORANGE = Color3.fromRGB(235,155,35)
-local ANN_RED    = Color3.fromRGB(218,65,65)
-local ANN_GOLD   = Color3.fromRGB(239,159,39)
-local ANN_DIM    = Color3.fromRGB(105,100,138)
+-- ── Announcement colour shortcuts
+local ANN_GREEN  = Color3.fromRGB(70,  195, 85)
+local ANN_ORANGE = Color3.fromRGB(235, 155, 35)
+local ANN_RED    = Color3.fromRGB(218, 65,  65)
+local ANN_GOLD   = Color3.fromRGB(239, 159, 39)
 
--- Fire a countdown timer loop for a phase (every second while phase is active)
-local function fireTimerLoop(phaseName, duration)
-	task.spawn(function()
-		local startTime = tick()
-		while currentPhase == phaseName do
-			local remaining = math.max(0, math.ceil(duration - (tick() - startTime)))
-			TimerUpdateRemote:FireAllClients(remaining)
-			if remaining <= 0 then break end
-			task.wait(1)
-		end
-		-- Hide timer when phase ends
-		if currentPhase ~= phaseName then
-			TimerUpdateRemote:FireAllClients(nil)
-		end
-	end)
+-- ============================================================
+-- GAME MODE — Phase 1 default
+-- ChompersData.GameModes is nil until Phase 2. DEFAULT_MODE is
+-- used for every match. When GameModes is added to ChompersData
+-- this will pick them up automatically via selectNextMode().
+-- ============================================================
+
+local DEFAULT_MODE = {
+	id        = "standard",
+	label     = "Standard",
+	tagline   = "gather · cook · food fight!",
+	color     = {215, 45, 40},
+	modifiers = {},
+}
+
+local modeRotation = {}
+if ChompersData.GameModes then
+	for _, m in ipairs(ChompersData.GameModes) do
+		table.insert(modeRotation, m.id)
+	end
+end
+if #modeRotation == 0 then
+	modeRotation = { DEFAULT_MODE.id }
+end
+
+local modeIndex   = 0
+local currentMode = DEFAULT_MODE
+
+local function selectNextMode()
+	modeIndex   = (modeIndex % #modeRotation) + 1
+	local modeId = modeRotation[modeIndex]
+	currentMode  = (ChompersData.GameModeById and ChompersData.GameModeById[modeId])
+		or DEFAULT_MODE
+	return currentMode
+end
+
+-- Store defaults once so we can restore them between matches
+if not ChompersData._defaults then
+	ChompersData._defaults = {
+		StartingCash  = (C.Economy and C.Economy.StartingCash) or 30,
+		ThrowCooldown = (C.Throw   and C.Throw.Cooldown)       or 0.8,
+		Gathering     = C.Phase.Gathering  or 120,
+		Cooking       = C.Phase.Cooking    or 90,
+	}
 end
 
 -- ============================================================
@@ -81,26 +135,30 @@ end
 -- ============================================================
 
 local PHASE = {
-	NONE        = "None",
-	PRELOBBY    = "Prelobby",
-	GATHERING   = "Gathering",
-	COOKING     = "Cooking",
-	FOODFIGHT   = "FoodFight",
-	ENDGAME     = "EndGame",
-	ACCOLADES   = "Accolades",
+	NONE      = "None",
+	PRELOBBY  = "Prelobby",
+	GATHERING = "Gathering",
+	COOKING   = "Cooking",
+	FOODFIGHT = "FoodFight",
+	ENDGAME   = "EndGame",
+	ACCOLADES = "Accolades",
 }
+
+-- Convenient shorthands with fallbacks so every comparison is safe
+local MIN_PLAYERS  = C.Phase.PreglobbyMinPlayers or 2
+local FOOD_FIGHT_T = C.Phase.FoodFight            or 480
+local PRELOBBY_T   = C.Phase.Prelobby             or 60
+local ACCOLADES_T  = C.Phase.Accolades            or 45
 
 -- ============================================================
 -- STATE
 -- ============================================================
 
-local currentPhase      = PHASE.NONE
-local phaseStartTime    = 0
-local phaseTimer        = nil   -- active task thread
-local matchNumber       = 0
-
--- Track which players have readied up in prelobby
-local readyPlayers      = {}   -- set: player → true
+local currentPhase   = PHASE.NONE
+local phaseStartTime = 0
+local phaseTimer     = nil
+local matchNumber    = 0
+local readyPlayers   = {}
 
 -- ============================================================
 -- INTERNAL HELPERS
@@ -113,21 +171,15 @@ local function cancelTimer()
 	end
 end
 
--- Fire phase change to all listeners (server BindableEvent + client RemoteEvent)
 local function setPhase(newPhase)
 	local prev = currentPhase
-	currentPhase = newPhase
+	currentPhase   = newPhase
 	phaseStartTime = tick()
 	print(string.format("[GameManager] Phase: %s → %s", prev, newPhase))
-
-	-- Notify all clients
 	PhaseChangedRemote:FireAllClients(newPhase)
-
-	-- Notify all server systems
 	PhaseChangedEvent:Fire(newPhase)
 end
 
--- Count active (non-eliminated) players
 local function getActivePlayers()
 	local list = {}
 	for _, player in ipairs(Players:GetPlayers()) do
@@ -139,18 +191,16 @@ local function getActivePlayers()
 	return list
 end
 
--- Count ready players in prelobby
 local function getReadyCount()
 	local count = 0
-	for player, _ in pairs(readyPlayers) do
-		if player and player.Parent then  -- still in game
+	for player in pairs(readyPlayers) do
+		if player and player.Parent then
 			count = count + 1
 		end
 	end
 	return count
 end
 
--- Broadcast current lobby state (player count, ready count, phase) to all clients
 local function broadcastLobbyState()
 	local total = #Players:GetPlayers()
 	local ready = getReadyCount()
@@ -158,27 +208,30 @@ local function broadcastLobbyState()
 		phase      = currentPhase,
 		totalCount = total,
 		readyCount = ready,
-		minToStart = C.Phase.PreglobbyMinPlayers,
+		minToStart = MIN_PLAYERS,
 	})
 end
 
--- Check if Food Fight should end early (one player or one allied team remains)
+local function fireTimerLoop(phaseName, duration)
+	task.spawn(function()
+		local startTime = tick()
+		while currentPhase == phaseName do
+			local remaining = math.max(0, math.ceil(duration - (tick() - startTime)))
+			TimerUpdateRemote:FireAllClients(remaining)
+			if remaining <= 0 then break end
+			task.wait(1)
+		end
+		if currentPhase ~= phaseName then
+			TimerUpdateRemote:FireAllClients(nil)
+		end
+	end)
+end
+
 local function checkFoodFightEnd()
 	if currentPhase ~= PHASE.FOODFIGHT then return false end
-
 	local active = getActivePlayers()
-
-	if #active == 0 then
-		-- Edge case: everyone eliminated simultaneously
-		return true, {}
-	end
-
-	if #active == 1 then
-		return true, active
-	end
-
-	-- Check if all remaining players are in the same alliance
-	-- They are if every pair is mutually allied
+	if #active == 0 then return true, {} end
+	if #active == 1 then return true, active end
 	local allAllied = true
 	for i = 1, #active do
 		for j = i + 1, #active do
@@ -189,11 +242,7 @@ local function checkFoodFightEnd()
 		end
 		if not allAllied then break end
 	end
-
-	if allAllied then
-		return true, active
-	end
-
+	if allAllied then return true, active end
 	return false
 end
 
@@ -201,7 +250,6 @@ end
 -- PHASE LOGIC
 -- ============================================================
 
--- Forward declarations — all phase functions reference each other cyclically
 local startPrelobby, startGathering, startCooking, startFoodFight, startEndGame
 
 -- ── PRELOBBY ─────────────────────────────────────────────────
@@ -211,14 +259,11 @@ startPrelobby = function()
 	setPhase(PHASE.PRELOBBY)
 	broadcastLobbyState()
 
-	-- Maximum wait: 90s
-	-- Will also start early if 8+ ready
-	phaseTimer = task.delay(C.Phase.Prelobby, function()
+	phaseTimer = task.delay(PRELOBBY_T, function()
 		if currentPhase == PHASE.PRELOBBY then
-			if #Players:GetPlayers() >= C.Phase.PreglobbyMinPlayers then
+			if #Players:GetPlayers() >= MIN_PLAYERS then
 				startGathering()
 			else
-				-- Not enough players — reset and wait
 				print("[GameManager] Prelobby timed out — not enough players. Resetting.")
 				startPrelobby()
 			end
@@ -230,9 +275,23 @@ end
 startGathering = function()
 	cancelTimer()
 	matchNumber = matchNumber + 1
-	print(string.format("[GameManager] Starting match #%d", matchNumber))
 
-	-- Reset all player states for new match
+	local mode        = selectNextMode()
+	local mods        = mode.modifiers or {}
+	local gatherTime  = mods.Gathering    or ChompersData._defaults.Gathering
+	local cookTime    = mods.Cooking      or ChompersData._defaults.Cooking
+
+	-- Apply per-mode overrides
+	if C.Economy then
+		C.Economy.StartingCash = mods.StartCash or ChompersData._defaults.StartingCash
+	end
+	if C.Throw then
+		C.Throw.Cooldown = mods.ThrowCooldown or ChompersData._defaults.ThrowCooldown
+	end
+	_G.ChompersModeModifiers = mods
+
+	print(string.format("[GameManager] Starting match #%d  |  Mode: %s", matchNumber, mode.label))
+
 	for _, player in ipairs(Players:GetPlayers()) do
 		PlayerState.Init(player)
 	end
@@ -240,13 +299,22 @@ startGathering = function()
 	setPhase(PHASE.GATHERING)
 	TransitionToStore:FireAllClients()
 
-	-- Announce + start countdown
+	local mc = mode.color or {215, 45, 40}
 	AnnounceRemote:FireAllClients(
-		"🛒  Gathering phase — go shop!", ANN_GREEN, 5)
-	fireTimerLoop(PHASE.GATHERING, C.Phase.Gathering)
+		mode.label .. "  —  " .. mode.tagline,
+		Color3.fromRGB(mc[1], mc[2], mc[3]), 6)
+	task.delay(0.6, function()
+		AnnounceRemote:FireAllClients("🛒  Gathering phase — go shop!", ANN_GREEN, 4)
+	end)
 
-	phaseTimer = task.delay(C.Phase.Gathering, function()
-		if currentPhase == PHASE.GATHERING then startCooking() end
+	GameModeR:FireAllClients(mode.id, mode.label, mode.tagline, mc)
+	fireTimerLoop(PHASE.GATHERING, gatherTime)
+
+	phaseTimer = task.delay(gatherTime, function()
+		if currentPhase == PHASE.GATHERING then
+			C.Phase.Cooking = cookTime
+			startCooking()
+		end
 	end)
 end
 
@@ -255,36 +323,98 @@ startCooking = function()
 	cancelTimer()
 	setPhase(PHASE.COOKING)
 
+	local cookDuration = C.Phase.Cooking or 90
 	AnnounceRemote:FireAllClients(
 		"🍳  Cooking phase — make your recipes!", ANN_ORANGE, 5)
-	fireTimerLoop(PHASE.COOKING, C.Phase.Cooking)
+	fireTimerLoop(PHASE.COOKING, cookDuration)
 
-	phaseTimer = task.delay(C.Phase.Cooking, function()
+	phaseTimer = task.delay(cookDuration, function()
 		if currentPhase == PHASE.COOKING then
-			print("[GameManager] Cooking phase ending — 10s grace for active cooks")
+			local graceDuration = C.Phase.CookingGrace or 10
+			print("[GameManager] Cooking phase ending — " .. graceDuration .. "s grace for active cooks")
 			AnnounceRemote:FireAllClients(
-				"⏱  Cooking grace — 10 seconds left!", ANN_ORANGE, 4)
+				"⏱  Cooking grace — " .. graceDuration .. " seconds left!", ANN_ORANGE, 4)
 			PhaseChangedRemote:FireAllClients("CookingGrace")
 			PhaseChangedEvent:Fire("CookingGrace")
-			fireTimerLoop("CookingGrace", C.Phase.CookingGrace)
-			task.wait(C.Phase.CookingGrace)
+			fireTimerLoop("CookingGrace", graceDuration)
+			task.wait(graceDuration)
 			startFoodFight()
 		end
 	end)
 end
 
 -- ── FOOD FIGHT ───────────────────────────────────────────────
+local function getFoodfightSpawnPoints()
+	local points = {}
+	local ip = workspace:FindFirstChild("Map")
+		and workspace.Map:FindFirstChild("InteractionPoints")
+	if ip then
+		local ff = ip:FindFirstChild("FoodfightSpawns")
+		if ff then
+			for _, part in ipairs(ff:GetDescendants()) do
+				if part:IsA("BasePart") then
+					table.insert(points, part)
+				end
+			end
+		end
+		if #points == 0 then
+			for _, part in ipairs(ip:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name:sub(1,15) == "FoodfightSpawn_" then
+					table.insert(points, part)
+				end
+			end
+		end
+	end
+	if #points == 0 then
+		for _, part in ipairs(workspace:GetDescendants()) do
+			if part:IsA("BasePart") and part.Name:sub(1,15) == "FoodfightSpawn_" then
+				table.insert(points, part)
+			end
+		end
+	end
+	return points
+end
+
+local function shuffle(t)
+	for i = #t, 2, -1 do
+		local j = math.random(1, i)
+		t[i], t[j] = t[j], t[i]
+	end
+end
+
 startFoodFight = function()
 	cancelTimer()
 	setPhase(PHASE.FOODFIGHT)
 
 	AnnounceRemote:FireAllClients(
 		"💥  FOOD FIGHT! Let the chaos begin!", ANN_RED, 5)
-	fireTimerLoop(PHASE.FOODFIGHT, C.Phase.FoodFight)
+	fireTimerLoop(PHASE.FOODFIGHT, FOOD_FIGHT_T)
+
+	-- Teleport all players to FoodfightSpawn points
+	task.spawn(function()
+		local spawnPoints = getFoodfightSpawnPoints()
+		if #spawnPoints > 0 then
+			shuffle(spawnPoints)
+			local active = Players:GetPlayers()
+			for i, player in ipairs(active) do
+				local char = player.Character
+				local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					local pt = spawnPoints[((i - 1) % #spawnPoints) + 1]
+					hrp.CFrame = CFrame.new(pt.Position + Vector3.new(0, 4, 0))
+						* CFrame.Angles(0, math.random() * math.pi * 2, 0)
+				end
+			end
+			print(string.format(
+				"[GameManager] FoodFight — teleported %d players to %d spawn points",
+				#active, #spawnPoints))
+		else
+			warn("[GameManager] FoodFight — no FoodfightSpawn_* parts found, players stay in place")
+		end
+	end)
 
 	-- Poll for early-end condition every 2 seconds
-	-- Hard cap: 6 minutes
-	local elapsed = 0
+	local elapsed      = 0
 	local pollInterval = 2
 
 	phaseTimer = task.spawn(function()
@@ -292,19 +422,18 @@ startFoodFight = function()
 			task.wait(pollInterval)
 			elapsed = elapsed + pollInterval
 
-			-- Check early end
 			local shouldEnd, winners = checkFoodFightEnd()
 			if shouldEnd then
-				print(string.format("[GameManager] Food Fight ended early at %ds — %d survivor(s)",
+				print(string.format(
+					"[GameManager] Food Fight ended early at %ds — %d survivor(s)",
 					elapsed, #winners))
 				startEndGame(winners)
 				return
 			end
 
-			-- Hard cap — timer expiry: no True Winner (Last Chef Standing not awarded)
-			if elapsed >= C.Phase.FoodFight then
+			if elapsed >= FOOD_FIGHT_T then
 				print("[GameManager] Food Fight hard cap reached — no True Winner this match")
-				startEndGame(getActivePlayers(), true)  -- timedOut = true
+				startEndGame(getActivePlayers(), true)
 				return
 			end
 		end
@@ -316,17 +445,16 @@ startEndGame = function(survivors, timedOut)
 	cancelTimer()
 	setPhase(PHASE.ENDGAME)
 
-	-- Clear ingredients from the store
+	-- Clear ingredients
 	if IngredientSpawner and IngredientSpawner.ClearAll then
 		IngredientSpawner.ClearAll()
 	else
-		-- Fallback: clear the live folder directly
 		local liveFolder = workspace:FindFirstChild("Ingredients_Live")
 		if liveFolder then liveFolder:ClearAllChildren() end
 	end
 
-	-- Teleport ALL players to the car park — including eliminated ones who need respawning
-	local carParkCentre = Vector3.new(0, 4, -120)   -- default fallback
+	-- Teleport everyone to car park
+	local carParkCentre = Vector3.new(0, 4, -120)
 	local carPark = workspace:FindFirstChild("Map")
 		and workspace.Map:FindFirstChild("CarPark")
 	if carPark and carPark:IsA("BasePart") then
@@ -337,82 +465,64 @@ startEndGame = function(survivors, timedOut)
 	end
 
 	task.spawn(function()
-		-- Respawn any eliminated/no-character players so they can be teleported
 		for _, p in ipairs(Players:GetPlayers()) do
 			if not p.Character then
 				pcall(function() p:LoadCharacter() end)
 			end
 		end
-		task.wait(2.0)   -- allow LoadCharacter to finish before teleporting
-
+		task.wait(2.0)
 		for _, p in ipairs(Players:GetPlayers()) do
 			local char = p.Character
 			local hrp  = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
 				local angle  = math.random() * math.pi * 2
 				local radius = math.random() * 22
-				hrp.CFrame = CFrame.new(carParkCentre
-					+ Vector3.new(math.cos(angle)*radius, 0, math.sin(angle)*radius))
+				hrp.CFrame   = CFrame.new(carParkCentre
+					+ Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius))
 			end
 		end
 	end)
 
-	local trueWinner = nil
-	if not timedOut and #survivors == 1 then
-		trueWinner = survivors[1]
-	elseif not timedOut and #survivors > 1 then
-		trueWinner = survivors
-	end
-
 	local winnerNames = {}
-	for _, p in ipairs(survivors) do
+	for _, p in ipairs(survivors or {}) do
 		table.insert(winnerNames, p.Name)
 	end
 	print(string.format("[GameManager] Match over%s — survivors: %s",
 		timedOut and " (TIMER EXPIRY — no True Winner)" or "",
-		table.concat(winnerNames, ", ")))
+		#winnerNames > 0 and table.concat(winnerNames, ", ") or "none"))
 
-	AnnounceRemote:FireAllClients(
-		"🏆  Match over! Heading to results…", ANN_GOLD, 5)
-
+	AnnounceRemote:FireAllClients("🏆  Match over! Heading to results…", ANN_GOLD, 5)
 	PhaseChangedRemote:FireAllClients(PHASE.ENDGAME, survivors, timedOut)
 	PhaseChangedEvent:Fire(PHASE.ENDGAME, survivors, timedOut)
 
-	task.delay(C.Phase.Accolades, function()
+	task.delay(ACCOLADES_T, function()
 		startPrelobby()
 	end)
 end
 
 -- ============================================================
 -- READY SYSTEM (Prelobby)
--- Players fire RequestLobbyData to signal ready
--- We reuse UpdateLobbyState remote for ready acknowledgement
 -- ============================================================
 
--- A separate ready toggle remote — clients fire this when they press Ready
 local ReadyUpRemote = Remotes:FindFirstChild("ReadyUp")
 if not ReadyUpRemote then
-	ReadyUpRemote = Instance.new("RemoteEvent")
-	ReadyUpRemote.Name = "ReadyUp"
+	ReadyUpRemote        = Instance.new("RemoteEvent")
+	ReadyUpRemote.Name   = "ReadyUp"
 	ReadyUpRemote.Parent = Remotes
 end
 
 ReadyUpRemote.OnServerEvent:Connect(function(player)
 	if currentPhase ~= PHASE.PRELOBBY then return end
-
 	readyPlayers[player] = true
 	PlayerState.SetReady(player, true)
 	broadcastLobbyState()
 
 	print(string.format("[GameManager] %s is ready (%d/%d)",
-		player.Name,
-		getReadyCount(),
-		#Players:GetPlayers()))
+		player.Name, getReadyCount(), #Players:GetPlayers()))
 
-	-- Start if minimum met and all current players ready
 	local readyCount = getReadyCount()
 	local totalCount = #Players:GetPlayers()
-	if readyCount >= C.Phase.PreglobbyMinPlayers and readyCount >= totalCount then
+	if readyCount >= MIN_PLAYERS and readyCount >= totalCount then
 		print("[GameManager] All players ready — starting early")
 		cancelTimer()
 		startGathering()
@@ -421,25 +531,19 @@ end)
 
 -- ============================================================
 -- ELIMINATION CHECK
--- Called by BathroomSystem/CombatSystem after eliminating a player
 -- ============================================================
 
 function GameManager_OnPlayerEliminated(player)
 	if currentPhase ~= PHASE.FOODFIGHT then return end
-	-- Reuse the poll — it checks every 2s
-	-- But also check immediately on each elimination
 	local shouldEnd, winners = checkFoodFightEnd()
-	if shouldEnd then
-		startEndGame(winners)
-	end
+	if shouldEnd then startEndGame(winners) end
 end
 
--- Expose for other scripts to call
 _G.GameManager = {
-	GetCurrentPhase  = function() return currentPhase end,
-	GetPhaseElapsed  = function() return tick() - phaseStartTime end,
+	GetCurrentPhase    = function() return currentPhase end,
+	GetPhaseElapsed    = function() return tick() - phaseStartTime end,
 	OnPlayerEliminated = GameManager_OnPlayerEliminated,
-	Phases           = PHASE,
+	Phases             = PHASE,
 }
 
 -- ============================================================
@@ -452,39 +556,35 @@ Players.PlayerAdded:Connect(function(player)
 	end
 
 	player.CharacterAdded:Connect(function()
-		-- Spawn players in the car park area only — never inside the store
-		if currentPhase == PHASE.PRELOBBY then
-			task.wait(0.1)   -- let character finish loading
+		if currentPhase ~= PHASE.PRELOBBY then return end
+		task.wait(0.1)
 
-			-- Look for explicit Zone_CarPark tagged parts first
-			local spawnParts = {}
+		local spawnParts = {}
+		local ip = workspace:FindFirstChild("Map")
+			and workspace.Map:FindFirstChild("InteractionPoints")
+		if ip then
+			local prelobbyFolder = ip:FindFirstChild("Prelobby")
+			if prelobbyFolder then
+				for _, part in ipairs(prelobbyFolder:GetDescendants()) do
+					if part:IsA("BasePart") then table.insert(spawnParts, part) end
+				end
+			end
+		end
+		if #spawnParts == 0 then
 			for _, desc in ipairs(workspace:GetDescendants()) do
-				if desc:IsA("BasePart") and desc:GetAttribute("Zone") == "Zone_CarPark" then
+				if desc:IsA("BasePart") and desc.Name:sub(1,13) == "PrelobbySpawn" then
 					table.insert(spawnParts, desc)
 				end
 			end
+		end
 
-			-- Fallback: use Map.IP.Prelobby spawn points
-			if #spawnParts == 0 then
-				local spawns = workspace:FindFirstChild("Map")
-					and workspace.Map:FindFirstChild("IP")
-					and workspace.Map.IP:FindFirstChild("Prelobby")
-				if spawns then
-					for _, c in ipairs(spawns:GetChildren()) do
-						if c:IsA("BasePart") then table.insert(spawnParts, c) end
-					end
-				end
-			end
-
-			local hrp = player.Character
-				and player.Character:WaitForChild("HumanoidRootPart", 3)
-			if hrp and #spawnParts > 0 then
-				local pick = spawnParts[math.random(1, #spawnParts)]
-				hrp.CFrame = CFrame.new(pick.Position + Vector3.new(0, 4, 0))
-			elseif hrp then
-				-- Last resort: hardcoded car park position
-				hrp.CFrame = CFrame.new(Vector3.new(0, 4, -120))
-			end
+		local hrp = player.Character
+			and player.Character:WaitForChild("HumanoidRootPart", 3)
+		if hrp and #spawnParts > 0 then
+			local pick = spawnParts[math.random(1, #spawnParts)]
+			hrp.CFrame  = CFrame.new(pick.Position + Vector3.new(0, 4, 0))
+		elseif hrp then
+			hrp.CFrame = CFrame.new(Vector3.new(0, 4, -120))
 		end
 	end)
 end)
@@ -494,26 +594,23 @@ Players.PlayerRemoving:Connect(function(player)
 	if currentPhase == PHASE.PRELOBBY then
 		broadcastLobbyState()
 	elseif currentPhase == PHASE.FOODFIGHT then
-		-- Treat disconnect as elimination
 		local shouldEnd, winners = checkFoodFightEnd()
-		if shouldEnd then
-			startEndGame(winners)
-		end
+		if shouldEnd then startEndGame(winners) end
 	end
 end)
 
 -- ============================================================
--- BOOT — start the first prelobby on server load
+-- BOOT
 -- ============================================================
 
-task.wait(2)   -- brief wait for other scripts to initialise
+task.wait(2)
 startPrelobby()
 print("[GameManager] Boot complete — Prelobby started")
 
--- TEMP TEST ONLY — remove before shipping
+-- Studio solo test: auto-start Gathering if below min player count
 if game:GetService("RunService"):IsStudio() then
 	task.delay(5, function()
-		if #Players:GetPlayers() < C.Phase.PreglobbyMinPlayers then
+		if #Players:GetPlayers() < MIN_PLAYERS then
 			print("[GameManager] Studio solo test — force starting Gathering")
 			startGathering()
 		end
