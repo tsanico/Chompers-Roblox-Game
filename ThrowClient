@@ -1,31 +1,28 @@
 -- ============================================================
 -- ThrowClient — LocalScript · StarterPlayerScripts
 --
--- Bow-draw / baseball windup feel (Part 46 rework):
---   • Delivery delay: 0.12s between LMB release and projectile spawn
---   • Tightening crosshair ring: 80px → 12px as charge builds
---   • Arc drift: Perlin noise on PREVIEW during grace overdraw (visual only)
---   • Cancel spring-back: bar tweens to 0 on RMB, not instant snap
+-- Tap-to-throw (overhead lift feel, matching video reference):
+--   • LMB tap → overhead lift animation plays
+--   • At animation peak (~0.4s) → ThrowFood fires to server
+--   • Servings pip indicator: Common=3 pips, Uncommon=2, Rare/UR/Leg=1
+--   • 0.8s cooldown (Bible Part 33, locked)
+--   • No hold/charge/arc preview — tap fires immediately
 --
--- CHARGE WINDOW:
---   LMB hold     → charge begins. Cooldown clock starts NOW.
---   < 0.3s       → silent cancel (no throw, cooldown still ticks)
---   ≥ 0.3s       → throws at current charge power
---   1.5s         → full charge, bar flashes gold + ring tightens to dot
---   2.0s         → auto-fires at MaxSpeed
---   RMB          → cancel — spring-back, speed restored, cooldown ticks
+-- Animation setup:
+--   1. Make overhead lift animation in Studio Animation Editor.
+--      Arms peak overhead at frame 18 (30fps default) = 0.6s.
+--   2. Publish → copy asset ID → paste into THROW_ANIM_ID below.
+--   3. Server spawns physics clone at ANIM_PEAK_TIME seconds.
 -- ============================================================
 
-local Players           = game:GetService("Players")
+local Players          = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService  = game:GetService("UserInputService")
-local RunService        = game:GetService("RunService")
-local TweenService      = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
 
 local player  = Players.LocalPlayer
 local camera  = workspace.CurrentCamera
 local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes", 15)
-local C_Data  = require(ReplicatedStorage:WaitForChild("ChompersData")).Constants
 
 local waited = 0
 while not (_G.Chompers and _G.Chompers.GetSelectedSlot) and waited < 8 do
@@ -34,457 +31,207 @@ end
 
 local ThrowFood = Remotes:WaitForChild("ThrowFood", 15)
 
--- ── Constants ──────────────────────────────────────────────────
-local C          = C_Data.Throw
-local G_EFF      = C.EffectiveGravity or 175
-local MIN_CHARGE = C.MinCharge    or 0.3
-local MAX_CHARGE = C.MaxCharge    or 1.5
-local MAX_HOLD   = C.MaxHoldTime  or 2.0
-local COOLDOWN   = C.Cooldown     or 0.8
-local SPEED_MULT = C.AimSpeedMult or 0.80
-local SPEED_RAMP = C.AimSpeedRamp or 0.30
+-- ── Config ─────────────────────────────────────────────────────
+-- Paste your Studio Animation Editor asset ID here after publishing
+local THROW_ANIM_ID  = "rbxassetid://0"
+local ANIM_PEAK_TIME = 0.6   -- frame 18 at 30fps (Studio Animation Editor)
+local COOLDOWN       = 0.8   -- Bible Part 33, locked
+local THROW_SPEED    = 160   -- studs/s lateral (2× Bible base for distance)
 
-local DELIVERY_DELAY = 0.12   -- seconds between LMB release and projectile spawn
-local ARC_DOTS       = 14
-local ARC_DT         = 0.055
-local RING_MAX_PX    = 80     -- crosshair ring diameter at tap-charge
-local RING_MIN_PX    = 12     -- crosshair ring diameter at full charge
-local DRIFT_MAX      = 3.5    -- max stud drift during grace window
+-- ── Servings by rarity (Bible §Servings by Rarity) ────────────
+local SERVINGS = { Common=3, Uncommon=2, Rare=1, UltraRare=1, Legendary=1 }
 
 -- ── ScreenGui ──────────────────────────────────────────────────
 local playerGui = player:WaitForChild("PlayerGui")
 local ThrowGui  = Instance.new("ScreenGui")
-ThrowGui.Name             = "ThrowUI"
-ThrowGui.ResetOnSpawn     = false
-ThrowGui.IgnoreGuiInset   = true
-ThrowGui.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
-ThrowGui.DisplayOrder     = 5
-ThrowGui.Parent           = playerGui
+ThrowGui.Name           = "ThrowUI"
+ThrowGui.ResetOnSpawn   = false
+ThrowGui.IgnoreGuiInset = true
+ThrowGui.DisplayOrder   = 5
+ThrowGui.Parent         = playerGui
 
--- ── Charge bar ─────────────────────────────────────────────────
-local ChargeBar = Instance.new("Frame", ThrowGui)
-ChargeBar.Name              = "ChargeBar"
-ChargeBar.Size              = UDim2.new(0, 340, 0, 18)
-ChargeBar.AnchorPoint       = Vector2.new(0.5, 1)
-ChargeBar.Position          = UDim2.new(0.5, 0, 1, -120)
-ChargeBar.BackgroundColor3  = Color3.fromRGB(18, 16, 28)
-ChargeBar.BorderSizePixel   = 0
-ChargeBar.Visible           = false
-ChargeBar.ZIndex            = 10
-local _cc = Instance.new("UICorner", ChargeBar); _cc.CornerRadius = UDim.new(0, 9)
-local _cs = Instance.new("UIStroke", ChargeBar)
-_cs.Color = Color3.fromRGB(80, 76, 110); _cs.Thickness = 1.5
+-- Warning label (reused pattern from old client)
+local WarnLabel = Instance.new("TextLabel", ThrowGui)
+WarnLabel.Size                  = UDim2.new(0, 380, 0, 28)
+WarnLabel.AnchorPoint           = Vector2.new(0.5, 1)
+WarnLabel.Position              = UDim2.new(0.5, 0, 1, -120)
+WarnLabel.BackgroundTransparency = 1
+WarnLabel.Font                  = Enum.Font.GothamBlack
+WarnLabel.TextSize              = 14
+WarnLabel.TextColor3            = Color3.fromRGB(255, 90, 90)
+WarnLabel.TextXAlignment        = Enum.TextXAlignment.Center
+WarnLabel.Visible               = false
+WarnLabel.ZIndex                = 10
 
-local ChargeFill = Instance.new("Frame", ChargeBar)
-ChargeFill.Size             = UDim2.new(0, 0, 1, 0)
-ChargeFill.BackgroundColor3 = Color3.fromRGB(65, 140, 255)
-ChargeFill.BorderSizePixel  = 0
-ChargeFill.ZIndex           = 11
-local _cf = Instance.new("UICorner", ChargeFill); _cf.CornerRadius = UDim.new(0, 9)
+-- Servings pip row (up to 3 pips, one per serving)
+local ServingsRow = Instance.new("Frame", ThrowGui)
+ServingsRow.Name                  = "ServingsRow"
+ServingsRow.Size                  = UDim2.new(0, 76, 0, 12)
+ServingsRow.AnchorPoint           = Vector2.new(0.5, 1)
+ServingsRow.Position              = UDim2.new(0.5, 0, 1, -150)
+ServingsRow.BackgroundTransparency = 1
+ServingsRow.Visible               = false
 
-local ChargeLabel = Instance.new("TextLabel", ThrowGui)
-ChargeLabel.Size                = UDim2.new(0, 340, 0, 16)
-ChargeLabel.AnchorPoint         = Vector2.new(0.5, 1)
-ChargeLabel.Position            = UDim2.new(0.5, 0, 1, -140)
-ChargeLabel.BackgroundTransparency = 1
-ChargeLabel.Text                = ""
-ChargeLabel.Font                = Enum.Font.GothamBlack
-ChargeLabel.TextSize            = 13
-ChargeLabel.TextColor3          = Color3.fromRGB(200, 195, 230)
-ChargeLabel.TextXAlignment      = Enum.TextXAlignment.Center
-ChargeLabel.Visible             = false
-ChargeLabel.ZIndex              = 10
-
--- ── Crosshair ring ─────────────────────────────────────────────
--- Large at tap-charge, tightens to a dot at full charge.
--- Communicates "draw" state visually — like a bow sight settling.
-local CrosshairRing = Instance.new("Frame", ThrowGui)
-CrosshairRing.Name              = "CrosshairRing"
-CrosshairRing.AnchorPoint       = Vector2.new(0.5, 0.5)
-CrosshairRing.Position          = UDim2.new(0.5, 0, 0.5, 0)
-CrosshairRing.Size              = UDim2.new(0, RING_MAX_PX, 0, RING_MAX_PX)
-CrosshairRing.BackgroundTransparency = 1
-CrosshairRing.BorderSizePixel   = 0
-CrosshairRing.Visible           = false
-CrosshairRing.ZIndex            = 10
-local _rc = Instance.new("UICorner", CrosshairRing); _rc.CornerRadius = UDim.new(0.5, 0)
-local RingStroke = Instance.new("UIStroke", CrosshairRing)
-RingStroke.Thickness            = 2.5
-RingStroke.Color                = Color3.fromRGB(65, 140, 255)
-
--- ── Arc preview dots ───────────────────────────────────────────
-local arcDots = {}
-for i = 1, ARC_DOTS do
-	local dot = Instance.new("Part")
-	dot.Shape         = Enum.PartType.Ball
-	dot.Size          = Vector3.new(0.28, 0.28, 0.28)
-	dot.Color         = Color3.fromRGB(255, 210, 50)
-	dot.Material      = Enum.Material.Neon
-	dot.CanCollide    = false
-	dot.Anchored      = true
-	dot.CastShadow    = false
-	dot.Transparency  = 0.12 + (i / ARC_DOTS) * 0.70
-	dot.CFrame        = CFrame.new(0, -2000, 0)
-	dot.Parent        = workspace
-	arcDots[i]        = dot
+local pips = {}
+for i = 1, 3 do
+	local pip = Instance.new("Frame", ServingsRow)
+	pip.Size             = UDim2.new(0, 18, 0, 10)
+	pip.Position         = UDim2.new(0, (i-1)*25, 0.5, -5)
+	pip.BorderSizePixel  = 0
+	Instance.new("UICorner", pip).CornerRadius = UDim.new(0, 4)
+	pips[i] = pip
 end
 
-local function hideArcDots()
-	for _, d in ipairs(arcDots) do d.CFrame = CFrame.new(0, -2000, 0) end
+local COL_FULL  = Color3.fromRGB(65, 200, 100)
+local COL_EMPTY = Color3.fromRGB(50, 50, 60)
+
+local function refreshServingsUI()
+	local slot = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
+	local inv  = _G.Chompers.GetInventory and _G.Chompers.GetInventory()
+	local item = inv and inv[slot]
+	if not item then ServingsRow.Visible = false; return end
+
+	local rarity  = item.rarity or "Common"
+	local maxS    = SERVINGS[rarity] or 1
+	local leftS   = item.servingsLeft or maxS
+
+	-- Only show pips for multi-serving items
+	if maxS <= 1 then ServingsRow.Visible = false; return end
+	ServingsRow.Visible = true
+
+	for i = 1, 3 do
+		pips[i].Visible          = (i <= maxS)
+		pips[i].BackgroundColor3 = (i <= leftS) and COL_FULL or COL_EMPTY
+	end
 end
 
--- ── State ──────────────────────────────────────────────────────
-local charging           = false
-local holdStart          = 0
-local chargeBlockedUntil = 0
-local preChargeSpeed     = nil
-local smoothedAimPoint   = nil   -- lerped aim for preview stability
+local warnTw = nil
+local function showWarn(msg)
+	if warnTw then warnTw:Cancel() end
+	WarnLabel.Text = msg; WarnLabel.TextTransparency = 0; WarnLabel.Visible = true
+	warnTw = TweenService:Create(WarnLabel,
+		TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In, 0, false, 1.2),
+		{TextTransparency = 1})
+	warnTw:Play()
+	warnTw.Completed:Connect(function() WarnLabel.Visible = false end)
+end
 
 -- ── Helpers ────────────────────────────────────────────────────
 local function isBlocked()
 	if UserInputService:GetFocusedTextBox() then return true end
 	if _G.Chompers.IsStoreGuideOpen and _G.Chompers.IsStoreGuideOpen() then return true end
-	if _G.Chompers.GetInventoryOpen and _G.Chompers.GetInventoryOpen() then return true end
-	local char = player.Character
-	local hum  = char and char:FindFirstChildOfClass("Humanoid")
-	if not hum or hum.Health <= 0 then return true end
-	return false
-end
-
--- Clamp raw aim point to charge-based max range (flat horizontal)
-local function clampAimPoint(origin, rawTarget, horizSpeed)
-	local minRange = C.MinRange or 20
-	local maxRange = C.MaxRange or 50
-	local alpha    = math.clamp(
-		(horizSpeed - (C.MinSpeed or 66)) / math.max((C.MaxSpeed or 85) - (C.MinSpeed or 66), 1),
-		0, 1)
-	local allowed  = minRange + (maxRange - minRange) * alpha
-
-	local flat = Vector3.new(rawTarget.X - origin.X, 0, rawTarget.Z - origin.Z)
-	local dist = flat.Magnitude
-	if dist < 0.001 then
-		local look = camera.CFrame.LookVector
-		flat = Vector3.new(look.X, 0, look.Z)
-		dist = math.max(flat.Magnitude, 0.001)
-	end
-	local clamped = flat.Unit * math.min(dist, allowed)
-	local y = math.clamp(rawTarget.Y, origin.Y - 8, origin.Y + 12)
-	return Vector3.new(origin.X, 0, origin.Z) + clamped + Vector3.new(0, y, 0)
-end
-
-local function getHumanoid()
-	local c = player.Character
-	return c and c:FindFirstChildOfClass("Humanoid")
-end
-
-local function getOrigin()
-	local c   = player.Character
-	local hrp = c and c:FindFirstChild("HumanoidRootPart")
-	return hrp and (hrp.Position + Vector3.new(0, 1.5, 0)) or nil
+	if _G.Chompers.GetInventoryOpen  and _G.Chompers.GetInventoryOpen()  then return true end
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	return not hum or hum.Health <= 0
 end
 
 local function getAimPoint()
-	local sz     = camera.ViewportSize
-	local ray    = camera:ScreenPointToRay(sz.X / 2, sz.Y / 2)
-	local params = RaycastParams.new()
-	local char   = player.Character
-	if char then
-		params.FilterDescendantsInstances = {char}
-		params.FilterType = Enum.RaycastFilterType.Exclude
+	local sz  = camera.ViewportSize
+	local ray = camera:ScreenPointToRay(sz.X/2, sz.Y/2)
+	local p   = RaycastParams.new()
+	if player.Character then
+		p.FilterDescendantsInstances = {player.Character}
+		p.FilterType = Enum.RaycastFilterType.Exclude
 	end
-	local result = workspace:Raycast(ray.Origin, ray.Direction * 400, params)
-	return result and result.Position or (ray.Origin + ray.Direction * 80)
+	local r = workspace:Raycast(ray.Origin, ray.Direction * 200, p)
+	return r and r.Position or (ray.Origin + ray.Direction * 80)
 end
 
--- Eased charge curve — front-loaded so mid-charge is already strong
-local function getChargeParams(elapsed)
-	local held  = math.max(0, elapsed - MIN_CHARGE)
-	local alpha = math.clamp(held / (MAX_CHARGE - MIN_CHARGE), 0, 1)
-	local eased = alpha ^ 0.8
-	return
-		C.MinSpeed + (C.MaxSpeed - C.MinSpeed) * eased,
-		C.MinRange + (C.MaxRange - C.MinRange) * eased,
-		eased
+-- ── Animation ──────────────────────────────────────────────────
+local loadedAnim = nil
+local function ensureAnim()
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if not hum or THROW_ANIM_ID == "rbxassetid://0" then return nil end
+	if loadedAnim then return loadedAnim end
+	local ao = Instance.new("Animation"); ao.AnimationId = THROW_ANIM_ID
+	local t  = hum:LoadAnimation(ao)
+	t.Priority = Enum.AnimationPriority.Action
+	loadedAnim = t
+	return t
 end
 
-local function chargeColour(eased)
-	return Color3.new(0.15 + eased * 0.70, 0.08 * (1 - eased), (1 - eased) * 0.75 + 0.05)
-end
+-- ── State ──────────────────────────────────────────────────────
+local throwing     = false
+local blockedUntil = 0
 
--- Ballistic solver
-local function computeVelocity(origin, target, horizSpeed)
-	local disp  = target - origin
-	local hDist = Vector3.new(disp.X, 0, disp.Z).Magnitude
-	if hDist < 0.5 then hDist = 0.5 end
-	local T = hDist / math.max(horizSpeed, 4)
-	return disp / T + Vector3.new(0, 0.5 * G_EFF * T, 0)
-end
+-- ── Core throw sequence ────────────────────────────────────────
+local function doThrow()
+	if throwing or isBlocked() then return end
+	if tick() < blockedUntil then return end
 
-local function updateArcDots(origin, vel)
-	local pos, v = origin, vel
-	local grav   = Vector3.new(0, -G_EFF, 0)
-	for _, dot in ipairs(arcDots) do
-		pos = pos + v * ARC_DT
-		v   = v   + grav * ARC_DT
-		dot.CFrame = (pos.Y > -50) and CFrame.new(pos) or CFrame.new(0, -2000, 0)
-	end
-end
-
--- ── Speed debuff ───────────────────────────────────────────────
-local function applySpeedDebuff()
-	local hum = getHumanoid(); if not hum then return end
-	preChargeSpeed = hum.WalkSpeed
-	TweenService:Create(hum,
-		TweenInfo.new(SPEED_RAMP, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{WalkSpeed = preChargeSpeed * SPEED_MULT}):Play()
-end
-
-local function restoreSpeed()
-	local hum = getHumanoid()
-	if hum and preChargeSpeed then
-		TweenService:Create(hum,
-			TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{WalkSpeed = preChargeSpeed}):Play()
-	end
-	preChargeSpeed = nil
-end
-
--- ── Throw warning hint (non-intrusive, near crosshair) ────────
--- Appears briefly when player tries to throw an empty slot or
--- an unpaid item. Does NOT use the main Announce system.
-local ThrowWarnLabel = Instance.new("TextLabel", ThrowGui)
-ThrowWarnLabel.Size               = UDim2.new(0, 320, 0, 28)
-ThrowWarnLabel.AnchorPoint        = Vector2.new(0.5, 0.5)
-ThrowWarnLabel.Position           = UDim2.new(0.5, 0, 0.5, 40)
-ThrowWarnLabel.BackgroundColor3   = Color3.fromRGB(14, 12, 24)
-ThrowWarnLabel.BackgroundTransparency = 0.25
-ThrowWarnLabel.BorderSizePixel    = 0
-ThrowWarnLabel.Font               = Enum.Font.GothamBold
-ThrowWarnLabel.TextSize           = 14
-ThrowWarnLabel.TextColor3         = Color3.fromRGB(220, 180, 80)
-ThrowWarnLabel.Text               = ""
-ThrowWarnLabel.TextXAlignment     = Enum.TextXAlignment.Center
-ThrowWarnLabel.Visible            = false
-ThrowWarnLabel.ZIndex             = 15
-do
-	local c = Instance.new("UICorner", ThrowWarnLabel); c.CornerRadius = UDim.new(0,8)
-end
-
-local warnThread = nil
-local function showThrowWarn(msg)
-	ThrowWarnLabel.Text    = msg
-	ThrowWarnLabel.Visible = true
-	ThrowWarnLabel.TextTransparency = 0
-	ThrowWarnLabel.BackgroundTransparency = 0.25
-	if warnThread then task.cancel(warnThread) end
-	warnThread = task.delay(1.4, function()
-		-- Fade out
-		for i = 1, 8 do
-			task.wait(0.04)
-			local t = i / 8
-			ThrowWarnLabel.TextTransparency          = t
-			ThrowWarnLabel.BackgroundTransparency    = 0.25 + 0.75 * t
-		end
-		ThrowWarnLabel.Visible = false
-		warnThread = nil
-	end)
-end
-
--- ── Throw — fires after delivery delay ─────────────────────────
-local function doThrow(horizSpeed)
-	local origin = getOrigin(); if not origin then return end
-
-	-- Client-side validation: check slot before firing to server
 	local slot = _G.Chompers.GetSelectedSlot and _G.Chompers.GetSelectedSlot() or 1
-	local inv   = _G.Chompers.GetInventory and _G.Chompers.GetInventory()
-	local item  = inv and inv[slot]
+	local inv  = _G.Chompers.GetInventory and _G.Chompers.GetInventory()
+	local item = inv and inv[slot]
 
-	if not item then
-		showThrowWarn("❌  No item in slot " .. slot)
-		smoothedAimPoint = nil; return
-	end
-	if not item.paid then
-		showThrowWarn("🏷️  Can't throw — pay at Checkout first")
-		smoothedAimPoint = nil; return
-	end
+	if not item then showWarn("❌  No item in slot "..slot); return end
+	if not item.paid then showWarn("🏷️  Pay at Checkout first"); return end
+	if item.name == "Alliance Bracelet" then showWarn("🤝  Can't throw the bracelet"); return end
 
-	local rawAim = smoothedAimPoint or getAimPoint()
-	local aimPt  = clampAimPoint(origin, rawAim, horizSpeed)
-	ThrowFood:FireServer(slot, horizSpeed, aimPt)
-	smoothedAimPoint = nil
-end
+	throwing      = true
+	blockedUntil  = tick() + COOLDOWN
 
--- ── End charge (release or auto-fire) ─────────────────────────
-local function endCharge()
-	charging = false
-	restoreSpeed()
-	ChargeBar.Visible     = false
-	ChargeLabel.Visible   = false
-	CrosshairRing.Visible = false
-	hideArcDots()
-end
+	-- Lock aim direction at throw intent (before animation delay)
+	local aimPoint = getAimPoint()
 
--- ── Cancel charge (RMB) — spring-back before hiding ────────────
-local function cancelCharge()
-	if not charging then return end
-	charging = false
-	restoreSpeed()
-	hideArcDots()
-	CrosshairRing.Visible = false
-	-- Spring-back: tween fill to 0 then hide — feels like releasing bow tension
-	TweenService:Create(ChargeFill,
-		TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-		{Size = UDim2.new(0, 0, 1, 0)}):Play()
-	ChargeLabel.Text    = "cancelled"
-	ChargeLabel.Visible = true
-	task.delay(0.20, function()
-		ChargeBar.Visible   = false
-		ChargeLabel.Visible = false
-	end)
-end
+	-- Play overhead lift animation
+	local track = ensureAnim()
+	if track then track:Play() end
 
--- ── Heartbeat — charge bar + crosshair ring + arc ──────────────
-RunService.Heartbeat:Connect(function()
-	if not charging then return end
-
-	local elapsed = tick() - holdStart
-
-	-- Auto-fire at MaxHoldTime
-	if elapsed >= MAX_HOLD then
-		endCharge()
-		if not isBlocked() then doThrow(C.MaxSpeed) end
-		return
-	end
-
-	local inGrace = elapsed >= MAX_CHARGE
-
-	-- Arc preview (show once MIN_CHARGE reached)
-	if elapsed >= MIN_CHARGE then
-		local origin = getOrigin()
-		if origin then
-			local horizSpeed = getChargeParams(elapsed)
-			local rawAim     = getAimPoint()
-
-			-- Smooth aim point to kill shift-lock jitter (0.12s lerp)
-			if not smoothedAimPoint then smoothedAimPoint = rawAim end
-			smoothedAimPoint = smoothedAimPoint:Lerp(rawAim, 0.18)
-
-			-- Clamp to charge-based range BEFORE preview so arc matches throw
-			local aimPt = clampAimPoint(origin, smoothedAimPoint, horizSpeed)
-
-			-- During grace overdraw: add Perlin drift to PREVIEW only
-			if inGrace then
-				local driftT   = math.clamp((elapsed - MAX_CHARGE) / (MAX_HOLD - MAX_CHARGE), 0, 1)
-				local driftMag = driftT * DRIFT_MAX
-				local driftX   = math.noise(tick() * 1.8, 0, 99) * driftMag
-				local driftZ   = math.noise(99, tick() * 1.8, 0) * driftMag
-				aimPt          = aimPt + Vector3.new(driftX, 0, driftZ)
-			end
-
-			local vel = computeVelocity(origin, aimPt, horizSpeed)
-			updateArcDots(origin, vel)
+	-- Fire to server at animation peak
+	task.delay(ANIM_PEAK_TIME, function()
+		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if hrp and not isBlocked() then
+			ThrowFood:FireServer(slot, THROW_SPEED, aimPoint)
 		end
-	else
-		hideArcDots()
-		smoothedAimPoint = nil   -- reset so next charge starts fresh
+		-- Stop animation shortly after throw
+		if track then
+			task.delay(0.15, function()
+				if track.IsPlaying then track:Stop(0.15) end
+			end)
+		end
+		throwing = false
+	end)
+
+	-- Optimistic servings decrement on client (server is authoritative)
+	if item then
+		local rarity = item.rarity or "Common"
+		local maxS   = SERVINGS[rarity] or 1
+		if not item.servingsLeft then item.servingsLeft = maxS end
+		if item.servingsLeft > 1 then
+			item.servingsLeft = item.servingsLeft - 1
+		elseif item.servingsLeft == 1 then
+			-- Last serving just thrown — hide pips immediately
+			ServingsRow.Visible = false
+			return  -- skip refreshServingsUI, row is gone
+		end
+		refreshServingsUI()
 	end
-
-	-- Before minimum — bar hidden, hint label visible
-	if elapsed < MIN_CHARGE then
-		ChargeBar.Visible     = false
-		ChargeLabel.Visible   = true
-		CrosshairRing.Visible = false
-		ChargeLabel.Text      = "hold to charge…"
-		ChargeLabel.TextColor3 = Color3.fromRGB(105, 100, 138)
-		return
-	end
-
-	ChargeBar.Visible     = true
-	ChargeLabel.Visible   = true
-	CrosshairRing.Visible = true
-
-	if inGrace then
-		-- Full charge — bar flashes gold, ring holds tight, arc drifts
-		local flash = math.floor(tick() * 8) % 2 == 0
-		local goldCol = Color3.fromRGB(255, 225, 50)
-		local whiteCol = Color3.fromRGB(255, 255, 200)
-		ChargeFill.Size             = UDim2.new(1, 0, 1, 0)
-		ChargeFill.BackgroundColor3 = flash and goldCol or whiteCol
-		RingStroke.Color            = flash and goldCol or whiteCol
-		CrosshairRing.Size          = UDim2.new(0, RING_MIN_PX, 0, RING_MIN_PX)
-		ChargeLabel.Text            = "⚡ RELEASE  or  AUTO-FIRES in "
-			.. string.format("%.1f", MAX_HOLD - elapsed) .. "s"
-		ChargeLabel.TextColor3      = goldCol
-	else
-		-- Filling phase — ring contracts, bar fills, colour shifts blue→orange
-		local _, _, eased = getChargeParams(elapsed)
-		local fillPct = (elapsed - MIN_CHARGE) / (MAX_CHARGE - MIN_CHARGE)
-		local col     = chargeColour(eased)
-
-		-- Charge bar
-		ChargeFill.Size             = UDim2.new(math.clamp(fillPct, 0, 1), 0, 1, 0)
-		ChargeFill.BackgroundColor3 = col
-
-		-- Crosshair ring: large → tight as fillPct goes 0→1
-		local ringPx = RING_MAX_PX - (fillPct * (RING_MAX_PX - RING_MIN_PX))
-		CrosshairRing.Size  = UDim2.new(0, ringPx, 0, ringPx)
-		RingStroke.Color    = col
-
-		-- Range hint under bar
-		local horizSpeed = getChargeParams(elapsed)
-		local range = C.MinRange + (C.MaxRange - C.MinRange) *
-			math.clamp((horizSpeed - C.MinSpeed) / math.max(C.MaxSpeed - C.MinSpeed, 1), 0, 1)
-		ChargeLabel.Text       = math.floor(range) .. " studs"
-		ChargeLabel.TextColor3 = col
-	end
-end)
+end
 
 -- ── Input ──────────────────────────────────────────────────────
 UserInputService.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
-
-	-- RMB → cancel with spring-back
-	if input.UserInputType == Enum.UserInputType.MouseButton2
-		or input.KeyCode == Enum.KeyCode.ButtonL2 then
-		cancelCharge(); return
-	end
-
-	-- LMB → start charging
 	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.KeyCode == Enum.KeyCode.ButtonR2 then
-		if isBlocked() then return end
-		if charging then return end
-		if tick() < chargeBlockedUntil then return end
-
-		charging           = true
-		holdStart          = tick()
-		chargeBlockedUntil = tick() + COOLDOWN
-		applySpeedDebuff()
+		or input.KeyCode       == Enum.KeyCode.ButtonR2 then
+		doThrow()
 	end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
-	-- LMB release → delivery delay then throw
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.KeyCode == Enum.KeyCode.ButtonR2 then
-		if not charging then return end
-
-		local elapsed    = tick() - holdStart
-		local horizSpeed = getChargeParams(elapsed)   -- capture aim BEFORE endCharge
-
-		endCharge()
-
-		if not isBlocked() and elapsed >= MIN_CHARGE then
-			-- Delivery delay: 0.12s arm-swing-through before projectile spawns
-			-- The aim direction is captured above at release moment
-			task.delay(DELIVERY_DELAY, function()
-				if not isBlocked() then
-					doThrow(horizSpeed)
-				end
-			end)
+-- ── Slot-change servings refresh ──────────────────────────────
+task.spawn(function()
+	local last = nil
+	while true do
+		task.wait(0.1)
+		if _G.Chompers and _G.Chompers.GetSelectedSlot then
+			local s = _G.Chompers.GetSelectedSlot()
+			if s ~= last then refreshServingsUI(); last = s end
 		end
-		-- elapsed < MIN_CHARGE: silent cancel, cooldown still ticking
 	end
+end)
+
+-- ── Reset on respawn ───────────────────────────────────────────
+player.CharacterAdded:Connect(function()
+	loadedAnim = nil; throwing = false; blockedUntil = 0
 end)
 
 print("[ThrowClient] Ready")
