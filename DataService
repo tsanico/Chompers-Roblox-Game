@@ -19,11 +19,11 @@ local DataService = {}
 local cache = {}   -- [player] = data table
 
 local DEFAULT = {
-    medals   = 0,
-    owned    = {},   -- list of item IDs
-    equipped = {
-        title = nil,
-    },
+	medals   = 0,
+	owned    = {},   -- list of item IDs
+	equipped = {
+		title = nil,
+	},
 }
 
 -- ── Remotes ───────────────────────────────────────────────────
@@ -31,154 +31,154 @@ local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
 
 local UpdateMedalsR = Remotes:FindFirstChild("UpdatePlayerMedals")
 if not UpdateMedalsR then
-    UpdateMedalsR = Instance.new("RemoteEvent")
-    UpdateMedalsR.Name = "UpdatePlayerMedals"; UpdateMedalsR.Parent = Remotes
+	UpdateMedalsR = Instance.new("RemoteEvent")
+	UpdateMedalsR.Name = "UpdatePlayerMedals"; UpdateMedalsR.Parent = Remotes
 end
 
 local UpdateOwnedR = Remotes:FindFirstChild("UpdatePlayerOwned")
 if not UpdateOwnedR then
-    UpdateOwnedR = Instance.new("RemoteEvent")
-    UpdateOwnedR.Name = "UpdatePlayerOwned"; UpdateOwnedR.Parent = Remotes
+	UpdateOwnedR = Instance.new("RemoteEvent")
+	UpdateOwnedR.Name = "UpdatePlayerOwned"; UpdateOwnedR.Parent = Remotes
 end
 
 -- ── Load ──────────────────────────────────────────────────────
 local function deepCopy(t)
-    local c = {}
-    for k,v in pairs(t) do
-        c[k] = type(v)=="table" and deepCopy(v) or v
-    end
-    return c
+	local c = {}
+	for k,v in pairs(t) do
+		c[k] = type(v)=="table" and deepCopy(v) or v
+	end
+	return c
 end
 
 local function loadData(player)
-    local saved = nil
-    local ok, err = pcall(function()
-        saved = DS:GetAsync("p_"..player.UserId)
-    end)
-    if not ok then
-        warn("[DataService] Load failed for "..player.Name..": "..tostring(err))
-    end
+	local saved = nil
+	local ok, err = pcall(function()
+		saved = DS:GetAsync("p_"..player.UserId)
+	end)
+	if not ok then
+		warn("[DataService] Load failed for "..player.Name..": "..tostring(err))
+	end
 
-    local data = deepCopy(DEFAULT)
-    if saved then
-        data.medals = saved.medals or 0
-        data.owned  = saved.owned  or {}
-        if saved.equipped then
-            for k,v in pairs(saved.equipped) do data.equipped[k]=v end
-        end
-    end
+	local data = deepCopy(DEFAULT)
+	if saved then
+		data.medals = saved.medals or 0
+		data.owned  = saved.owned  or {}
+		if saved.equipped then
+			for k,v in pairs(saved.equipped) do data.equipped[k]=v end
+		end
+	end
 
-    cache[player] = data
-    -- Sync to client
-    UpdateMedalsR:FireClient(player, data.medals)
-    UpdateOwnedR:FireClient(player, data.owned, data.equipped)
+	cache[player] = data
+	-- Sync to client
+	UpdateMedalsR:FireClient(player, data.medals)
+	UpdateOwnedR:FireClient(player, data.owned, data.equipped)
 
-    -- Broadcast equipped title to all clients so TitleDisplay updates
-    local PlayerTitleUpdateR = Remotes:FindFirstChild("PlayerTitleUpdate")
-    if PlayerTitleUpdateR and data.equipped.title then
-        local itemDef = ChompersData.VendorItemById[data.equipped.title]
-        if itemDef then
-            PlayerTitleUpdateR:FireAllClients(player,
-                data.equipped.title, itemDef.name, itemDef.tier)
-        end
-    end
+	-- Broadcast equipped title to all clients so TitleDisplay updates
+	local PlayerTitleUpdateR = Remotes:FindFirstChild("PlayerTitleUpdate")
+	if PlayerTitleUpdateR and data.equipped.title then
+		local itemDef = ChompersData.VendorItemById[data.equipped.title]
+		if itemDef then
+			PlayerTitleUpdateR:FireAllClients(player,
+				data.equipped.title, itemDef.name, itemDef.tier)
+		end
+	end
 
-    print(string.format("[DataService] Loaded %s — %d medals, %d owned items",
-        player.Name, data.medals, #data.owned))
+	print(string.format("[DataService] Loaded %s — %d medals, %d owned items",
+		player.Name, data.medals, #data.owned))
 end
 
 -- ── Save ──────────────────────────────────────────────────────
 local function saveData(player)
-    local data = cache[player]
-    if not data then return end
-    local ok, err = pcall(function()
-        DS:SetAsync("p_"..player.UserId, {
-            medals   = data.medals,
-            owned    = data.owned,
-            equipped = data.equipped,
-        })
-    end)
-    if not ok then
-        warn("[DataService] Save failed for "..player.Name..": "..tostring(err))
-    end
+	local data = cache[player]
+	if not data then return end
+	local ok, err = pcall(function()
+		DS:SetAsync("p_"..player.UserId, {
+			medals   = data.medals,
+			owned    = data.owned,
+			equipped = data.equipped,
+		})
+	end)
+	if not ok then
+		warn("[DataService] Save failed for "..player.Name..": "..tostring(err))
+	end
 end
 
 -- ── Public API ────────────────────────────────────────────────
 
 function DataService.GetData(player)
-    return cache[player]
+	return cache[player]
 end
 
 function DataService.GetMedals(player)
-    local d = cache[player]; return d and d.medals or 0
+	local d = cache[player]; return d and d.medals or 0
 end
 
 function DataService.AddMedals(player, amount)
-    local d = cache[player]; if not d then return end
-    d.medals = d.medals + amount
-    UpdateMedalsR:FireClient(player, d.medals)
-    task.defer(function() saveData(player) end)
+	local d = cache[player]; if not d then return end
+	d.medals = d.medals + amount
+	UpdateMedalsR:FireClient(player, d.medals)
+	task.defer(function() saveData(player) end)
 end
 
 function DataService.DeductMedals(player, amount)
-    local d = cache[player]; if not d then return false end
-    if d.medals < amount then return false end
-    d.medals = d.medals - amount
-    UpdateMedalsR:FireClient(player, d.medals)
-    task.defer(function() saveData(player) end)
-    return true
+	local d = cache[player]; if not d then return false end
+	if d.medals < amount then return false end
+	d.medals = d.medals - amount
+	UpdateMedalsR:FireClient(player, d.medals)
+	task.defer(function() saveData(player) end)
+	return true
 end
 
 function DataService.IsOwned(player, itemId)
-    local d = cache[player]; if not d then return false end
-    for _, id in ipairs(d.owned) do
-        if id == itemId then return true end
-    end
-    return false
+	local d = cache[player]; if not d then return false end
+	for _, id in ipairs(d.owned) do
+		if id == itemId then return true end
+	end
+	return false
 end
 
 function DataService.AddOwned(player, itemId)
-    local d = cache[player]; if not d then return end
-    if DataService.IsOwned(player, itemId) then return end
-    table.insert(d.owned, itemId)
-    UpdateOwnedR:FireClient(player, d.owned, d.equipped)
-    task.defer(function() saveData(player) end)
+	local d = cache[player]; if not d then return end
+	if DataService.IsOwned(player, itemId) then return end
+	table.insert(d.owned, itemId)
+	UpdateOwnedR:FireClient(player, d.owned, d.equipped)
+	task.defer(function() saveData(player) end)
 end
 
 function DataService.GetEquipped(player)
-    local d = cache[player]; return d and d.equipped or {}
+	local d = cache[player]; return d and d.equipped or {}
 end
 
 function DataService.SetEquipped(player, category, itemId)
-    local d = cache[player]; if not d then return end
-    d.equipped[category] = itemId
-    UpdateOwnedR:FireClient(player, d.owned, d.equipped)
-    task.defer(function() saveData(player) end)
+	local d = cache[player]; if not d then return end
+	d.equipped[category] = itemId
+	UpdateOwnedR:FireClient(player, d.owned, d.equipped)
+	task.defer(function() saveData(player) end)
 end
 
 -- ── Lifecycle ─────────────────────────────────────────────────
 Players.PlayerAdded:Connect(function(p)
-    task.spawn(function() loadData(p) end)
+	task.spawn(function() loadData(p) end)
 end)
 
 Players.PlayerRemoving:Connect(function(p)
-    saveData(p)
-    cache[p] = nil
+	saveData(p)
+	cache[p] = nil
 end)
 
 -- Load any players already in-game (Studio solo test)
 for _, p in ipairs(Players:GetPlayers()) do
-    task.spawn(function() loadData(p) end)
+	task.spawn(function() loadData(p) end)
 end
 
 -- Autosave every 90s
 task.spawn(function()
-    while true do
-        task.wait(90)
-        for p, _ in pairs(cache) do
-            task.spawn(function() saveData(p) end)
-        end
-    end
+	while true do
+		task.wait(90)
+		for p, _ in pairs(cache) do
+			task.spawn(function() saveData(p) end)
+		end
+	end
 end)
 
 print("[DataService] Ready")
