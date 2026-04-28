@@ -20,9 +20,9 @@ local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
 
 -- ── Remotes ───────────────────────────────────────────────────
 local function getOrCreate(name)
-    local r = Remotes:FindFirstChild(name)
-    if not r then r=Instance.new("RemoteEvent"); r.Name=name; r.Parent=Remotes end
-    return r
+	local r = Remotes:FindFirstChild(name)
+	if not r then r=Instance.new("RemoteEvent"); r.Name=name; r.Parent=Remotes end
+	return r
 end
 
 local OpenVendorR     = getOrCreate("OpenVendor")
@@ -33,172 +33,172 @@ local PlayerTitleUpdateR = getOrCreate("PlayerTitleUpdate")  -- fires to ALL cli
 
 -- ── Best anchor helper ────────────────────────────────────────
 local function getBestAnchor(part)
-    local parent = part.Parent
-    if parent and parent:IsA("Model") then return parent.PrimaryPart or part end
-    return part
+	local parent = part.Parent
+	if parent and parent:IsA("Model") then return parent.PrimaryPart or part end
+	return part
 end
 
 -- ── Vendor idle chatter (fires to nearby players every 30s) ──
 local function startIdleChatter(vendorId, part)
-    local vendor = ChompersData.Vendors[vendorId]
-    if not vendor or not vendor.idleLines then return end
-    local Announce = Remotes:FindFirstChild("Announce")
-    local lineIdx = 1
+	local vendor = ChompersData.Vendors[vendorId]
+	if not vendor or not vendor.idleLines then return end
+	local Announce = Remotes:FindFirstChild("Announce")
+	local lineIdx = 1
 
-    task.spawn(function()
-        task.wait(math.random(5, 20))   -- stagger start
-        while part and part.Parent do
-            local line = vendor.idleLines[lineIdx]
-            lineIdx = lineIdx % #vendor.idleLines + 1
+	task.spawn(function()
+		task.wait(math.random(5, 20))   -- stagger start
+		while part and part.Parent do
+			local line = vendor.idleLines[lineIdx]
+			lineIdx = lineIdx % #vendor.idleLines + 1
 
-            -- Find players within 30 studs
-            if Announce and part.Parent then
-                for _, p in ipairs(Players:GetPlayers()) do
-                    local char = p.Character
-                    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                    if hrp and (hrp.Position - part.Position).Magnitude < 30 then
-                        Announce:FireClient(p,
-                            vendor.emoji.."  "..vendor.name..":  \""..line.."\"",
-                            Color3.fromRGB(unpack(vendor.accentHex)), 4)
-                    end
-                end
-            end
-            task.wait(30)
-        end
-    end)
+			-- Find players within 30 studs
+			if Announce and part.Parent then
+				for _, p in ipairs(Players:GetPlayers()) do
+					local char = p.Character
+					local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+					if hrp and (hrp.Position - part.Position).Magnitude < 30 then
+						Announce:FireClient(p,
+							vendor.emoji.."  "..vendor.name..":  \""..line.."\"",
+							Color3.fromRGB(unpack(vendor.accentHex)), 4)
+					end
+				end
+			end
+			task.wait(30)
+		end
+	end)
 end
 
 -- ── Setup one vendor part ─────────────────────────────────────
 local function setupVendor(part, vendorId)
-    local vendor = ChompersData.Vendors[vendorId]
-    if not vendor then
-        warn("[VendorSystem] Unknown vendorId: "..tostring(vendorId))
-        return
-    end
+	local vendor = ChompersData.Vendors[vendorId]
+	if not vendor then
+		warn("[VendorSystem] Unknown vendorId: "..tostring(vendorId))
+		return
+	end
 
-    local anchor = getBestAnchor(part)
-    local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
-    if existing then existing:Destroy() end
+	local anchor = getBestAnchor(part)
+	local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
+	if existing then existing:Destroy() end
 
-    local prompt = Instance.new("ProximityPrompt")
-    prompt.ObjectText            = vendor.emoji.." "..vendor.name
-    prompt.ActionText            = "Browse shop"
-    prompt.HoldDuration          = 0
-    prompt.MaxActivationDistance = 12
-    prompt.RequiresLineOfSight   = false
-    prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
-    prompt.Parent                = anchor
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ObjectText            = vendor.emoji.." "..vendor.name
+	prompt.ActionText            = "Browse shop"
+	prompt.HoldDuration          = 0
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight   = false
+	prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
+	prompt.Parent                = anchor
 
-    -- World billboard above the truck
-    local bb = Instance.new("BillboardGui", part)
-    bb.Size = UDim2.new(0, 160, 0, 38); bb.StudsOffset = Vector3.new(0, 5, 0)
-    bb.AlwaysOnTop = false
-    local lbl = Instance.new("TextLabel", bb)
-    lbl.Size = UDim2.new(1,0,1,0)
-    lbl.BackgroundColor3 = Color3.fromRGB(14,12,24)
-    lbl.BackgroundTransparency = 0.2; lbl.BorderSizePixel = 0
-    lbl.Text = vendor.emoji.."  "..vendor.name
-    lbl.Font = Enum.Font.GothamBlack; lbl.TextSize = 14
-    lbl.TextColor3 = Color3.new(unpack(
-        {vendor.accentHex[1]/255, vendor.accentHex[2]/255, vendor.accentHex[3]/255}))
-    lbl.TextXAlignment = Enum.TextXAlignment.Center
-    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 8)
+	-- World billboard above the truck
+	local bb = Instance.new("BillboardGui", part)
+	bb.Size = UDim2.new(0, 160, 0, 38); bb.StudsOffset = Vector3.new(0, 5, 0)
+	bb.AlwaysOnTop = false
+	local lbl = Instance.new("TextLabel", bb)
+	lbl.Size = UDim2.new(1,0,1,0)
+	lbl.BackgroundColor3 = Color3.fromRGB(14,12,24)
+	lbl.BackgroundTransparency = 0.2; lbl.BorderSizePixel = 0
+	lbl.Text = vendor.emoji.."  "..vendor.name
+	lbl.Font = Enum.Font.GothamBlack; lbl.TextSize = 14
+	lbl.TextColor3 = Color3.new(unpack(
+		{vendor.accentHex[1]/255, vendor.accentHex[2]/255, vendor.accentHex[3]/255}))
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 8)
 
-    prompt.Triggered:Connect(function(player)
-        -- Send the full vendor data table — ChompersData isn't available client-side
-        OpenVendorR:FireClient(player, {
-            id          = vendor.id,
-            name        = vendor.name,
-            tagline     = vendor.tagline,
-            emoji       = vendor.emoji,
-            accentHex   = vendor.accentHex,
-            items       = vendor.items,
-        })
-    end)
+	prompt.Triggered:Connect(function(player)
+		-- Send the full vendor data table — ChompersData isn't available client-side
+		OpenVendorR:FireClient(player, {
+			id          = vendor.id,
+			name        = vendor.name,
+			tagline     = vendor.tagline,
+			emoji       = vendor.emoji,
+			accentHex   = vendor.accentHex,
+			items       = vendor.items,
+		})
+	end)
 
-    startIdleChatter(vendorId, part)
+	startIdleChatter(vendorId, part)
 end
 
 -- ── Purchase handler ──────────────────────────────────────────
 PurchaseItemR.OnServerEvent:Connect(function(player, itemId)
-    if type(itemId) ~= "string" then return end
+	if type(itemId) ~= "string" then return end
 
-    local itemDef = ChompersData.VendorItemById[itemId]
-    if not itemDef then
-        PurchaseResultR:FireClient(player, false, "Unknown item.", itemId)
-        return
-    end
+	local itemDef = ChompersData.VendorItemById[itemId]
+	if not itemDef then
+		PurchaseResultR:FireClient(player, false, "Unknown item.", itemId)
+		return
+	end
 
-    if DataService.IsOwned(player, itemId) then
-        PurchaseResultR:FireClient(player, false, "Already owned.", itemId)
-        return
-    end
+	if DataService.IsOwned(player, itemId) then
+		PurchaseResultR:FireClient(player, false, "Already owned.", itemId)
+		return
+	end
 
-    local ok = DataService.DeductMedals(player, itemDef.cost)
-    if not ok then
-        PurchaseResultR:FireClient(player, false,
-            "Not enough medals. Need "..itemDef.cost..".", itemId)
-        return
-    end
+	local ok = DataService.DeductMedals(player, itemDef.cost)
+	if not ok then
+		PurchaseResultR:FireClient(player, false,
+			"Not enough medals. Need "..itemDef.cost..".", itemId)
+		return
+	end
 
-    DataService.AddOwned(player, itemId)
-    PurchaseResultR:FireClient(player, true, "Purchased!", itemId)
-    print(string.format("[VendorSystem] %s bought %s for %d medals",
-        player.Name, itemId, itemDef.cost))
+	DataService.AddOwned(player, itemId)
+	PurchaseResultR:FireClient(player, true, "Purchased!", itemId)
+	print(string.format("[VendorSystem] %s bought %s for %d medals",
+		player.Name, itemId, itemDef.cost))
 end)
 
 -- ── Equip handler ─────────────────────────────────────────────
 EquipItemR.OnServerEvent:Connect(function(player, itemId, category)
-    if type(itemId) ~= "string" then return end
-    if not DataService.IsOwned(player, itemId) then return end
-    local itemDef = ChompersData.VendorItemById[itemId]
-    if not itemDef then return end
-    local cat = category or itemDef.category
-    DataService.SetEquipped(player, cat, itemId)
+	if type(itemId) ~= "string" then return end
+	if not DataService.IsOwned(player, itemId) then return end
+	local itemDef = ChompersData.VendorItemById[itemId]
+	if not itemDef then return end
+	local cat = category or itemDef.category
+	DataService.SetEquipped(player, cat, itemId)
 
-    -- Broadcast title change to all clients so TitleDisplay can update
-    local isTitleCat = cat=="title" or cat=="title_animated" or cat=="title_prestige"
-    if isTitleCat then
-        PlayerTitleUpdateR:FireAllClients(player, itemId, itemDef.name, itemDef.tier)
-    end
+	-- Broadcast title change to all clients so TitleDisplay can update
+	local isTitleCat = cat=="title" or cat=="title_animated" or cat=="title_prestige"
+	if isTitleCat then
+		PlayerTitleUpdateR:FireAllClients(player, itemId, itemDef.name, itemDef.tier)
+	end
 end)
 
 -- ── Scan workspace ────────────────────────────────────────────
 local function scanAll()
-    local n = 0
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") then
-            local vid = desc:GetAttribute("VendorId")
-            if vid and type(vid)=="string" then
-                setupVendor(desc, vid)
-                n = n + 1
-            end
-        end
-    end
-    print(string.format("[VendorSystem] Registered %d vendor(s)", n))
+	local n = 0
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			local vid = desc:GetAttribute("VendorId")
+			if vid and type(vid)=="string" then
+				setupVendor(desc, vid)
+				n = n + 1
+			end
+		end
+	end
+	print(string.format("[VendorSystem] Registered %d vendor(s)", n))
 end
 
 -- Award medals at end of match
 local PhaseChangedEvent = ServerScriptService:FindFirstChild("PhaseChangedEvent")
-    or ServerScriptService:WaitForChild("PhaseChangedEvent", 15)
+	or ServerScriptService:WaitForChild("PhaseChangedEvent", 15)
 
 -- Listen for MatchResult being sent — hook into EndMatchServer's medal calculation
 -- We use a BindableEvent that EndMatchServer fires after computing medals
 local AwardMedalsEvent = ServerScriptService:FindFirstChild("AwardMedalsEvent")
 if not AwardMedalsEvent then
-    AwardMedalsEvent = Instance.new("BindableEvent")
-    AwardMedalsEvent.Name = "AwardMedalsEvent"
-    AwardMedalsEvent.Parent = ServerScriptService
+	AwardMedalsEvent = Instance.new("BindableEvent")
+	AwardMedalsEvent.Name = "AwardMedalsEvent"
+	AwardMedalsEvent.Parent = ServerScriptService
 end
 AwardMedalsEvent.Event:Connect(function(playerMedals)
-    for _, p in ipairs(Players:GetPlayers()) do
-        local entry = playerMedals[p.UserId]
-        if entry and entry.total and entry.total > 0 then
-            DataService.AddMedals(p, entry.total)
-            print(string.format("[VendorSystem] Awarded %d medals to %s",
-                entry.total, p.Name))
-        end
-    end
+	for _, p in ipairs(Players:GetPlayers()) do
+		local entry = playerMedals[p.UserId]
+		if entry and entry.total and entry.total > 0 then
+			DataService.AddMedals(p, entry.total)
+			print(string.format("[VendorSystem] Awarded %d medals to %s",
+				entry.total, p.Name))
+		end
+	end
 end)
 
 scanAll()
