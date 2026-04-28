@@ -620,7 +620,7 @@ local function buildLeftList()
 		end)
 
 		if selectedItem and selectedItem.name==item.name
-		and selectedItem.emoji==item.emoji then
+			and selectedItem.emoji==item.emoji then
 			selectedListBtn=row
 			row.BackgroundColor3=Color3.fromRGB(35,33,54)
 			rowStroke.Thickness=2; rowStroke.Color=C.red
@@ -647,7 +647,7 @@ local function buildLeftList()
 
 		makeSectionHeader(
 			"📦  STORAGE  ("..#localOverflow.." item"..(#localOverflow==1 and "" or "s")
-			..")  —  Press [Move →] to add to hotbar",
+				..")  —  Press [Move →] to add to hotbar",
 			Color3.fromRGB(100, 160, 255))
 
 		local MoveToHotbarR  = Remotes:FindFirstChild("MoveToHotbar")
