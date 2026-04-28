@@ -302,8 +302,8 @@ ShowPrepUI.OnClientEvent:Connect(function(recipes)
 			Color3.fromRGB(245,242,255), Enum.TextXAlignment.Left,
 			UDim2.new(0,74,0,8), UDim2.new(0.55,0,0,26)).ZIndex = 22
 		mkLabel(row, (r.rarity or "Common").."  ·  "..#(r.ingredients or {}).." ingredients",
-			Enum.Font.GothamBold, 14, Color3.fromRGB(105,100,138),
-			Enum.TextXAlignment.Left, UDim2.new(0,74,0,38), UDim2.new(0.55,0,0,18)).ZIndex = 22
+		Enum.Font.GothamBold, 14, Color3.fromRGB(105,100,138),
+		Enum.TextXAlignment.Left, UDim2.new(0,74,0,38), UDim2.new(0.55,0,0,18)).ZIndex = 22
 
 		-- CL badge
 		if r.cl and r.cl > 0 then
