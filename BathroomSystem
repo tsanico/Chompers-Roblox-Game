@@ -29,27 +29,27 @@ local Players         = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PlayerState = require(game:GetService("ServerScriptService")
-    :WaitForChild("PlayerState"))
+	:WaitForChild("PlayerState"))
 local Remotes = ReplicatedStorage:WaitForChild("ChompersRemotes")
 
 -- ── Remote helpers ────────────────────────────────────────────
 local function getOrCreate(name)
-    local r = Remotes:FindFirstChild(name)
-    if not r then
-        r = Instance.new("RemoteEvent")
-        r.Name   = name
-        r.Parent = Remotes
-    end
-    return r
+	local r = Remotes:FindFirstChild(name)
+	if not r then
+		r = Instance.new("RemoteEvent")
+		r.Name   = name
+		r.Parent = Remotes
+	end
+	return r
 end
 
 -- ── Remotes ───────────────────────────────────────────────────
 local function getOrCreateR(name)
-    local r = Remotes:FindFirstChild(name)
-    if not r then
-        r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = Remotes
-    end
-    return r
+	local r = Remotes:FindFirstChild(name)
+	if not r then
+		r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = Remotes
+	end
+	return r
 end
 local UpdateBreaks   = getOrCreate("UpdateBreaks")
 local BathroomEnterR = getOrCreate("BathroomEnter")
@@ -82,8 +82,8 @@ local doorsByStall = {}   -- [stall] = door BasePart (optional)
 
 -- ── Utilities ────────────────────────────────────────────────
 local function fireBreaks(player)
-    local s = PlayerState.Get(player)
-    if s then UpdateBreaks:FireClient(player, s.pottyBreaks) end
+	local s = PlayerState.Get(player)
+	if s then UpdateBreaks:FireClient(player, s.pottyBreaks) end
 end
 
 -- ── Door control ─────────────────────────────────────────────
@@ -91,252 +91,265 @@ end
 -- They open briefly (0.7s) only when a player enters or exits
 -- with valid conditions. Occupied state shows as red, not open.
 local function setDoor(stall, state)
-    -- state: "free" | "occupied" | "opening"
-    local door = doorsByStall[stall]
-    if not door then return end
+	-- state: "free" | "occupied" | "opening"
+	local door = doorsByStall[stall]
+	if not door then return end
 
-    if state == "opening" then
-        -- Brief open window — player is moving through
-        door.Transparency = 0.65
-        door.CanCollide   = false
-        door.BrickColor   = BrickColor.new("Bright green")
-        task.delay(0.7, function()
-            if door and door.Parent then
-                local current = stallOccupant[stall]
-                -- Re-evaluate state after open window
-                if current then
-                    door.Transparency = 0
-                    door.CanCollide   = true
-                    door.BrickColor   = BrickColor.new("Bright red")
-                else
-                    door.Transparency = 0
-                    door.CanCollide   = true
-                    door.BrickColor   = BrickColor.new("Medium stone grey")
-                end
-            end
-        end)
+	if state == "opening" then
+		-- Brief open window — player is moving through
+		door.Transparency = 0.65
+		door.CanCollide   = false
+		door.BrickColor   = BrickColor.new("Bright green")
+		task.delay(0.7, function()
+			if door and door.Parent then
+				local current = stallOccupant[stall]
+				-- Re-evaluate state after open window
+				if current then
+					door.Transparency = 0
+					door.CanCollide   = true
+					door.BrickColor   = BrickColor.new("Bright red")
+				else
+					door.Transparency = 0
+					door.CanCollide   = true
+					door.BrickColor   = BrickColor.new("Medium stone grey")
+				end
+			end
+		end)
 
-    elseif state == "occupied" then
-        -- Closed + red tint: occupied but physically solid
-        door.Transparency = 0
-        door.CanCollide   = true
-        door.BrickColor   = BrickColor.new("Bright red")
+	elseif state == "occupied" then
+		-- Closed + red tint: occupied but physically solid
+		door.Transparency = 0
+		door.CanCollide   = true
+		door.BrickColor   = BrickColor.new("Bright red")
 
-    else  -- "free"
-        -- Closed + neutral: no one inside
-        door.Transparency = 0
-        door.CanCollide   = true
-        door.BrickColor   = BrickColor.new("Medium stone grey")
-    end
+	else  -- "free"
+		-- Closed + neutral: no one inside
+		door.Transparency = 0
+		door.CanCollide   = true
+		door.BrickColor   = BrickColor.new("Medium stone grey")
+	end
 end
 
 local function clearPlayerSession(player)
-    local stall = playerStall[player]
-    if stall then
-        stallOccupant[stall] = nil
-        setDoor(stall, "opening")
-    end
-    playerStall[player]  = nil
-    usingFixture[player] = nil
+	local stall = playerStall[player]
+	if stall then
+		stallOccupant[stall] = nil
+		setDoor(stall, "opening")
+	end
+	playerStall[player]  = nil
+	usingFixture[player] = nil
 
-    if playerTimer[player] then
-        task.cancel(playerTimer[player])
-        playerTimer[player] = nil
-    end
+	if playerTimer[player] then
+		task.cancel(playerTimer[player])
+		playerTimer[player] = nil
+	end
 
-    -- Unfreeze if still frozen from mid-animation eject
-    UnfreezeMovement:FireClient(player)
-    BathroomAnimCompleteR:FireClient(player)
+	-- Unfreeze if still frozen from mid-animation eject
+	UnfreezeMovement:FireClient(player)
+	BathroomAnimCompleteR:FireClient(player)
 
-    PlayerState.ExitBathroom(player)
-    BathroomExitR:FireClient(player)
-    fireBreaks(player)
+	PlayerState.ExitBathroom(player)
+	BathroomExitR:FireClient(player)
+	fireBreaks(player)
 end
 
 -- ── Force exit after MAX_STAY_SECONDS ────────────────────────
 local function startExitTimer(player, stall)
-    if playerTimer[player] then
-        task.cancel(playerTimer[player])
-    end
+	if playerTimer[player] then
+		task.cancel(playerTimer[player])
+	end
 
-    playerTimer[player] = task.spawn(function()
-        local remaining = MAX_STAY_SECONDS
-        while remaining > 0 do
-            task.wait(1)
-            remaining = remaining - 1
-            BathroomTimerR:FireClient(player, remaining)
-        end
-        -- Time's up — eject
-        clearPlayerSession(player)
-        if AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "⏰  Time's up — you've been ejected from the bathroom.",
-                Color3.fromRGB(230,160,50), 3)
-        end
-    end)
+	playerTimer[player] = task.spawn(function()
+		local remaining = MAX_STAY_SECONDS
+		while remaining > 0 do
+			task.wait(1)
+			remaining = remaining - 1
+			BathroomTimerR:FireClient(player, remaining)
+		end
+		-- Time's up — eject
+		clearPlayerSession(player)
+		if AnnounceRemote then
+			AnnounceRemote:FireClient(player,
+				"⏰  Time's up — you've been ejected from the bathroom.",
+				Color3.fromRGB(230,160,50), 3)
+		end
+	end)
 end
 
 -- ── Core interaction handler ──────────────────────────────────
 local usingFixture = {}   -- [player] = true while animation is running (prevents double-use)
 
 local function handleUse(player, stall, isSink)
-    local s = PlayerState.Get(player)
-    if not s then return end
-    if s.isEliminated then return end
-    if usingFixture[player] then return end   -- already mid-animation
+	local s = PlayerState.Get(player)
+	if not s then return end
+	if s.isEliminated then return end
+	if usingFixture[player] then return end   -- already mid-animation
 
-    -- Stall occupancy check
-    if stallOccupant[stall] and stallOccupant[stall] ~= player then
-        if AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "🚫  This stall is occupied.",
-                Color3.fromRGB(220,80,60), 2)
-        end
-        return
-    end
+	-- Stall occupancy check
+	if stallOccupant[stall] and stallOccupant[stall] ~= player then
+		if AnnounceRemote then
+			AnnounceRemote:FireClient(player,
+				"🚫  This stall is occupied.",
+				Color3.fromRGB(220,80,60), 2)
+		end
+		return
+	end
 
-    -- Threshold check (80% CL or FL required)
-    if s.cl < BATHROOM_THRESHOLD and s.fl < BATHROOM_THRESHOLD then
-        if AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "🧼  You don't need the bathroom yet. (Need 80% CL or FL)",
-                Color3.fromRGB(130,120,165), 3)
-        end
-        return
-    end
+	-- Threshold check (80% CL or FL required)
+	if s.cl < BATHROOM_THRESHOLD and s.fl < BATHROOM_THRESHOLD then
+		if AnnounceRemote then
+			AnnounceRemote:FireClient(player,
+				"🧼  You don't need the bathroom yet. (Need 80% CL or FL)",
+				Color3.fromRGB(130,120,165), 3)
+		end
+		return
+	end
 
-    -- Breaks check
-    if s.pottyBreaks <= 0 then
-        if AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "🚽  No potty breaks remaining. You're on your own.",
-                Color3.fromRGB(220,80,60), 3)
-        end
-        return
-    end
+	-- Breaks check
+	if s.pottyBreaks <= 0 then
+		if AnnounceRemote then
+			AnnounceRemote:FireClient(player,
+				"🚽  No potty breaks remaining. You're on your own.",
+				Color3.fromRGB(220,80,60), 3)
+		end
+		return
+	end
 
-    -- Enter bathroom if not already in
-    if not s.inBathroom then
-        local ok = PlayerState.EnterBathroom(player)
-        if not ok then return end
+	-- Enter bathroom if not already in
+	if not s.inBathroom then
+		local ok = PlayerState.EnterBathroom(player)
+		if not ok then return end
 
-        stallOccupant[stall] = player
-        playerStall[player]  = stall
+		stallOccupant[stall] = player
+		playerStall[player]  = stall
 
-        setDoor(stall, "opening")
-        task.delay(0.75, function()
-            if stallOccupant[stall] == player then
-                setDoor(stall, "occupied")
-            end
-        end)
+		setDoor(stall, "opening")
+		task.delay(0.75, function()
+			if stallOccupant[stall] == player then
+				setDoor(stall, "occupied")
+			end
+		end)
 
-        BathroomEnterR:FireClient(player, s.pottyBreaks)
-        startExitTimer(player, stall)
-    end
+		BathroomEnterR:FireClient(player, s.pottyBreaks)
+		startExitTimer(player, stall)
+	end
 
-    -- ── Timed animation sequence ──────────────────────────────
-    local duration = isSink and SINK_DURATION or TOILET_DURATION
-    usingFixture[player] = true
+	-- ── Timed animation sequence ──────────────────────────────
+	local duration = isSink and SINK_DURATION or TOILET_DURATION
+	usingFixture[player] = true
 
-    -- Freeze player movement for the duration
-    FreezeMovement:FireClient(player)
+	-- Freeze player movement for the duration
+	FreezeMovement:FireClient(player)
 
-    -- Tell client to show the animation overlay
-    BathroomAnimStartR:FireClient(player, isSink and "sink" or "toilet", duration)
+	-- Tell client to show the animation overlay
+	BathroomAnimStartR:FireClient(player, isSink and "sink" or "toilet", duration)
 
-    -- After duration: reset bar, restore movement, complete animation
-    task.delay(duration, function()
-        if not player.Parent then return end   -- player left
+	-- After duration: reset bar, restore movement, complete animation
+	task.delay(duration, function()
+		if not player.Parent then return end   -- player left
 
-        usingFixture[player] = nil
-        UnfreezeMovement:FireClient(player)
-        BathroomAnimCompleteR:FireClient(player)
+		usingFixture[player] = nil
+		UnfreezeMovement:FireClient(player)
+		BathroomAnimCompleteR:FireClient(player)
 
-        -- NOW reset the bar
-        local success = false
-        if isSink then
-            success = PlayerState.UseSink(player)
-        else
-            success = PlayerState.UseToilet(player)
-        end
+		-- NOW reset the bar
+		local success = false
+		if isSink then
+			success = PlayerState.UseSink(player)
+		else
+			success = PlayerState.UseToilet(player)
+		end
 
-        if success then
-            fireBreaks(player)
-            if AnnounceRemote then
-                local msg = isSink
-                    and "🚿  Cleanliness reset!"
-                    or  "🚽  Fullness reset!"
-                local col = isSink
-                    and Color3.fromRGB(65,185,235)
-                    or  Color3.fromRGB(235,155,35)
-                AnnounceRemote:FireClient(player, msg, col, 2)
-            end
-        end
-    end)
+		if success then
+			fireBreaks(player)
+			if AnnounceRemote then
+				local msg = isSink
+					and "🚿  Cleanliness reset!"
+					or  "🚽  Fullness reset!"
+				local col = isSink
+					and Color3.fromRGB(65,185,235)
+					or  Color3.fromRGB(235,155,35)
+				AnnounceRemote:FireClient(player, msg, col, 2)
+			end
+		end
+	end)
+end
+
+-- ── Best-anchor helper ────────────────────────────────────────
+local function getBestAnchor(part)
+	local parent = part.Parent
+	if parent and parent:IsA("Model") then
+		return parent.PrimaryPart or part
+	end
+	return part
 end
 
 -- ── Stall setup ───────────────────────────────────────────────
 local function setupStall(part, isSink)
-    local label  = isSink and "🚿 Use Sink" or "🚽 Use Toilet"
-    local subText= isSink
-        and "Resets Cleanliness (1 potty break)"
-        or  "Resets Fullness (1 potty break)"
+	local label   = isSink and "🚿 Use Sink" or "🚽 Use Toilet"
+	local subText = isSink
+		and "Resets Cleanliness (1 potty break)"
+		or  "Resets Fullness (1 potty break)"
 
-    local prompt = Instance.new("ProximityPrompt")
-    prompt.ObjectText      = label
-    prompt.ActionText      = subText
-    prompt.HoldDuration    = 0
-    prompt.MaxActivationDistance = 8
-    prompt.RequiresLineOfSight   = false
-    prompt.Exclusivity     = Enum.ProximityPromptExclusivity.OneGlobally
-    prompt.Parent          = part
+	local anchor = getBestAnchor(part)
+	local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
+	if existing then existing:Destroy() end
 
-    -- Try to find an adjacent door in the same parent folder
-    local parentFolder = part.Parent
-    if parentFolder then
-        for _, sibling in ipairs(parentFolder:GetChildren()) do
-            if sibling:IsA("BasePart")
-            and sibling:GetAttribute("IsBathroomDoor") == true then
-                doorsByStall[part] = sibling
-                -- Initialise to closed/solid state
-                sibling.Transparency = 0
-                sibling.CanCollide   = true
-                sibling.BrickColor   = BrickColor.new("Medium stone grey")
-                break
-            end
-        end
-    end
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ObjectText      = label
+	prompt.ActionText      = subText
+	prompt.HoldDuration    = 0
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight   = false
+	prompt.Exclusivity     = Enum.ProximityPromptExclusivity.OnePerButton
+	prompt.Parent          = anchor
 
-    prompt.Triggered:Connect(function(player)
-        handleUse(player, part, isSink)
-    end)
+	-- Try to find an adjacent door in the same parent folder
+	local parentFolder = part.Parent
+	if parentFolder then
+		for _, sibling in ipairs(parentFolder:GetChildren()) do
+			if sibling:IsA("BasePart")
+				and sibling:GetAttribute("IsBathroomDoor") == true then
+				doorsByStall[part] = sibling
+				-- Initialise to closed/solid state
+				sibling.Transparency = 0
+				sibling.CanCollide   = true
+				sibling.BrickColor   = BrickColor.new("Medium stone grey")
+				break
+			end
+		end
+	end
 
-    stallOccupant[part] = nil
+	prompt.Triggered:Connect(function(player)
+		handleUse(player, part, isSink)
+	end)
+
+	stallOccupant[part] = nil
 end
 
 -- ── Scan workspace for tagged bathroom parts ──────────────────
 local function scanAll()
-    local nSink, nToilet = 0, 0
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") then
-            if desc:GetAttribute("IsBathroomSink") == true then
-                setupStall(desc, true)
-                nSink = nSink + 1
-            elseif desc:GetAttribute("IsBathroomToilet") == true then
-                setupStall(desc, false)
-                nToilet = nToilet + 1
-            end
-        end
-    end
-    print(string.format("[BathroomSystem] Registered %d sink(s), %d toilet(s)",
-        nSink, nToilet))
+	local nSink, nToilet = 0, 0
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			if desc:GetAttribute("IsBathroomSink") == true then
+				setupStall(desc, true)
+				nSink = nSink + 1
+			elseif desc:GetAttribute("IsBathroomToilet") == true then
+				setupStall(desc, false)
+				nToilet = nToilet + 1
+			end
+		end
+	end
+	print(string.format("[BathroomSystem] Registered %d sink(s), %d toilet(s)",
+		nSink, nToilet))
 end
 
 -- ── Player disconnect cleanup ─────────────────────────────────
 Players.PlayerRemoving:Connect(function(player)
-    if playerStall[player] then
-        clearPlayerSession(player)
-    end
+	if playerStall[player] then
+		clearPlayerSession(player)
+	end
 end)
 
 -- ── Match reset — restore session state at Prelobby ──────────
@@ -344,13 +357,13 @@ end)
 local ServerScriptService = game:GetService("ServerScriptService")
 local PhaseChangedEvent   = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
 if PhaseChangedEvent then
-    PhaseChangedEvent.Event:Connect(function(phase)
-        if phase == "Prelobby" then
-            for player, _ in pairs(table.clone(playerStall)) do
-                clearPlayerSession(player)
-            end
-        end
-    end)
+	PhaseChangedEvent.Event:Connect(function(phase)
+		if phase == "Prelobby" then
+			for player, _ in pairs(table.clone(playerStall)) do
+				clearPlayerSession(player)
+			end
+		end
+	end)
 end
 
 -- ── Boot ──────────────────────────────────────────────────────
