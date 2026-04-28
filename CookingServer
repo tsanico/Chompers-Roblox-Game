@@ -566,8 +566,9 @@ function resolveCook(player, part, zone, missedWindow)
 	local rarMult = (C.Points.RarityMultiplier or {})[finalDish.rarity] or 1
 	PlayerState.AddPoints(player, (C.Points.FinishDishSolo_base or 10) * rarMult)
 	if sousChef then
-		PlayerState.AddPoints(player,  (C.Points.FinishDishSousSide or 8) * rarMult)
-		PlayerState.AddPoints(session.sousChef, (C.Points.SousChefContrib_base or 3) * rarMult)
+		PlayerState.RecordCookingAssist(session.sousChef)   -- track for Sous-Chef Supreme accolade
+		PlayerState.AddPoints(player,          (C.Points.FinishDishSousSide or 8) * rarMult)
+		PlayerState.AddPoints(session.sousChef,(C.Points.SousChefContrib_base or 3) * rarMult)
 	end
 
 	-- Clear session
