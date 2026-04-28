@@ -1,22 +1,21 @@
 -- ============================================================
--- TradeHubSystem — ServerScript
--- Location: ServerScriptService > TradeHubSystem
+-- TradeHubSystem — ServerScript · ServerScriptService
 --
--- Manages the Trade Hub: a safe zone where players can buy
--- Friendship Bracelets during Gathering and Cooking phases.
+-- The Trade Hub is NOT a safe zone. It is a trade/purchase
+-- location with a kiosk terminal.
 --
--- Studio setup (one-time):
---   • Tag every BasePart that forms the hub floor/zone:
---       Attribute "IsTradeHubZone" = true
---   • Tag the bracelet kiosk surface:
---       Attribute "IsBraceletKiosk" = true
+-- Studio setup:
+--   Tag kiosk Part: Attribute "IsBraceletKiosk" = true
+--   (zone parts / safe zone removed — Trade Hub is open combat)
 --
--- Locked design constants (Bible Part 12):
---   Bracelet cost:     $12
---   Available phases:  Gathering, Cooking, CookingGrace
---   Safe zone:         no damage (ThrowServer checks inTradeHub)
---   Decline announce:  broadcast to all players
---   Max allies:        1–19 players = 1, 20–29 = 2, 30–40 = 3
+-- Flow:
+--   Player presses E on kiosk → OpenTradeHubMenu fires to client
+--   Client shows menu: [Buy Bracelet] [Trade Items]
+--   Buy Bracelet  → BuyBracelet remote → server validates + adds item
+--   Trade Items   → client shows player list → RequestTrade fires
+--   Target player → TradeInvite fires to target's client
+--   Accept        → both get TradeOpen with inventories
+--   Both confirm  → ConfirmTrade fires → server swaps items
 -- ============================================================
 
 local Players             = game:GetService("Players")
@@ -26,208 +25,302 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local PlayerState = require(ServerScriptService:WaitForChild("PlayerState"))
 local Remotes     = ReplicatedStorage:WaitForChild("ChompersRemotes")
 
--- ── Remote helpers ────────────────────────────────────────────
-local function getOrCreate(name)
-    local r = Remotes:FindFirstChild(name)
-    if not r then
-        r = Instance.new("RemoteEvent")
-        r.Name = name; r.Parent = Remotes
-    end
-    return r
+local function getOrCreate(name, class)
+	local r = Remotes:FindFirstChild(name)
+	if not r then
+		r = Instance.new(class or "RemoteEvent")
+		r.Name = name; r.Parent = Remotes
+	end
+	return r
 end
 
-local AnnounceRemote  = Remotes:FindFirstChild("Announce")
-local TradeHubEnterR  = getOrCreate("TradeHubEnter")   -- → client on entry
-local TradeHubExitR   = getOrCreate("TradeHubExit")    -- → client on exit
+-- ── Remotes ───────────────────────────────────────────────────
+local AnnounceR         = Remotes:FindFirstChild("Announce")
+local OpenTradeHubMenuR = getOrCreate("OpenTradeHubMenu")   -- → client
+local BuyBraceletR      = getOrCreate("BuyBracelet")        -- client →
+local RequestTradeR     = getOrCreate("RequestTrade")       -- client →
+local TradeInviteR      = getOrCreate("TradeInvite")        -- → target client
+local RespondTradeR     = getOrCreate("RespondTrade")       -- client →
+local TradeOpenR        = getOrCreate("TradeOpen")          -- → both clients
+local SubmitItemsR      = getOrCreate("SubmitTradeItems")   -- client →
+local ConfirmTradeR     = getOrCreate("ConfirmTrade")       -- client →
+local TradeCancelledR   = getOrCreate("TradeCancelled")     -- → both clients
+local TradeCompleteR    = getOrCreate("TradeComplete")      -- → both clients
+local GetPlayersR       = getOrCreate("GetTradablePlayers", "RemoteFunction")
 
 -- ── Constants ─────────────────────────────────────────────────
-local BRACELET_COST   = 12
-local ACTIVE_PHASES   = { Gathering=true, Cooking=true, CookingGrace=true }
+local BRACELET_COST = 12
+local TRADE_TIMEOUT = 30   -- seconds before unanswered invite expires
 
 -- ── Phase tracking ────────────────────────────────────────────
 local currentPhase = "Prelobby"
-
 local PhaseChangedEvent = ServerScriptService:WaitForChild("PhaseChangedEvent", 10)
 if PhaseChangedEvent then
-    PhaseChangedEvent.Event:Connect(function(phase)
-        currentPhase = phase
-        -- Clear all hub flags on Prelobby reset
-        if phase == "Prelobby" then
-            for _, player in ipairs(Players:GetPlayers()) do
-                local s = PlayerState.Get(player)
-                if s then s.inTradeHub = false end
-            end
-        end
-    end)
+	PhaseChangedEvent.Event:Connect(function(p) currentPhase = p end)
 end
 
--- ── Player count helper (for max-ally cap) ────────────────────
+-- ── Trade session state ───────────────────────────────────────
+-- activeTrades[playerA] = { partner=playerB, offeredItems={}, confirmed=false }
+local activeTrades = {}
+
 local function getAllyCap()
-    local n = #Players:GetPlayers()
-    if n >= 30 then return 3
-    elseif n >= 20 then return 2
-    else return 1 end
+	local n = #Players:GetPlayers()
+	if n >= 30 then return 3 elseif n >= 20 then return 2 else return 1 end
 end
 
--- ── Zone management ───────────────────────────────────────────
--- Track players inside zone parts to handle overlapping parts cleanly
-local playerZoneTouches = {}   -- [player] = count of zone parts currently touching
-
-local function playerEnterHub(player)
-    local s = PlayerState.Get(player)
-    if not s or s.inTradeHub then return end
-    s.inTradeHub = true
-    TradeHubEnterR:FireClient(player)
-    if AnnounceRemote then
-        AnnounceRemote:FireClient(player,
-            "🤝  Trade Hub — safe zone. Bracelet Kiosk nearby.",
-            Color3.fromRGB(100,210,255), 2.5)
-    end
+local function announce(player, msg, col, dur)
+	if AnnounceR then AnnounceR:FireClient(player, msg, col, dur) end
 end
 
-local function playerExitHub(player)
-    local s = PlayerState.Get(player)
-    if not s or not s.inTradeHub then return end
-    s.inTradeHub = false
-    TradeHubExitR:FireClient(player)
+local function cancelTrade(playerA, reason)
+	local session = activeTrades[playerA]
+	if not session then return end
+	local playerB = session.partner
+	activeTrades[playerA] = nil
+	if playerB then activeTrades[playerB] = nil end
+	TradeCancelledR:FireClient(playerA, reason)
+	if playerB and playerB.Parent then
+		TradeCancelledR:FireClient(playerB, reason)
+	end
 end
 
-local function getPlayerFromCharacter(character)
-    return Players:GetPlayerFromCharacter(character)
+-- ── Best-anchor helper ────────────────────────────────────────
+-- If the tagged part is inside a Model, use the Model's PrimaryPart
+-- so the ProximityPrompt activates from any surface approach.
+local function getBestAnchor(part)
+	local parent = part.Parent
+	if parent and parent:IsA("Model") then
+		return parent.PrimaryPart or part
+	end
+	return part
 end
 
-local function setupZonePart(part)
-    part.Touched:Connect(function(hit)
-        local char = hit.Parent
-        local player = getPlayerFromCharacter(char)
-        if not player then return end
-        playerZoneTouches[player] = (playerZoneTouches[player] or 0) + 1
-        if playerZoneTouches[player] == 1 then
-            playerEnterHub(player)
-        end
-    end)
-
-    part.TouchEnded:Connect(function(hit)
-        local char = hit.Parent
-        local player = getPlayerFromCharacter(char)
-        if not player then return end
-        playerZoneTouches[player] = math.max(0,
-            (playerZoneTouches[player] or 1) - 1)
-        if playerZoneTouches[player] == 0 then
-            playerExitHub(player)
-        end
-    end)
-end
-
--- ── Bracelet kiosk ────────────────────────────────────────────
+-- ── Kiosk setup ───────────────────────────────────────────────
 local function setupKiosk(part)
-    local prompt = Instance.new("ProximityPrompt")
-    prompt.ObjectText            = "🤝 Friendship Bracelet Kiosk"
-    prompt.ActionText            = "Buy Alliance Bracelet ($" .. BRACELET_COST .. ")"
-    prompt.HoldDuration          = 0.5
-    prompt.MaxActivationDistance = 8
-    prompt.RequiresLineOfSight   = false
-    prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
-    prompt.Parent                = part
+	local anchor = getBestAnchor(part)
+	local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
+	if existing then existing:Destroy() end
 
-    prompt.Triggered:Connect(function(player)
-        local s = PlayerState.Get(player)
-        if not s then return end
-        if s.isEliminated then return end
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ObjectText            = "🤝 Trade Hub Kiosk"
+	prompt.ActionText            = "Open Trade Menu"
+	prompt.HoldDuration          = 0
+	prompt.MaxActivationDistance = 15   -- visible from any approach angle
+	prompt.RequiresLineOfSight   = false
+	prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
+	prompt.Parent                = anchor
 
-        -- Phase gate
-        if not ACTIVE_PHASES[currentPhase] then
-            if AnnounceRemote then
-                AnnounceRemote:FireClient(player,
-                    "🤝  Bracelets only sold during Gathering and Cooking phases.",
-                    Color3.fromRGB(160,120,160), 2.5)
-            end
-            return
-        end
-
-        -- Ally cap check (already at max for this server size)
-        local cap = getAllyCap()
-        local allyCount = 0
-        if s.allyUserId  and s.allyUserId  ~= 0 then allyCount += 1 end
-        if s.allyUserId2 and s.allyUserId2 ~= 0 then allyCount += 1 end
-        if allyCount >= cap then
-            if AnnounceRemote then
-                AnnounceRemote:FireClient(player,
-                    "🤝  You already have the maximum number of allies for this server size.",
-                    Color3.fromRGB(220,80,60), 2.5)
-            end
-            return
-        end
-
-        -- Money check
-        if (s.money or 0) < BRACELET_COST then
-            if AnnounceRemote then
-                AnnounceRemote:FireClient(player,
-                    "💸  Not enough money. Bracelet costs $" .. BRACELET_COST .. ".",
-                    Color3.fromRGB(220,80,60), 2.5)
-            end
-            return
-        end
-
-        -- Check if player already has a bracelet in inventory
-        for _, item in ipairs(s.inventory or {}) do
-            if item and item.name == "Friendship Bracelet" then
-                if AnnounceRemote then
-                    AnnounceRemote:FireClient(player,
-                        "🤝  You already have a Friendship Bracelet.",
-                        Color3.fromRGB(100,210,255), 2)
-                end
-                return
-            end
-        end
-
-        -- Purchase
-        PlayerState.AddMoney(player, -BRACELET_COST)
-        PlayerState.AddItem(player, {
-            name    = "Friendship Bracelet",
-            rarity  = "Uncommon",
-            wt      = 1,
-            cost    = BRACELET_COST,
-            emoji   = "💜",
-            allergy = "None",
-            zone    = "Neutral",
-            cl      = 0,
-            paid    = true,
-        })
-
-        if AnnounceRemote then
-            AnnounceRemote:FireClient(player,
-                "💜  Friendship Bracelet purchased! Press E near another player to offer.",
-                Color3.fromRGB(180,100,255), 3)
-        end
-    end)
+	prompt.Triggered:Connect(function(player)
+		local s = PlayerState.Get(player)
+		if not s or s.isEliminated then return end
+		OpenTradeHubMenuR:FireClient(player, s.money or 0, BRACELET_COST)
+	end)
 end
+
+-- ── Remote: client requests tradable player list ──────────────
+GetPlayersR.OnServerInvoke = function(requester)
+	local result = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= requester then
+			local s = PlayerState.Get(p)
+			if s and not s.isEliminated then
+				table.insert(result, { userId = p.UserId, name = p.Name })
+			end
+		end
+	end
+	return result
+end
+
+-- ── Remote: Buy Bracelet ──────────────────────────────────────
+BuyBraceletR.OnServerEvent:Connect(function(player)
+	local s = PlayerState.Get(player)
+	if not s or s.isEliminated then return end
+
+	if currentPhase ~= "Gathering" and currentPhase ~= "Cooking"
+		and currentPhase ~= "CookingGrace" then
+		announce(player, "🤝  Bracelets only sold during Gathering and Cooking.",
+			Color3.fromRGB(160,120,160), 2.5)
+		return
+	end
+
+	local allyCount = (s.allyUserId and s.allyUserId ~= 0 and 1 or 0)
+		+ (s.allyUserId2 and s.allyUserId2 ~= 0 and 1 or 0)
+	if allyCount >= getAllyCap() then
+		announce(player, "🤝  Already at maximum allies for this server size.",
+			Color3.fromRGB(220,80,60), 2.5)
+		return
+	end
+	for _, item in ipairs(s.inventory or {}) do
+		if item and item.name == "Friendship Bracelet" then
+			announce(player, "🤝  You already have a bracelet.",
+				Color3.fromRGB(100,210,255), 2)
+			return
+		end
+	end
+	if (s.money or 0) < BRACELET_COST then
+		announce(player, "💸  Not enough money. Bracelet costs $" .. BRACELET_COST .. ".",
+			Color3.fromRGB(220,80,60), 2.5)
+		return
+	end
+
+	PlayerState.AddMoney(player, -BRACELET_COST)
+	PlayerState.AddItem(player, {
+		name="Friendship Bracelet", rarity="Uncommon", wt=1,
+		cost=BRACELET_COST, emoji="💜", allergy="None",
+		zone="Neutral", cl=0, paid=true,
+	})
+	announce(player,
+		"💜  Bracelet purchased! Press E near a player to offer.",
+		Color3.fromRGB(180,100,255), 3)
+end)
+
+-- ── Remote: Initiate trade request ───────────────────────────
+RequestTradeR.OnServerEvent:Connect(function(requester, targetUserId)
+	local s = PlayerState.Get(requester)
+	if not s or s.isEliminated then return end
+	if activeTrades[requester] then
+		announce(requester, "🔄  You're already in a trade.", Color3.fromRGB(160,120,160), 2)
+		return
+	end
+
+	local target
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.UserId == targetUserId then target = p; break end
+	end
+	if not target then
+		announce(requester, "🔄  Player not found.", Color3.fromRGB(220,80,60), 2)
+		return
+	end
+	local ts = PlayerState.Get(target)
+	if not ts or ts.isEliminated then
+		announce(requester, "🔄  That player is not available.", Color3.fromRGB(220,80,60), 2)
+		return
+	end
+	if activeTrades[target] then
+		announce(requester, "🔄  That player is already trading.", Color3.fromRGB(160,120,160), 2)
+		return
+	end
+
+	-- Set pending state
+	activeTrades[requester] = { partner=target, offeredItems={}, confirmed=false, pending=true }
+	activeTrades[target]    = { partner=requester, offeredItems={}, confirmed=false, pending=true }
+
+	-- Notify target
+	TradeInviteR:FireClient(target, requester.UserId, requester.Name)
+	announce(requester, "🔄  Trade request sent to " .. target.Name .. ".", Color3.fromRGB(100,210,200), 2.5)
+
+	-- Auto-cancel after timeout
+	task.delay(TRADE_TIMEOUT, function()
+		if activeTrades[requester] and activeTrades[requester].pending then
+			cancelTrade(requester, "⏰  Trade request timed out.")
+		end
+	end)
+end)
+
+-- ── Remote: Respond to trade invite ──────────────────────────
+RespondTradeR.OnServerEvent:Connect(function(player, accepted)
+	local session = activeTrades[player]
+	if not session or not session.pending then return end
+	local partner = session.partner
+
+	if not accepted then
+		cancelTrade(partner, "❌  " .. player.Name .. " declined the trade.")
+		return
+	end
+
+	-- Clear pending, open trade screen for both
+	session.pending = false
+	if activeTrades[partner] then activeTrades[partner].pending = false end
+
+	-- Send both players each other's inventory
+	local myState  = PlayerState.Get(player)
+	local ptState  = PlayerState.Get(partner)
+	local myInv    = myState and myState.inventory or {}
+	local ptInv    = ptState and ptState.inventory or {}
+
+	TradeOpenR:FireClient(player,
+		{ userId=partner.UserId, name=partner.Name, inventory=ptInv })
+	TradeOpenR:FireClient(partner,
+		{ userId=player.UserId, name=player.Name, inventory=myInv })
+end)
+
+-- ── Remote: Player submits their offered items ────────────────
+SubmitItemsR.OnServerEvent:Connect(function(player, slotIndices)
+	local session = activeTrades[player]
+	if not session or session.pending then return end
+	session.offeredItems = slotIndices or {}
+end)
+
+-- ── Remote: Player confirms trade ────────────────────────────
+ConfirmTradeR.OnServerEvent:Connect(function(player)
+	local session = activeTrades[player]
+	if not session or session.pending then return end
+	session.confirmed = true
+
+	local partner        = session.partner
+	local partnerSession = activeTrades[partner]
+	if not partnerSession or not partnerSession.confirmed then
+		-- Waiting for partner
+		announce(player, "✅  Waiting for " .. partner.Name .. " to confirm…",
+			Color3.fromRGB(100,200,100), 2)
+		return
+	end
+
+	-- Both confirmed — execute swap
+	local sA = PlayerState.Get(player)
+	local sB = PlayerState.Get(partner)
+	if not sA or not sB then
+		cancelTrade(player, "⚠️  Trade failed — player state unavailable.")
+		return
+	end
+
+	-- Collect items A is giving (by slot index, descending so removal doesn't shift)
+	local itemsAGiving, itemsBGiving = {}, {}
+	local indicesA = session.offeredItems
+	local indicesB = partnerSession.offeredItems
+
+	table.sort(indicesA, function(a,b) return a > b end)
+	table.sort(indicesB, function(a,b) return a > b end)
+
+	for _, idx in ipairs(indicesA) do
+		local item = PlayerState.RemoveItem(player, idx)
+		if item then table.insert(itemsAGiving, item) end
+	end
+	for _, idx in ipairs(indicesB) do
+		local item = PlayerState.RemoveItem(partner, idx)
+		if item then table.insert(itemsBGiving, item) end
+	end
+	for _, item in ipairs(itemsAGiving) do PlayerState.AddItem(partner, item) end
+	for _, item in ipairs(itemsBGiving) do PlayerState.AddItem(player, item) end
+
+	-- Clear trade sessions
+	activeTrades[player]  = nil
+	activeTrades[partner] = nil
+
+	TradeCompleteR:FireClient(player, itemsBGiving)
+	TradeCompleteR:FireClient(partner, itemsAGiving)
+
+	announce(player,  "✅  Trade complete with " .. partner.Name .. "!", Color3.fromRGB(100,220,100), 3)
+	announce(partner, "✅  Trade complete with " .. player.Name .. "!",  Color3.fromRGB(100,220,100), 3)
+end)
+
+-- ── Cleanup on disconnect ─────────────────────────────────────
+Players.PlayerRemoving:Connect(function(player)
+	if activeTrades[player] then
+		cancelTrade(player, player.Name .. " disconnected.")
+	end
+end)
 
 -- ── Scan workspace ────────────────────────────────────────────
 local function scanAll()
-    local nZone, nKiosk = 0, 0
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") then
-            if desc:GetAttribute("IsTradeHubZone") == true then
-                setupZonePart(desc)
-                nZone = nZone + 1
-            elseif desc:GetAttribute("IsBraceletKiosk") == true then
-                setupKiosk(desc)
-                nKiosk = nKiosk + 1
-            end
-        end
-    end
-    print(string.format("[TradeHubSystem] Registered %d zone part(s), %d kiosk(s)",
-        nZone, nKiosk))
+	local nKiosk = 0
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") and desc:GetAttribute("IsBraceletKiosk") == true then
+			setupKiosk(desc); nKiosk += 1
+		end
+	end
+	print(string.format("[TradeHubSystem] Registered %d kiosk(s)", nKiosk))
 end
 
--- ── Player cleanup on disconnect ──────────────────────────────
-Players.PlayerRemoving:Connect(function(player)
-    playerZoneTouches[player] = nil
-    local s = PlayerState.Get(player)
-    if s then s.inTradeHub = false end
-end)
-
--- ── Boot ──────────────────────────────────────────────────────
 scanAll()
 print("[TradeHubSystem] Ready")
