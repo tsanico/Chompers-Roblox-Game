@@ -19,91 +19,91 @@ local Remotes     = ReplicatedStorage:WaitForChild("ChompersRemotes")
 local Announce    = Remotes:FindFirstChild("Announce")
 
 local function getBestAnchor(part)
-    local parent = part.Parent
-    if parent and parent:IsA("Model") then
-        return parent.PrimaryPart or part
-    end
-    return part
+	local parent = part.Parent
+	if parent and parent:IsA("Model") then
+		return parent.PrimaryPart or part
+	end
+	return part
 end
 
 local function setupScale(part)
-    local anchor = getBestAnchor(part)
-    local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
-    if existing then existing:Destroy() end
+	local anchor = getBestAnchor(part)
+	local existing = anchor:FindFirstChildWhichIsA("ProximityPrompt")
+	if existing then existing:Destroy() end
 
-    local prompt = Instance.new("ProximityPrompt")
-    prompt.ObjectText            = "⚖️ Scale"
-    prompt.ActionText            = "Check unpaid total"
-    prompt.HoldDuration          = 0
-    prompt.MaxActivationDistance = 12
-    prompt.RequiresLineOfSight   = false
-    prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
-    prompt.Parent                = anchor
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.ObjectText            = "⚖️ Scale"
+	prompt.ActionText            = "Check unpaid total"
+	prompt.HoldDuration          = 0
+	prompt.MaxActivationDistance = 12
+	prompt.RequiresLineOfSight   = false
+	prompt.Exclusivity           = Enum.ProximityPromptExclusivity.OnePerButton
+	prompt.Parent                = anchor
 
-    -- World-space label
-    local bb = Instance.new("BillboardGui", part)
-    bb.Size = UDim2.new(0, 120, 0, 30); bb.StudsOffset = Vector3.new(0, 3.2, 0)
-    bb.AlwaysOnTop = false
-    local lbl = Instance.new("TextLabel", bb)
-    lbl.Size = UDim2.new(1,0,1,0)
-    lbl.BackgroundColor3 = Color3.fromRGB(14,12,24)
-    lbl.BackgroundTransparency = 0.25; lbl.BorderSizePixel = 0
-    lbl.Text = "⚖️  SCALE"; lbl.Font = Enum.Font.GothamBlack; lbl.TextSize = 13
-    lbl.TextColor3 = Color3.fromRGB(239,159,39); lbl.TextXAlignment = Enum.TextXAlignment.Center
-    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 6)
+	-- World-space label
+	local bb = Instance.new("BillboardGui", part)
+	bb.Size = UDim2.new(0, 120, 0, 30); bb.StudsOffset = Vector3.new(0, 3.2, 0)
+	bb.AlwaysOnTop = false
+	local lbl = Instance.new("TextLabel", bb)
+	lbl.Size = UDim2.new(1,0,1,0)
+	lbl.BackgroundColor3 = Color3.fromRGB(14,12,24)
+	lbl.BackgroundTransparency = 0.25; lbl.BorderSizePixel = 0
+	lbl.Text = "⚖️  SCALE"; lbl.Font = Enum.Font.GothamBlack; lbl.TextSize = 13
+	lbl.TextColor3 = Color3.fromRGB(239,159,39); lbl.TextXAlignment = Enum.TextXAlignment.Center
+	Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 6)
 
-    prompt.Triggered:Connect(function(player)
-        local s = PlayerState.Get(player)
-        if not s or not Announce then return end
+	prompt.Triggered:Connect(function(player)
+		local s = PlayerState.Get(player)
+		if not s or not Announce then return end
 
-        local unpaidItems, totalCost, totalWt = {}, 0, 0
-        local wLimit = PlayerState.GetWeightLimit(player)
+		local unpaidItems, totalCost, totalWt = {}, 0, 0
+		local wLimit = PlayerState.GetWeightLimit(player)
 
-        local function checkList(list)
-            for _, item in ipairs(list) do
-                if item then
-                    totalWt = totalWt + (item.wt or 0)
-                    if not item.paid and (item.cost or 0) > 0 then
-                        table.insert(unpaidItems, item)
-                        totalCost = totalCost + (item.cost or 0)
-                    end
-                end
-            end
-        end
-        checkList(s.inventory)
-        checkList(s.overflow)
+		local function checkList(list)
+			for _, item in ipairs(list) do
+				if item then
+					totalWt = totalWt + (item.wt or 0)
+					if not item.paid and (item.cost or 0) > 0 then
+						table.insert(unpaidItems, item)
+						totalCost = totalCost + (item.cost or 0)
+					end
+				end
+			end
+		end
+		checkList(s.inventory)
+		checkList(s.overflow)
 
-        if #unpaidItems == 0 then
-            Announce:FireClient(player,
-                "⚖️  All clear — nothing unpaid.  "..totalWt.."/"..wLimit.."wt  ·  $"..s.money.." left.",
-                Color3.fromRGB(80,200,100), 3.5)
-            return
-        end
+		if #unpaidItems == 0 then
+			Announce:FireClient(player,
+				"⚖️  All clear — nothing unpaid.  "..totalWt.."/"..wLimit.."wt  ·  $"..s.money.." left.",
+				Color3.fromRGB(80,200,100), 3.5)
+			return
+		end
 
-        -- Single line: total + first 3 item names + overflow count
-        local names = {}
-        for i = 1, math.min(#unpaidItems, 3) do
-            local it = unpaidItems[i]
-            table.insert(names, (it.emoji or "").." "..(it.name or "?"))
-        end
-        local tail = #unpaidItems > 3 and " +"..( #unpaidItems - 3).."more" or ""
+		-- Single line: total + first 3 item names + overflow count
+		local names = {}
+		for i = 1, math.min(#unpaidItems, 3) do
+			local it = unpaidItems[i]
+			table.insert(names, (it.emoji or "").." "..(it.name or "?"))
+		end
+		local tail = #unpaidItems > 3 and " +"..( #unpaidItems - 3).."more" or ""
 
-        Announce:FireClient(player,
-            "⚖️  $"..totalCost.." unpaid ("..#unpaidItems.." item"..(#unpaidItems==1 and "" or "s")
-            ..")  ·  "..table.concat(names, ", ")..tail
-            .."  ·  "..totalWt.."/"..wLimit.."wt",
-            Color3.fromRGB(239,159,39), 4)
-    end)
+		Announce:FireClient(player,
+			"⚖️  $"..totalCost.." unpaid ("..#unpaidItems.." item"..(#unpaidItems==1 and "" or "s")
+				..")  ·  "..table.concat(names, ", ")..tail
+				.."  ·  "..totalWt.."/"..wLimit.."wt",
+			Color3.fromRGB(239,159,39), 4)
+	end)
 end
 
 local function scanAll()
-    local n = 0
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") and desc:GetAttribute("IsScale") == true then
-            setupScale(desc); n = n + 1
-        end
-    end
-    print(string.format("[ScaleSystem] Registered %d scale(s)", n))
+	local n = 0
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") and desc:GetAttribute("IsScale") == true then
+			setupScale(desc); n = n + 1
+		end
+	end
+	print(string.format("[ScaleSystem] Registered %d scale(s)", n))
 end
 
 scanAll()
