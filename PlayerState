@@ -100,7 +100,8 @@ local function defaultState()
 		points = 0,
 		totalCLDealt = 0,
 		totalFLDealt = 0,
-		eliminations = 0,         -- players this player sent to 0 potty breaks
+		cookingAssists   = 0,         -- successful sous-chef dish contributions
+		eliminations     = 0,         -- players this player sent to 0 potty breaks
 		recipesCooked = {},       -- set of unique recipe names cooked
 		ingredientsPurchased = 0,
 		itemsGathered = 0,
@@ -847,6 +848,12 @@ function PlayerState.RecordRecipeCooked(player, recipeName)
 	s.recipesCooked[recipeName] = true
 end
 
+function PlayerState.RecordCookingAssist(player)
+	local s = _state[player]
+	if not s then return end
+	s.cookingAssists = s.cookingAssists + 1
+end
+
 function PlayerState.RecordDown(player)
 	local s = _state[player]
 	if not s then return end
@@ -940,16 +947,19 @@ function PlayerState.GetScoreboardData()
 	local rows = {}
 	for player, s in pairs(_state) do
 		table.insert(rows, {
-			userId    = player.UserId,
-			name      = player.DisplayName or player.Name,
-			allyId    = s.allyUserId,
-			score     = s.points,
-			gather    = s.itemsGathered,
-			cook      = 0,
-			clDealt   = math.floor(s.totalCLDealt),
-			flDealt   = math.floor(s.totalFLDealt),
-			breaks    = s.pottyBreaks,
+			userId       = player.UserId,
+			name         = player.DisplayName or player.Name,
+			allyId       = s.allyUserId,
+			score        = s.points,
+			gather       = s.itemsGathered,
+			cook         = 0,
+			clDealt      = math.floor(s.totalCLDealt),
+			flDealt      = math.floor(s.totalFLDealt),
+			breaks       = s.pottyBreaks,
 			eliminations = s.eliminations,
+			assists      = s.cookingAssists,
+			purchased    = s.ingredientsPurchased,
+			cl           = math.floor(s.cl),
 			isEliminated = s.isEliminated,
 		})
 		rows[#rows].cook = 0
