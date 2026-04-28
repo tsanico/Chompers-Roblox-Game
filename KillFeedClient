@@ -47,47 +47,47 @@ FeedLayout.Padding               = UDim.new(0, 4)
 
 -- ── Chompers-voice phrases ────────────────────────────────────
 local MELTDOWN_PHRASES = {
-    "{victim}'s whole haul went flying. Compliments of {attacker}'s {item}.",
-    "{attacker} just ended {victim}'s run with {item}. Market justice.",
-    "{item} from {attacker}. {victim} is picking things up off the floor.",
-    "{victim} hit 100%. {attacker}'s {item} did that.",
-    "{attacker} sent {victim} to the floor. {item} is not safe around here.",
+	"{victim}'s whole haul went flying. Compliments of {attacker}'s {item}.",
+	"{attacker} just ended {victim}'s run with {item}. Market justice.",
+	"{item} from {attacker}. {victim} is picking things up off the floor.",
+	"{victim} hit 100%. {attacker}'s {item} did that.",
+	"{attacker} sent {victim} to the floor. {item} is not safe around here.",
 }
 
 local ELIMINATION_PHRASES = {
-    "{victim} has run out of potty breaks. And time.",
-    "The floor claimed {victim}. Three breaks wasn't enough.",
-    "{victim} has been escorted out by their own biology.",
-    "No more breaks for {victim}. The store thanks them for playing.",
-    "{victim} is done. The bathroom door is closed.",
+	"{victim} has run out of potty breaks. And time.",
+	"The floor claimed {victim}. Three breaks wasn't enough.",
+	"{victim} has been escorted out by their own biology.",
+	"No more breaks for {victim}. The store thanks them for playing.",
+	"{victim} is done. The bathroom door is closed.",
 }
 
 local LEGENDARY_COOKED_PHRASES = {
-    "⭐ {chef} just cooked the {item}. This match just got expensive.",
-    "⭐ {chef} has a {item}. Avoid being in its path.",
-    "⭐ The {item} is ready. {chef} cooked it. Run.",
-    "⭐ {chef} finished the {item}. The most dangerous dish on the menu.",
+	"⭐ {chef} just cooked the {item}. This match just got expensive.",
+	"⭐ {chef} has a {item}. Avoid being in its path.",
+	"⭐ The {item} is ready. {chef} cooked it. Run.",
+	"⭐ {chef} finished the {item}. The most dangerous dish on the menu.",
 }
 
 local GOLDEN_CART_PHRASES = {
-    "🛒 {finder} has the Golden Cart. Their whole team just got faster.",
-    "🛒 Golden Cart secured by {finder}. That's a speed problem for everyone else.",
-    "🛒 {finder} grabbed the Golden Cart. Twenty seconds of chaos incoming.",
-    "🛒 The Golden Cart belongs to {finder} now. And anyone on their side.",
+	"🛒 {finder} has the Golden Cart. Their whole team just got faster.",
+	"🛒 Golden Cart secured by {finder}. That's a speed problem for everyone else.",
+	"🛒 {finder} grabbed the Golden Cart. Twenty seconds of chaos incoming.",
+	"🛒 The Golden Cart belongs to {finder} now. And anyone on their side.",
 }
 
 local LEGENDARY_THROWN_PHRASES = {
-    "💀 {attacker} threw {item} at {victim}. There was no warning.",
-    "💀 {attacker} with the {item}. {victim} didn't see it coming.",
-    "💀 {item} airborne. {attacker} threw it at {victim}.",
+	"💀 {attacker} threw {item} at {victim}. There was no warning.",
+	"💀 {attacker} with the {item}. {victim} didn't see it coming.",
+	"💀 {item} airborne. {attacker} threw it at {victim}.",
 }
 
 local function pick(list) return list[math.random(1, #list)] end
 
 local function fill(template, data)
-    return (template:gsub("{(%w+)}", function(key)
-        return tostring(data[key] or "?")
-    end))
+	return (template:gsub("{(%w+)}", function(key)
+		return tostring(data[key] or "?")
+	end))
 end
 
 -- ── Entry builder ─────────────────────────────────────────────
@@ -95,107 +95,107 @@ local MAX_ENTRIES = 5
 local entryList   = {}
 
 local function addEntry(text, col)
-    -- Cap at MAX_ENTRIES — remove oldest
-    while #entryList >= MAX_ENTRIES do
-        local oldest = table.remove(entryList, 1)
-        if oldest and oldest.Parent then oldest:Destroy() end
-    end
+	-- Cap at MAX_ENTRIES — remove oldest
+	while #entryList >= MAX_ENTRIES do
+		local oldest = table.remove(entryList, 1)
+		if oldest and oldest.Parent then oldest:Destroy() end
+	end
 
-    -- Build entry pill
-    local entry = Instance.new("Frame", Feed)
-    entry.Name              = "Entry_"..tostring(tick())
-    entry.Size              = UDim2.new(1, 0, 0, 0)
-    entry.AutomaticSize     = Enum.AutomaticSize.Y
-    entry.BackgroundColor3  = Color3.fromRGB(10, 8, 18)
-    entry.BackgroundTransparency = 0.20
-    entry.BorderSizePixel   = 0
-    entry.LayoutOrder       = #entryList + 1
-    entry.ZIndex            = 10
-    Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 8)
+	-- Build entry pill
+	local entry = Instance.new("Frame", Feed)
+	entry.Name              = "Entry_"..tostring(tick())
+	entry.Size              = UDim2.new(1, 0, 0, 0)
+	entry.AutomaticSize     = Enum.AutomaticSize.Y
+	entry.BackgroundColor3  = Color3.fromRGB(10, 8, 18)
+	entry.BackgroundTransparency = 0.20
+	entry.BorderSizePixel   = 0
+	entry.LayoutOrder       = #entryList + 1
+	entry.ZIndex            = 10
+	Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 8)
 
-    -- Left accent bar in event colour
-    local bar = Instance.new("Frame", entry)
-    bar.Size              = UDim2.new(0, 3, 1, -8)
-    bar.Position          = UDim2.new(0, 4, 0, 4)
-    bar.BackgroundColor3  = col
-    bar.BorderSizePixel   = 0
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 2)
+	-- Left accent bar in event colour
+	local bar = Instance.new("Frame", entry)
+	bar.Size              = UDim2.new(0, 3, 1, -8)
+	bar.Position          = UDim2.new(0, 4, 0, 4)
+	bar.BackgroundColor3  = col
+	bar.BorderSizePixel   = 0
+	Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 2)
 
-    local label = Instance.new("TextLabel", entry)
-    label.Size              = UDim2.new(1, -20, 0, 0)
-    label.AutomaticSize     = Enum.AutomaticSize.Y
-    label.Position          = UDim2.new(0, 14, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text              = text
-    label.Font              = Enum.Font.GothamBold
-    label.TextSize          = 13
-    label.TextColor3        = Color3.fromRGB(225, 220, 245)
-    label.TextXAlignment    = Enum.TextXAlignment.Left
-    label.TextWrapped       = true
-    label.LineHeight        = 1.25
-    label.ZIndex            = 11
+	local label = Instance.new("TextLabel", entry)
+	label.Size              = UDim2.new(1, -20, 0, 0)
+	label.AutomaticSize     = Enum.AutomaticSize.Y
+	label.Position          = UDim2.new(0, 14, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text              = text
+	label.Font              = Enum.Font.GothamBold
+	label.TextSize          = 13
+	label.TextColor3        = Color3.fromRGB(225, 220, 245)
+	label.TextXAlignment    = Enum.TextXAlignment.Left
+	label.TextWrapped       = true
+	label.LineHeight        = 1.25
+	label.ZIndex            = 11
 
-    local pad = Instance.new("UIPadding", entry)
-    pad.PaddingTop    = UDim.new(0, 6)
-    pad.PaddingBottom = UDim.new(0, 6)
+	local pad = Instance.new("UIPadding", entry)
+	pad.PaddingTop    = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
 
-    table.insert(entryList, entry)
+	table.insert(entryList, entry)
 
-    -- Slide in from right
-    entry.Position = UDim2.new(1.1, 0, 0, 0)
-    TweenService:Create(entry,
-        TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {Position = UDim2.new(0, 0, 0, 0)}):Play()
+	-- Slide in from right
+	entry.Position = UDim2.new(1.1, 0, 0, 0)
+	TweenService:Create(entry,
+		TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{Position = UDim2.new(0, 0, 0, 0)}):Play()
 
-    -- Fade out after 5.5s
-    task.delay(5.5, function()
-        if entry and entry.Parent then
-            TweenService:Create(entry,
-                TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-                {BackgroundTransparency = 1}):Play()
-            TweenService:Create(label,
-                TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-                {TextTransparency = 1}):Play()
-            TweenService:Create(bar,
-                TweenInfo.new(0.5, Enum.EasingStyle.Linear),
-                {BackgroundTransparency = 1}):Play()
-            task.delay(0.55, function()
-                if entry and entry.Parent then entry:Destroy() end
-                local idx = table.find(entryList, entry)
-                if idx then table.remove(entryList, idx) end
-            end)
-        end
-    end)
+	-- Fade out after 5.5s
+	task.delay(5.5, function()
+		if entry and entry.Parent then
+			TweenService:Create(entry,
+				TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+				{BackgroundTransparency = 1}):Play()
+			TweenService:Create(label,
+				TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+				{TextTransparency = 1}):Play()
+			TweenService:Create(bar,
+				TweenInfo.new(0.5, Enum.EasingStyle.Linear),
+				{BackgroundTransparency = 1}):Play()
+			task.delay(0.55, function()
+				if entry and entry.Parent then entry:Destroy() end
+				local idx = table.find(entryList, entry)
+				if idx then table.remove(entryList, idx) end
+			end)
+		end
+	end)
 end
 
 -- ── Kill feed event listener ──────────────────────────────────
 local KillFeedEvent = Remotes:WaitForChild("KillFeedEvent", 15)
 
 if KillFeedEvent then
-    KillFeedEvent.OnClientEvent:Connect(function(eventType, data)
-        data = data or {}
+	KillFeedEvent.OnClientEvent:Connect(function(eventType, data)
+		data = data or {}
 
-        if eventType == "meltdown" then
-            local text = fill(pick(MELTDOWN_PHRASES), data)
-            addEntry(text, Color3.fromRGB(220, 80, 60))
+		if eventType == "meltdown" then
+			local text = fill(pick(MELTDOWN_PHRASES), data)
+			addEntry(text, Color3.fromRGB(220, 80, 60))
 
-        elseif eventType == "elimination" then
-            local text = fill(pick(ELIMINATION_PHRASES), data)
-            addEntry(text, Color3.fromRGB(160, 60, 200))
+		elseif eventType == "elimination" then
+			local text = fill(pick(ELIMINATION_PHRASES), data)
+			addEntry(text, Color3.fromRGB(160, 60, 200))
 
-        elseif eventType == "legendary_cooked" then
-            -- Million Dollar Steak — COOKED, not found
-            local text = fill(pick(LEGENDARY_COOKED_PHRASES), data)
-            addEntry(text, Color3.fromRGB(239, 159, 39))
+		elseif eventType == "legendary_cooked" then
+			-- Million Dollar Steak — COOKED, not found
+			local text = fill(pick(LEGENDARY_COOKED_PHRASES), data)
+			addEntry(text, Color3.fromRGB(239, 159, 39))
 
-        elseif eventType == "golden_cart_found" then
-            -- Golden Cart — FOUND, team buff (affects finder + allies)
-            local text = fill(pick(GOLDEN_CART_PHRASES), data)
-            addEntry(text, Color3.fromRGB(255, 200, 50))
+		elseif eventType == "golden_cart_found" then
+			-- Golden Cart — FOUND, team buff (affects finder + allies)
+			local text = fill(pick(GOLDEN_CART_PHRASES), data)
+			addEntry(text, Color3.fromRGB(255, 200, 50))
 
-        elseif eventType == "legendary_thrown" then
-            local text = fill(pick(LEGENDARY_THROWN_PHRASES), data)
-            addEntry(text, Color3.fromRGB(255, 120, 40))
-        end
-    end)
+		elseif eventType == "legendary_thrown" then
+			local text = fill(pick(LEGENDARY_THROWN_PHRASES), data)
+			addEntry(text, Color3.fromRGB(255, 120, 40))
+		end
+	end)
 end
