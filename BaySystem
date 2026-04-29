@@ -1,0 +1,148 @@
+-- ============================================================
+-- BaySystem — Script · ServerScriptService
+-- Standalone container-swap bays (basket / cart change-out).
+--
+-- Auto-detects bay parts in the workspace via:
+--   1. Attribute  IsBasketBay = true   →  swaps to Basket
+--   2. Attribute  IsCartBay   = true   →  swaps to Cart
+--   3. Name pattern fallback:
+--        "basket" + ("bay" or "stack" or "stand") → Basket bay
+--        "cart"   + ("bay" or "corral" or "stack") → Cart bay
+--
+-- Players walk up, press E, container swaps, weight limit updates,
+-- speed mult re-syncs (PlayerState.SyncInventory does both).
+-- ============================================================
+
+local Players             = game:GetService("Players")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local PlayerState = require(ServerScriptService:WaitForChild("PlayerState"))
+
+local PROMPT_DISTANCE = 8
+
+local function classify(part)
+	-- Attributes win.
+	if part:GetAttribute("IsBasketBay") == true then return "Basket" end
+	if part:GetAttribute("IsCartBay")   == true then return "Cart"   end
+
+	local n = part.Name:lower()
+	local hasBay  = n:find("bay") or n:find("stack") or n:find("stand")
+	                or n:find("corral") or n:find("rack")
+	if not hasBay then return nil end
+
+	if n:find("basket") then return "Basket" end
+	if n:find("cart")   then return "Cart"   end
+	return nil
+end
+
+local function setupBay(part, containerType)
+	-- Don't double-attach.
+	if part:FindFirstChildOfClass("ProximityPrompt") then return end
+
+	local prompt = Instance.new("ProximityPrompt")
+	if containerType == "Cart" then
+		prompt.ActionText = "Take Cart"
+		prompt.ObjectText = "🛒  Cart Corral"
+	else
+		prompt.ActionText = "Take Basket"
+		prompt.ObjectText = "🧺  Basket Stack"
+	end
+	prompt.KeyboardKeyCode    = Enum.KeyCode.E
+	prompt.HoldDuration       = 0
+	prompt.MaxActivationDistance = PROMPT_DISTANCE
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = part
+
+	-- Floating label so it's findable in playtest
+	local bb = Instance.new("BillboardGui", part)
+	bb.Name           = "BayBillboard"
+	bb.Size           = UDim2.new(0, 130, 0, 32)
+	bb.StudsOffset    = Vector3.new(0, 3.5, 0)
+	bb.AlwaysOnTop    = false
+	local lbl = Instance.new("TextLabel", bb)
+	lbl.Size = UDim2.new(1, 0, 1, 0)
+	lbl.BackgroundColor3 = Color3.fromRGB(14, 12, 24)
+	lbl.BackgroundTransparency = 0.3
+	lbl.BorderSizePixel = 0
+	lbl.Text = (containerType == "Cart") and "🛒  CART" or "🧺  BASKET"
+	lbl.Font = Enum.Font.GothamBlack
+	lbl.TextSize = 13
+	lbl.TextColor3 = (containerType == "Cart")
+		and Color3.fromRGB(220, 160, 30)
+		or  Color3.fromRGB(180, 220, 255)
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 6)
+
+	prompt.Triggered:Connect(function(player)
+		local s = PlayerState.Get(player)
+		if not s or s.isEliminated then return end
+
+		-- No-op if already holding this container type
+		if s.container == containerType then
+			local Remotes = game:GetService("ReplicatedStorage")
+				:FindFirstChild("ChompersRemotes")
+			local announce = Remotes and Remotes:FindFirstChild("Announce")
+			if announce then
+				announce:FireClient(player,
+					"Already carrying a "..containerType:lower()..".",
+					Color3.fromRGB(180, 180, 180), 1.5)
+			end
+			return
+		end
+
+		PlayerState.SetContainer(player, containerType)
+		PlayerState.SyncInventory(player)
+		PlayerState.SyncSpeed(player)
+
+		print(("[BaySystem] %s → %s (limit now %d wt)"):format(
+			player.Name, containerType,
+			PlayerState.GetWeightLimit(player)))
+	end)
+end
+
+-- ── Scan workspace ────────────────────────────────────────────
+-- Visual cart/basket stacks are typically Models grouping multiple
+-- decorative parts. Handle Models AND BaseParts. Track handled
+-- descendants so we don't double-attach if a Model has a child part
+-- whose name also matches.
+local nBasket, nCart = 0, 0
+local handled = {}
+
+for _, desc in ipairs(workspace:GetDescendants()) do
+	local kind, promptHost = nil, nil
+
+	if desc:IsA("Model") then
+		kind = classify(desc)
+		if kind then
+			promptHost = desc.PrimaryPart
+				or desc:FindFirstChildWhichIsA("BasePart")
+			if promptHost then
+				for _, p in ipairs(desc:GetDescendants()) do
+					handled[p] = true
+				end
+			end
+		end
+
+	elseif desc:IsA("BasePart") and not handled[desc] then
+		kind = classify(desc)
+		promptHost = desc
+	end
+
+	if kind and promptHost then
+		setupBay(promptHost, kind)
+		if kind == "Basket" then
+			nBasket = nBasket + 1
+		else
+			nCart = nCart + 1
+		end
+	end
+end
+
+print(("[BaySystem] Registered %d basket bay(s), %d cart bay(s)"):format(
+	nBasket, nCart))
+
+if nBasket == 0 and nCart == 0 then
+	warn("[BaySystem] No bays found. Tag parts with attribute "
+		.. "IsBasketBay=true or IsCartBay=true, OR rename parts to "
+		.. "include 'BasketBay'/'CartBay'/'BasketStack'/'CartCorral' etc.")
+end
