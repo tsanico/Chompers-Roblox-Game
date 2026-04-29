@@ -1,14 +1,19 @@
 -- ============================================================
 -- EndMatchServer — ServerScript · ServerScriptService
+-- v9.7.1 (Bug-Fix Pass)
 --
--- Listens for EndGame phase, calculates victory hierarchy +
--- accolades, then broadcasts MatchResult to all clients.
---
--- Victory Hierarchy (Bible Part 37):
---   1. Last Chef Standing  → Golden Apron  (50 medals)
---   2. Grand Grocer        → most points   (35 medals)
---   3. Top 5 Accolades     → playstyle awards (15 medals each)
---   4. Participation       → everyone      (5 medals)
+-- CHANGES IN THIS PASS:
+--   [BFP-26]  Sous-Chef Supreme accolade removed (sous-chef cut).
+--   [BFP-27]  Medal labels updated:
+--               "Golden Apron"  → "Last One Standing"
+--               "Grand Grocer"  → "Chomper Champion"
+--             Internal MEDALS keys renamed to match.
+--             Internal winnerData.type strings unchanged ("LastChef" /
+--             "GrandGrocer") since they're code-only references.
+--             Medal *values* preserved — vendor-economy rebalance was
+--             deliberate per the original comment.
+--   [BFP-28]  Removed `assists` column from rankings (PlayerState
+--             scoreboard no longer carries it).
 -- ============================================================
 
 local Players             = game:GetService("Players")
@@ -24,19 +29,18 @@ if not MatchResult then
 	MatchResult.Name = "MatchResult"; MatchResult.Parent = Remotes
 end
 
--- ── Medal values (Bible Part 49 — rebalanced for vendor economy) ─
--- Target match range: 5 (bad) → 10 (survived) → 19 (specialist) → 54 (winner)
+-- ── [BFP-27] Medal values preserved, keys renamed for clarity. ─
 local MEDALS = {
-	Participation = 5,    -- everyone, always
-	AliveBonus    = 5,    -- survived to end of FoodFight
-	Accolade      = 14,   -- each Top-5 headline accolade
-	GrandGrocer   = 22,   -- Match MVP (highest points)
-	GoldenApron   = 30,   -- Last Chef Standing
-	TogetherWin   = 18,   -- alliance together victory (each)
+	Participation     = 5,
+	AliveBonus        = 5,
+	Accolade          = 14,
+	ChomperChampion   = 22,    -- was GrandGrocer
+	LastOneStanding   = 30,    -- was GoldenApron
+	TogetherWin       = 18,
 }
 
 -- ── Accolade definitions ──────────────────────────────────────
--- "lowest" accolades invert the sort (lower = better).
+-- [BFP-26] sousChefSupreme removed.
 local ACCOLADES = {
 	{
 		key   = "chaosAgent",
@@ -44,9 +48,9 @@ local ACCOLADES = {
 		title = "Chaos Agent",
 		sub   = "most CL + FL damage dealt",
 		color = "red",
-		getValue  = function(row) return (row.clDealt or 0) + (row.flDealt or 0) end,
-		fmt       = function(v) return v.." total damage" end,
-		lowest    = false,
+		getValue = function(row) return (row.clDealt or 0) + (row.flDealt or 0) end,
+		fmt      = function(v) return v.." total damage" end,
+		lowest   = false,
 	},
 	{
 		key   = "masterChef",
@@ -54,29 +58,20 @@ local ACCOLADES = {
 		title = "Master Chef",
 		sub   = "most unique recipes cooked",
 		color = "gold",
-		getValue  = function(row) return row.cook or 0 end,
-		fmt       = function(v) return v.." unique dish"..(v==1 and "" or "es") end,
-		lowest    = false,
+		getValue = function(row) return row.cook or 0 end,
+		fmt      = function(v) return v.." unique dish"..(v==1 and "" or "es") end,
+		lowest   = false,
 	},
-	{
-		key   = "sousChefSupreme",
-		emoji = "🤝",
-		title = "Sous-Chef Supreme",
-		sub   = "most cooking assists",
-		color = "green",
-		getValue  = function(row) return row.assists or 0 end,
-		fmt       = function(v) return v.." assist"..(v==1 and "" or "s") end,
-		lowest    = false,
-	},
+	-- [BFP-26] sousChefSupreme entry removed (sous-chef mechanic cut).
 	{
 		key   = "superShopper",
 		emoji = "🛒",
 		title = "Super Shopper",
 		sub   = "most items purchased at checkout",
 		color = "blue",
-		getValue  = function(row) return row.purchased or 0 end,
-		fmt       = function(v) return v.." item"..(v==1 and "" or "s") end,
-		lowest    = false,
+		getValue = function(row) return row.purchased or 0 end,
+		fmt      = function(v) return v.." item"..(v==1 and "" or "s") end,
+		lowest   = false,
 	},
 	{
 		key   = "squeakyClean",
@@ -84,17 +79,16 @@ local ACCOLADES = {
 		title = "Squeaky Clean",
 		sub   = "survived with the least mess",
 		color = "teal",
-		getValue  = function(row, survivorSet)
-			-- Only eligible if survived
+		getValue = function(row, survivorSet)
 			if survivorSet and not survivorSet[row.userId] then return nil end
 			return row.cl or 0
 		end,
-		fmt       = function(v) return v.."% final CL" end,
-		lowest    = true,   -- lower CL = cleaner = better
+		fmt      = function(v) return v.."% final CL" end,
+		lowest   = true,
 	},
 }
 
--- ── Build MatchResult payload ─────────────────────────────────
+-- ── Build payload ─────────────────────────────────────────────
 local function buildResult(survivors, timedOut)
 	local allRows = PlayerState.GetScoreboardData()
 
@@ -102,6 +96,7 @@ local function buildResult(survivors, timedOut)
 	for _, p in ipairs(survivors) do survivorSet[p.UserId] = true end
 
 	-- ── 1. Rankings ────────────────────────────────────────────
+	-- [BFP-28] assists column removed.
 	local rankings = {}
 	for i, row in ipairs(allRows) do
 		table.insert(rankings, {
@@ -113,7 +108,6 @@ local function buildResult(survivors, timedOut)
 			flDealt      = row.flDealt or 0,
 			gather       = row.gather or 0,
 			cook         = row.cook or 0,
-			assists      = row.assists or 0,
 			purchased    = row.purchased or 0,
 			cl           = row.cl or 0,
 			eliminations = row.eliminations or 0,
@@ -128,19 +122,27 @@ local function buildResult(survivors, timedOut)
 	if not timedOut and #survivors == 1 then
 		local p = survivors[1]
 		local sc = 0
-		for _, r in ipairs(rankings) do if r.userId==p.UserId then sc=r.score; break end end
-		winnerData = { type="LastChef", name=p.DisplayName or p.Name, userId=p.UserId, score=sc }
+		for _, r in ipairs(rankings) do
+			if r.userId == p.UserId then sc = r.score; break end
+		end
+		winnerData = {
+			type="LastChef", name=p.DisplayName or p.Name,
+			userId=p.UserId, score=sc,
+		}
 
 	elseif #survivors >= 1 then
 		local best, bestSc = nil, -1
 		for _, r in ipairs(rankings) do
 			if survivorSet[r.userId] and r.score > bestSc then
-				best=r; bestSc=r.score
+				best = r; bestSc = r.score
 			end
 		end
 		if best then
-			winnerData = { type="GrandGrocer", name=best.name, userId=best.userId, score=best.score,
-				cook=best.cook, purchased=best.purchased }
+			winnerData = {
+				type="GrandGrocer", name=best.name,
+				userId=best.userId, score=best.score,
+				cook=best.cook, purchased=best.purchased,
+			}
 		end
 	end
 
@@ -158,7 +160,6 @@ local function buildResult(survivors, timedOut)
 				end
 			end
 		end
-		-- Only award if the winner has a meaningful value
 		local hasValue = bestRow and (def.lowest and bestVal < math.huge or bestVal > 0)
 		if hasValue then
 			table.insert(accolades, {
@@ -176,30 +177,39 @@ local function buildResult(survivors, timedOut)
 	end
 
 	-- ── 4. Medal awards per player ─────────────────────────────
-	local playerMedals = {}   -- [userId] = { list, total }
+	local playerMedals = {}
 	for _, row in ipairs(rankings) do
 		local list  = {{ label="Participation", amount=MEDALS.Participation }}
 		local total = MEDALS.Participation
 
-		-- Alive bonus for surviving to end of FoodFight
 		if survivorSet[row.userId] then
 			table.insert(list, { label="🟢 Survived", amount=MEDALS.AliveBonus })
 			total = total + MEDALS.AliveBonus
 		end
 
+		-- [BFP-27] Player-facing labels renamed.
 		if row.userId == winnerData.userId then
 			if winnerData.type == "LastChef" then
-				table.insert(list, { label="👑 Golden Apron", amount=MEDALS.GoldenApron })
-				total = total + MEDALS.GoldenApron
+				table.insert(list, {
+					label="👑 Last One Standing",
+					amount=MEDALS.LastOneStanding,
+				})
+				total = total + MEDALS.LastOneStanding
 			elseif winnerData.type == "GrandGrocer" then
-				table.insert(list, { label="🏆 Grand Grocer", amount=MEDALS.GrandGrocer })
-				total = total + MEDALS.GrandGrocer
+				table.insert(list, {
+					label="🏆 Chomper Champion",
+					amount=MEDALS.ChomperChampion,
+				})
+				total = total + MEDALS.ChomperChampion
 			end
 		end
 
 		for _, acc in ipairs(accolades) do
 			if acc.winnerUserId == row.userId then
-				table.insert(list, { label=acc.emoji.." "..acc.title, amount=MEDALS.Accolade })
+				table.insert(list, {
+					label=acc.emoji.." "..acc.title,
+					amount=MEDALS.Accolade,
+				})
 				total = total + MEDALS.Accolade
 			end
 		end
@@ -224,12 +234,10 @@ if PhaseChangedEvent then
 	local processingEndGame = false
 	PhaseChangedEvent.Event:Connect(function(phase, survivors, timedOut)
 		if phase ~= "EndGame" then return end
-		if not survivors then return end   -- first fire from setPhase has no survivors; skip
+		if not survivors then return end
 		if processingEndGame then return end
 		processingEndGame = true
 
-		-- Wait for GameManager to respawn + teleport all players (~2s)
-		-- then an extra buffer so everyone is settled in the car park
 		task.wait(3.5)
 
 		local result = buildResult(survivors, timedOut)
@@ -241,7 +249,6 @@ if PhaseChangedEvent then
 
 		MatchResult:FireAllClients(result)
 
-		-- Award medals to all players via VendorSystem/DataService
 		local AwardMedalsEvent = ServerScriptService:FindFirstChild("AwardMedalsEvent")
 		if AwardMedalsEvent then
 			AwardMedalsEvent:Fire(result.playerMedals)
