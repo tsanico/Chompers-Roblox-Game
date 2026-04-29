@@ -1,17 +1,17 @@
 -- ============================================================
 -- ThrowServer — Script · ServerScriptService
+-- v9.7.1 (Bug-Fix Pass)
 --
--- Physics-clone throw system (overhead animation feel):
---   • Validates throw (cooldown, paid, not eliminated, not in bathroom)
---   • Servings mechanic: Common=3, Uncommon=2, Rare/UR/Leg=1
---     → decrements servingsLeft on the inventory item
---     → only removes item from inventory when servingsLeft hits 0
---   • Clones ingredient model from CHOMPERS_Ingredients in workspace
---     Same size as placeholder blocks (CLONE_SCALE=1.0). Falls back to rarity sphere.
---   • AssemblyLinearVelocity: lookVector×speed + upward boost (video-matched arc)
---   • .Touched + Heartbeat spherecast hit detection (owner-checked, single hit)
---   • Full damage pipeline preserved: allergy/mark/oil/favourite/FL/elimination
---   • Clone tumbles with physics, fades after LIFETIME seconds, then destroys
+-- CHANGES IN THIS PASS:
+--   [BFP-23]  Mark application: pass itemName string directly
+--             (was passing {name=itemName} table — PlayerState now
+--             accepts both, but string is the canonical form).
+--   [BFP-24]  Spherecast disconnect: only fire on confirmed hit,
+--             not on any raycast result. Old code killed the
+--             fallback whenever the spherecast hit *anything*
+--             (terrain, walls, self) even if tryHit rejected.
+--   [BFP-25]  FL bloat now affects hitbox W+D and AoE radius —
+--             reads PlayerState.GetHitboxScale / GetAoERadiusScale.
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -31,14 +31,13 @@ local C = ChompersData.Constants
 local SERVINGS = { Common=3, Uncommon=2, Rare=1, UltraRare=1, Legendary=1 }
 
 -- ── Physics clone config ───────────────────────────────────────
-local CLONE_SCALE    = 1.0    -- no scaling — same size as placeholder blocks
-local UPWARD_BOOST   = 12     -- studs/s upward component (video arc)
-local THROW_SPEED    = 160    -- studs/s lateral (2× Bible base for distance)
-local LIFETIME       = 4      -- seconds before fade+destroy
-local FADE_TIME      = 0.5    -- tween duration for transparency fade
-local HIT_RADIUS     = 2.5    -- spherecast radius for proximity hit
+local CLONE_SCALE    = 1.0
+local UPWARD_BOOST   = 12
+local THROW_SPEED    = 160
+local LIFETIME       = 4
+local FADE_TIME      = 0.5
+local HIT_RADIUS     = 2.5
 
--- ── PhysicsObjects folder ─────────────────────────────────────
 local PhysicsObjects = workspace:FindFirstChild("PhysicsObjects")
 if not PhysicsObjects then
 	PhysicsObjects = Instance.new("Folder")
@@ -46,10 +45,8 @@ if not PhysicsObjects then
 	PhysicsObjects.Parent = workspace
 end
 
--- ── Cooldown tracking ─────────────────────────────────────────
 local lastThrowTime = {}
 
--- ── Kill feed remote ──────────────────────────────────────────
 local KillFeedEvent = Remotes:FindFirstChild("KillFeedEvent")
 if not KillFeedEvent then
 	KillFeedEvent = Instance.new("RemoteEvent")
@@ -60,7 +57,6 @@ local function killFeed(evType, data)
 	KillFeedEvent:FireAllClients(evType, data)
 end
 
--- ── Ingredient/recipe lookup ───────────────────────────────────
 local ingByName, recByName = {}, {}
 for _, ing in ipairs(ChompersData.Ingredients) do ingByName[ing.name] = ing end
 for _, rec in ipairs(ChompersData.Recipes)     do recByName[rec.name] = rec end
@@ -99,56 +95,55 @@ local function getItemAllergy(itemName, itemData)
 	return "None"
 end
 
--- ── Servings: decrement or remove ─────────────────────────────
--- Returns the item copy to be thrown, or nil if slot is empty.
--- Mutates inventory slot in PlayerState.
 local function consumeServing(player, slotIndex)
 	local s = PlayerState.Get(player)
 	if not s then return nil end
 	local itemData = s.inventory[slotIndex]
 	if not itemData then return nil end
 
-	-- Init servingsLeft if not set (item was picked up before this mechanic)
 	local rarity = itemData.rarity or "Common"
 	if not itemData.servingsLeft then
 		itemData.servingsLeft = SERVINGS[rarity] or 1
 	end
 
-	-- Snapshot for projectile use
 	local itemCopy = {}
 	for k, v in pairs(itemData) do itemCopy[k] = v end
 
-	-- Decrement
 	itemData.servingsLeft = itemData.servingsLeft - 1
-
 	if itemData.servingsLeft <= 0 then
-		-- Out of servings — remove from inventory
 		PlayerState.RemoveItem(player, slotIndex)
 	end
-	-- else: item stays in slot with decremented servingsLeft
 
 	return itemCopy
 end
 
--- ── Clone ingredient model ────────────────────────────────────
--- Tries to find model in workspace.CHOMPERS_Ingredients (the ingredient
--- display models). Falls back to a rarity-coloured sphere.
-local function buildClone(itemName, rarity)
+-- ── Build clone ───────────────────────────────────────────────
+-- [BFP-25] Bloat hitbox scaling applied to clone size (X/Z, not Y).
+local function buildClone(itemName, rarity, hitboxScale)
+	hitboxScale = hitboxScale or 1.0
+
+	local function applyBloat(part)
+		-- Scale W and D only, height unchanged.
+		part.Size = Vector3.new(
+			part.Size.X * hitboxScale,
+			part.Size.Y,
+			part.Size.Z * hitboxScale
+		)
+	end
+
 	local ingFolder = workspace:FindFirstChild("CHOMPERS_Ingredients")
 	local source    = ingFolder and ingFolder:FindFirstChild(itemName, true)
 
 	if source and source:IsA("BasePart") then
-		-- Clone the display part, scale it up
 		local clone = source:Clone()
 		clone.Anchored  = false
 		clone.CanCollide = true
 		clone.Size      = clone.Size * CLONE_SCALE
+		applyBloat(clone)
 		clone.Parent    = PhysicsObjects
-		return clone, clone.Size.X / 2
+		return clone, math.max(clone.Size.X, clone.Size.Z) / 2
 
 	elseif source and source:IsA("Model") then
-		-- Flatten model to a single part (Union isn't available at runtime,
-		-- so we grab the PrimaryPart or first BasePart)
 		local base = source.PrimaryPart
 			or source:FindFirstChildWhichIsA("BasePart")
 		if base then
@@ -156,15 +151,17 @@ local function buildClone(itemName, rarity)
 			clone.Anchored  = false
 			clone.CanCollide = true
 			clone.Size      = clone.Size * CLONE_SCALE
+			applyBloat(clone)
 			clone.Parent    = PhysicsObjects
-			return clone, clone.Size.X / 2
+			return clone, math.max(clone.Size.X, clone.Size.Z) / 2
 		end
 	end
 
-	-- Fallback: rarity-coloured sphere
+	-- Fallback sphere
 	local sphere        = Instance.new("Part")
 	sphere.Shape        = Enum.PartType.Ball
 	sphere.Size         = Vector3.new(3, 3, 3) * CLONE_SCALE
+	applyBloat(sphere)
 	sphere.Color        = RARITY_COLOURS[rarity] or RARITY_COLOURS.Common
 	sphere.Material     = Enum.Material.SmoothPlastic
 	sphere.CanCollide   = true
@@ -172,19 +169,18 @@ local function buildClone(itemName, rarity)
 	sphere.CastShadow   = false
 	sphere.Parent       = PhysicsObjects
 
-	-- Emoji billboard so you know what it is even without a model
 	local bb   = Instance.new("BillboardGui", sphere)
 	bb.Size    = UDim2.new(0, 60, 0, 60)
 	bb.StudsOffset = Vector3.new(0, 1.5, 0)
 	local lbl  = Instance.new("TextLabel", bb)
 	lbl.Size   = UDim2.new(1,0,1,0); lbl.BackgroundTransparency = 1
 	lbl.TextScaled = true
-	lbl.Text   = ingByName[itemName] and ingByName[itemName].emoji or "🍽"
+	lbl.Text   = ChompersData.GetEmoji(itemName) or "🍽"
 
-	return sphere, HIT_RADIUS
+	return sphere, HIT_RADIUS * hitboxScale
 end
 
--- ── Apply damage (full pipeline, unchanged from original) ─────
+-- ── Damage pipeline ────────────────────────────────────────────
 local function applyDamage(attacker, target, itemData, itemName)
 	local tState = PlayerState.Get(target)
 	local aState = PlayerState.Get(attacker)
@@ -202,7 +198,7 @@ local function applyDamage(attacker, target, itemData, itemName)
 	end
 	local clAfterAllergy = baseCL * allergyMult
 
-	-- 2. Elemental
+	-- 2. Elemental (Oil → Fire chain)
 	local elementalMult = 1.0
 	if isFireRecipe(itemName) and PlayerState.IsOilPrimed(target) then
 		elementalMult = C.Elemental.OilFireMultiplier
@@ -210,16 +206,18 @@ local function applyDamage(attacker, target, itemData, itemName)
 	end
 	local clAfterElemental = clAfterAllergy * elementalMult
 
-	-- 3. Mark (read BEFORE applying new mark — Bug fix from known issues)
+	-- 3. Mark (read existing mark BEFORE applying new mark)
 	local mark     = PlayerState.GetActiveMark(target)
 	local markBonus = 0
 	if mark and tick() < mark.expiresAt then
 		markBonus = clAfterElemental * mark.bonus
 	end
 	local clAfterMark = clAfterElemental + markBonus
+
+	-- [BFP-23] Pass the itemName string directly (was {name=itemName}).
 	local markIngredients = { Tomato=true, ["Soy Sauce"]=true }
 	if markIngredients[itemName] then
-		PlayerState.ApplyMarkToTarget(target, { name=itemName })
+		PlayerState.ApplyMarkToTarget(target, itemName)
 	end
 
 	-- 4. Favourite bonus
@@ -237,7 +235,7 @@ local function applyDamage(attacker, target, itemData, itemName)
 		PlayerState.AddPoints(attacker, finalCL * C.Points.DirectHitPerCL)
 	end
 
-	-- 6. Apply FL
+	-- 6. FL
 	local isCooked = itemData.cooked == true
 	local flDelta  = isCooked and C.FLPerHit.Cooked or C.FLPerHit.RawCold
 	if tState.favourite and tState.favourite == itemName then
@@ -276,7 +274,7 @@ local function applyDamage(attacker, target, itemData, itemName)
 	end
 end
 
--- ── Spawn and throw physics clone ────────────────────────────
+-- ── Spawn and throw ────────────────────────────────────────────
 local function spawnAndThrow(player, itemCopy, aimPoint)
 	local char = player.Character
 	local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -285,21 +283,24 @@ local function spawnAndThrow(player, itemCopy, aimPoint)
 	local itemName = itemCopy.name
 	local rarity   = itemCopy.rarity or "Common"
 
-	-- Build clone (big ass ingredient)
-	local clone, hitRadius = buildClone(itemName, rarity)
+	-- [BFP-25] Read attacker's bloat scalars for hitbox/AoE.
+	local hitboxScale = PlayerState.GetHitboxScale(player)
+	local aoeScale    = PlayerState.GetAoERadiusScale(player)
+
+	local clone, hitRadius = buildClone(itemName, rarity, hitboxScale)
+	-- Apply AoE scaling on top of the hitbox base radius.
+	hitRadius = hitRadius * aoeScale
+
 	clone.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 4, 0))
 	clone:SetAttribute("OwnerUserId", player.UserId)
 
-	-- Give it a tiny random tumble rotation
 	local rx = math.random(-20, 20)
 	local rz = math.random(-20, 20)
 	clone.CFrame = clone.CFrame * CFrame.Angles(math.rad(rx), 0, math.rad(rz))
 
-	-- Velocity: look direction at throw speed + upward arc
 	local lookFlat = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
 	if lookFlat.Magnitude < 0.01 then lookFlat = Vector3.new(0, 0, -1) end
 
-	-- Aim assist: blend look direction toward aim point for accuracy
 	local toAim  = (aimPoint - hrp.Position)
 	local aimFlat = Vector3.new(toAim.X, 0, toAim.Z)
 	if aimFlat.Magnitude > 1 then
@@ -309,7 +310,6 @@ local function spawnAndThrow(player, itemCopy, aimPoint)
 	clone.AssemblyLinearVelocity = lookFlat * THROW_SPEED
 		+ Vector3.new(0, UPWARD_BOOST, 0)
 
-	-- Hit detection state
 	local hitProcessed = {false}
 
 	local function tryHit(part)
@@ -320,16 +320,16 @@ local function spawnAndThrow(player, itemCopy, aimPoint)
 		if not ts or ts.isEliminated or ts.inBathroom then return end
 		hitProcessed[1] = true
 		applyDamage(player, target, itemCopy, itemName)
-		-- Destroy clone immediately on hit (satisfying impact)
 		clone:Destroy()
 	end
 
-	-- Primary: .Touched
 	clone.Touched:Connect(function(part)
 		tryHit(part)
 	end)
 
-	-- Secondary: spherecast fallback (catches fast/jumping targets)
+	-- [BFP-24] Spherecast fallback: only disconnect when an actual hit
+	-- was processed. Old code disconnected on ANY raycast result, so
+	-- one bounce off terrain killed the fallback for the rest of the throw.
 	local prevPos = clone.Position
 	local conn
 	conn = RunService.Heartbeat:Connect(function()
@@ -348,17 +348,19 @@ local function spawnAndThrow(player, itemCopy, aimPoint)
 			local r = workspace:Spherecast(prevPos, hitRadius, dir.Unit * dist, p)
 			if r and r.Instance then
 				tryHit(r.Instance)
-				conn:Disconnect()
+				-- [BFP-24] Only disconnect if tryHit actually accepted.
+				if hitProcessed[1] then
+					conn:Disconnect()
+				end
 			end
 		end
 		prevPos = newPos
 	end)
 
-	-- Lifetime → fade → destroy (exactly like video)
+	-- Lifetime fade
 	task.delay(LIFETIME, function()
 		if not clone or not clone.Parent then return end
-		conn:Disconnect()
-		-- Tween transparency to 1 then destroy
+		if conn then conn:Disconnect() end
 		TweenService:Create(clone,
 			TweenInfo.new(FADE_TIME, Enum.EasingStyle.Linear),
 			{Transparency = 1}):Play()
@@ -368,44 +370,35 @@ local function spawnAndThrow(player, itemCopy, aimPoint)
 	end)
 end
 
--- ── Main remote handler ───────────────────────────────────────
--- Client sends: ThrowFood(slotIndex, throwSpeed, aimPoint)
+-- ── Remote handler ─────────────────────────────────────────────
 R("ThrowFood").OnServerEvent:Connect(function(player, slotIndex, throwSpeed, aimPoint)
 	local s = PlayerState.Get(player)
 	if not s then return end
 	if s.isEliminated or s.inBathroom then return end
 
-	-- Cooldown
 	local now = tick()
 	if lastThrowTime[player] and (now - lastThrowTime[player]) < C.Throw.Cooldown then
 		return
 	end
 
-	-- Slot validation
 	slotIndex = math.floor(slotIndex or 1)
 	if slotIndex < 1 or slotIndex > 10 then return end
 
-	-- Validate item still in slot (client timing can desync)
 	local itemData = s.inventory[slotIndex]
 	if not itemData then return end
 	if not itemData.paid then return end
 	if itemData.name == "Alliance Bracelet" then return end
 
-	-- Validate aim point
 	if typeof(aimPoint) ~= "Vector3" then return end
 
-	-- Clamp throw speed (client sends THROW_SPEED constant, server double-checks)
-	-- Ceiling raised to 200 to accommodate 2× throw distance (THROW_SPEED = 160)
 	throwSpeed = math.clamp(tonumber(throwSpeed) or THROW_SPEED,
 		C.Throw.MinSpeed or 40, 200)
 
 	lastThrowTime[player] = now
 
-	-- Consume one serving (removes item only when servingsLeft hits 0)
 	local itemCopy = consumeServing(player, slotIndex)
 	if not itemCopy then return end
 
-	-- Spawn the big physics clone and throw it
 	spawnAndThrow(player, itemCopy, aimPoint)
 end)
 
