@@ -118,6 +118,22 @@ local function setupBay(part, containerType)
 		PlayerState.SyncInventory(player)
 		PlayerState.SyncSpeed(player)
 
+		-- Confirmation banner
+		local Remotes = game:GetService("ReplicatedStorage")
+			:FindFirstChild("ChompersRemotes")
+		local announce = Remotes and Remotes:FindFirstChild("Announce")
+		if announce then
+			local newLimit = PlayerState.GetWeightLimit(player)
+			local emoji   = (containerType == "Cart") and "🛒" or "🧺"
+			local color   = (containerType == "Cart")
+				and Color3.fromRGB(220, 160, 30)
+				or  Color3.fromRGB(180, 220, 255)
+			announce:FireClient(player,
+				("%s  Switched to %s — %d wt limit"):format(
+					emoji, containerType, newLimit),
+				color, 2)
+		end
+
 		print(("[BaySystem] %s → %s (limit now %d wt)"):format(
 			player.Name, containerType,
 			PlayerState.GetWeightLimit(player)))
