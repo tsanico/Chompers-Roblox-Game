@@ -1,14 +1,15 @@
 -- ============================================================
--- BarSystem — ModuleScript
--- Location: ServerScriptService
+-- BarSystem — ModuleScript · ServerScriptService
+-- v9.7.1 (Bug-Fix Pass)
 --
--- Owns all cooking-related CL/FL calculation rules.
--- Extracted from PlayerState so cooking logic stays separate.
--- ThrowServer also reads cook-depth bonuses from here.
---
--- Does NOT own: mark/oil/freeze status (still in PlayerState),
---               raw bar state (still in PlayerState._state),
---               allergy/elemental multipliers (still in ThrowServer).
+-- CHANGES IN THIS PASS:
+--   [BFP-14]  COOK_TIMES keyed by TIER (Quick/Standard/Expert/Legendary),
+--             not rarity. Recipes don't have a rarity field — the prior
+--             lookup always missed and returned the fallback (4s).
+--   [BFP-15]  GetServings keyed by tier — all Phase 1 tiers = 3 throws
+--             per GDB §10.1 ("flat — no rarity or tier scaling").
+--   [BFP-16]  ApplyCookResult: removed sousChef parameter and duo-cook
+--             bonus block (sous-chef cut for Phase 1).
 -- ============================================================
 
 local BarSystem = {}
@@ -17,24 +18,19 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ChompersData = require(ReplicatedStorage:WaitForChild("ChompersData"))
 local C = ChompersData.Constants
 
--- ── Cook time by rarity (Part 10 — locked) ───────────────────
+-- ── [BFP-14] Cook time by TIER (GDB §10.1) ─────────────────
 local COOK_TIMES = {
-	Common    = 2,
-	Uncommon  = 4,
-	Rare      = 7,
-	UltraRare = 12,
-	Legendary = 20,
+	Quick     = 2,
+	Standard  = 5,
+	Expert    = 8,
+	Legendary = 12,
 }
 
-function BarSystem.GetCookTime(rarity)
-	return COOK_TIMES[rarity] or 4
+function BarSystem.GetCookTime(tier)
+	return COOK_TIMES[tier] or 5
 end
 
--- ── Heat bar zone boundaries ──────────────────────────────────
--- Needle oscillates 0→1 using abs(sin). Zone is the position when E is pressed.
--- Cold:    0.00 – 0.32
--- Perfect: 0.32 – 0.68
--- Hot:     0.68 – 1.00
+-- ── Heat bar zone boundaries ────────────────────────────────
 function BarSystem.EvaluateHeatZone(needlePos)
 	needlePos = math.clamp(needlePos or 0, 0, 1)
 	if needlePos < 0.32 then return "Cold"
@@ -43,59 +39,53 @@ function BarSystem.EvaluateHeatZone(needlePos)
 	end
 end
 
--- ── Apply cook result to a dish item (modifies in place) ──────
--- zone:       "Perfect" | "Cold" | "Hot"
--- sousChef:   boolean (true = sous-chef contributed = +5% DUO COOK BONUS)
--- Returns modified dish.
-function BarSystem.ApplyCookResult(dish, zone, sousChef)
+-- ── Apply cook result (modifies dish in place) ─────────────
+-- [BFP-16] sousChef parameter removed. ApplyCookResult is now (dish, zone).
+function BarSystem.ApplyCookResult(dish, zone)
 	local baseCL = dish.cl or 0
 
 	if zone == "Perfect" then
 		dish.cookStatus = "Cooked"
 		dish.cooked     = true
 		dish.burned     = false
-		dish.cl         = math.floor(baseCL * 1.10)  -- +10% CL (Part 10)
+		dish.cl         = math.floor(baseCL * 1.10)   -- +10% CL
 		dish.cookZone   = "Perfect"
 
 	elseif zone == "Hot" then
 		dish.cookStatus = "Burned"
 		dish.cooked     = true
 		dish.burned     = true
-		dish.cl         = math.floor(baseCL * 0.80)  -- −20% CL (Part 10)
-		dish.statusMult = 1.30                         -- +30% status duration (Part 10)
+		dish.cl         = math.floor(baseCL * 0.80)   -- −20% CL
+		dish.statusMult = 1.30                        -- +30% status duration
 		dish.cookZone   = "Burned"
 
-	else  -- Cold (missed window — extra cook time already handled in CookingServer)
+	else  -- Cold (or ColdComplete after auto-extra-time)
 		dish.cookStatus = "Cooked"
 		dish.cooked     = true
 		dish.burned     = false
-		dish.cl         = baseCL                       -- no bonus (Part 10)
+		dish.cl         = baseCL                      -- no bonus
 		dish.cookZone   = "Cold"
-	end
-
-	-- Sous-chef DUO COOK BONUS: +5% (Part 10)
-	if sousChef then
-		dish.cl      = math.floor(dish.cl * 1.05)
-		dish.duoCook = true
 	end
 
 	return dish
 end
 
--- ── Finish window bonus (+5% CL) ─────────────────────────────
--- Applied by ThrowServer when a freshly cooked dish is thrown within 0.8s.
--- ThrowServer checks dish.cookFinishedAt against tick().
+-- ── Finish-window bonus (+5% CL when thrown < 0.8s after cook) ──
 function BarSystem.ApplyFinishBonus(dish)
 	dish.cl = math.floor((dish.cl or 0) * 1.05)
 	return dish
 end
 
--- ── Servings by rarity (Part 10) ─────────────────────────────
-local SERVINGS = {
-	Common = 3, Uncommon = 2, Rare = 1, UltraRare = 1, Legendary = 1
+-- ── [BFP-15] Servings by tier — all Phase 1 = 3 (GDB §10.1) ──
+local SERVINGS_BY_TIER = {
+	Quick     = 3,
+	Standard  = 3,
+	Expert    = 3,
+	Legendary = 3,
 }
-function BarSystem.GetServings(rarity)
-	return SERVINGS[rarity] or 1
+
+function BarSystem.GetServings(tier)
+	return SERVINGS_BY_TIER[tier] or 3
 end
 
 return BarSystem
