@@ -1,24 +1,17 @@
 -- ============================================================
 -- ChompersData — ModuleScript · ReplicatedStorage
--- v9.0 — April 2026
+-- v9.7.1 — April 2026  (Bug-Fix Pass)
 --
--- Single source of truth for all game constants, ingredients,
--- and recipes. GDB v9.0 authoritative.
---
--- CRITICAL: CL = Cleanliness (HP, 0–100). NOT "Calorie Load".
---
--- Zone layout:
---   Produce   = far right  (allergy: "Produce")
---   Bakery    = far left   (allergy: "Bakery")
---   Dry Goods = mid-left aisles / shelves (allergy: "Dry Goods")
---   Freezer   = mid-right freezer banks   (allergy: "Freezer")
---   NO Neutral zone — Oil/Wagyu/Caviar moved to zone ingredients.
---
--- Phase 1: 24 ingredients (3C/2U/1R per zone) · 28 recipes
--- Phase 2: +16 ingredients (completes 4C/3U/2R/1UR) · +23 recipes
--- All ingredients: 3 raw throws
--- All recipes:     3 cooked throws
--- Allergen ×1.75 applies to WHOLE recipe if ANY ingredient matches
+-- CHANGES IN THIS PASS:
+--   [BFP-1]  Header v9.0 → v9.7.1
+--   [BFP-2]  Marks: "SoySauce" → "Soy Sauce" (matches item name exactly)
+--   [BFP-3]  FireRecipes: added "Green Curry" (was missing)
+--   [BFP-4]  Victory: GoldenApron/GrandGrocer → LastOneStanding/ChomperChampion
+--            (values preserved — vendor-economy rebalance was deliberate)
+--   [BFP-5]  ZONE_EMOJI: removed dead reference from GetEmoji()
+--   [BFP-6]  Deli SpawnPool: removed second loop that double-filled it
+--   [BFP-7]  FL.CookingBonus: removed (orphan, never read)
+--   [BFP-8]  Points: removed SousChefContrib_base / FinishDishSousSide (sous-chef cut)
 -- ============================================================
 
 local ChompersData = {}
@@ -30,25 +23,15 @@ local ChompersData = {}
 ChompersData.Constants = {
 
 	CL = {
-		-- CL = Cleanliness. Player HP bar (0–100).
-		-- Goes UP when hit. Resets ONLY via Sink (→0) or Napkin (−25).
-		-- Sink and Toilet are separate fixtures. Each costs 1 break.
-		-- Using both in one bathroom visit costs 2 breaks.
-		WarnThreshold    = 95,   -- screen edge pulse starts here
+		WarnThreshold    = 95,
 		MaxValue         = 100,
-		WarnSlowDuration = 0.75, -- seconds of warning slow at 95%
+		WarnSlowDuration = 0.75,
 	},
 
 	FL = {
-		-- FL = Fullness. Pressure bar (0–100).
-		-- Goes UP when hit OR when self-consuming food.
-		-- Resets ONLY via Toilet (→0). Sink does NOT reset FL.
-		-- FL from throws is ALWAYS FLAT — never multiplied by allergen/mark/fire.
-		-- CL multipliers (allergen ×1.75, fire ×1.60, mark bonus) apply to CL ONLY.
-		DecayPerSecond = 0.5,   -- v9.1: was 2.0 — bloat now achievable in sustained combat
-		CookingBonus   = 0.30,
+		DecayPerSecond = 0.5,
+		-- [BFP-7] CookingBonus removed — orphan constant, never referenced.
 
-		-- Self-consume FL cost (eating instead of throwing adds FL to self):
 		SelfConsumeCost = {
 			Ingredient = 5,
 			Quick      = 10,
@@ -57,77 +40,44 @@ ChompersData.Constants = {
 			Legendary  = 30,
 		},
 
-		-- Bloat scaling — linear from FL=50 to FL=100
+		-- Linear bloat scaling, FL=50 to FL=100
 		-- t = clamp((FL - 50) / 50, 0, 1)
-		-- Speed penalty:  -(t × 25)%        [0% to -25%]
-		-- Hitbox W+D:     +(t × 0.30)×      [1.0× to 1.30×] width+depth only, height unchanged
-		-- AoE radius:     +(t × 0.35)×      [1.0× to +35%] on all throws
-		BloatThreshold   = 50,   -- FL at which scaling begins
-		BloatSpeedMax    = 0.25, -- max speed penalty at FL=100 (25%)
-		BloatHitboxMax   = 0.30, -- max hitbox width/depth scale added (1.30×)
-		BloatAoEMax      = 0.35, -- max AoE radius added (1.35×)
+		BloatThreshold   = 50,
+		BloatSpeedMax    = 0.25,
+		BloatHitboxMax   = 0.30,
+		BloatAoEMax      = 0.35,
 	},
 
 	FLPerHit = {
-		-- FL received when hit by a throw (flat, never multiplied)
 		RawCold = 1,
 		Cooked  = 2,
 	},
 
 	TrashCanCL = 5,
 
-	ThrowsPerIngredient = 3,  -- every raw ingredient = 3 throws
-	ThrowsPerRecipe     = 3,  -- every cooked recipe  = 3 throws
+	ThrowsPerIngredient = 3,
+	ThrowsPerRecipe     = 3,
 
 	State100 = {
-		-- Triggered when CL hits 100% OR FL hits 100% (separately)
-		-- CL=100: drop 1 item + CL SpeedPenalty. Resets ONLY via Sink.
-		-- FL=100: forced bathroom (Toilet). Resets ONLY via Toilet.
-		-- Both at 100 simultaneously: costs 2 breaks (Sink + Toilet)
 		CueDuration       = 0.5,
-		SpeedPenalty      = 0.30,  -- CL=100 speed penalty (stacks with FL bloat scaling)
-		-- DualSpeedPenalty removed v9.1 — FL now has independent scaling (see FL.Bloat*)
+		SpeedPenalty      = 0.30,
 		DropAll           = true,
 		OwnerLockDuration = 1.0,
 	},
 
 	SpeedFloor = 0.35,
 
-	-- ============================================================
-	-- DAMAGE MODIFIER ORDER (apply in this sequence in ThrowServer)
-	-- ============================================================
-	-- CL MODIFIERS (apply to CL only — never to FL):
-	-- 1. Base CL         — ingredient.cl  or recipe.cl
-	-- 2. Mark bonus      — × 1.15 (Bruschetta) or × 1.20 (Soy Sauce), if target is marked
-	-- 3. Oil+Fire chain  — × 1.60, if Oil hit same target within 3s before this fire recipe
-	-- 4. Allergen mult   — × 1.75 (match) or × 0.75 (no match)
-	--                      Applied to WHOLE recipe CL if ANY ingredient matches target allergy
-	-- 5. Favourite bonus — + min(BaseCL × 0.50, 30), added FLAT after multipliers
-	-- 6. Final CL applied — no hard cap; soft-cap diminishing returns via Damage table
-	--
-	-- FL MODIFIERS (always flat, NEVER multiplied by anything above):
-	-- Enemy raw throw  → +FLPerHit.RawCold (1 FL) to target
-	-- Enemy cooked hit → +FLPerHit.Cooked  (2 FL) to target
-	-- Self-consume     → +FL.SelfConsumeCost[tier] to self, then drain if applicable
-	--
-	-- EXAMPLE — Chili Fried Rice (CL 32) vs Dry Goods allergy, fire chain:
-	--   CL: 32 × 1.60 × 1.75 = 89.6 CL delivered
-	--   FL: +2 FL to target (flat, regardless of allergy or chain)
-	--
-	-- NOTE: Marks consumed on trigger. Oil primer consumed by first fire recipe.
 	DamageCalcOrder = {
 		"BaseCL", "MarkBonus", "OilFireChain", "AllergenMultiplier", "FavouriteBonus"
 	},
 
 	Allergy = {
-		-- Applies to WHOLE recipe if ANY ingredient matches target's allergy.
-		-- Applies to raw throws from single ingredient as well.
 		MatchMultiplier   = 1.75,
 		NoMatchMultiplier = 0.75,
 	},
 
 	Damage = {
-		OilFireMultiplier  = 1.60,  -- Oil primer + fire recipe on same target within 3s
+		OilFireMultiplier  = 1.60,
 		SoftCap1Threshold  = 3.0,
 		SoftCap2Threshold  = 4.0,
 		SoftCap1Efficiency = 1.00,
@@ -135,21 +85,22 @@ ChompersData.Constants = {
 		SoftCap3Efficiency = 0.65,
 	},
 
-	-- Phase 1 Marks: Tomato (+15%) and Soy Sauce (+20%) only
+	-- [BFP-2] Mark keys must match ingredient item names exactly.
+	-- "Soy Sauce" has a space in inventory — bracket notation here.
 	Marks = {
-		Tomato    = { bonus = 0.15, window = 4 },
-		SoySauce  = { bonus = 0.20, window = 4 },
+		Tomato        = { bonus = 0.15, window = 4 },
+		["Soy Sauce"] = { bonus = 0.20, window = 4 },
 	},
 
 	Elemental = {
 		OilWindowSeconds  = 3,
 		OilFireMultiplier = 1.60,
-		-- Phase 1: one fire recipe only. Uses Chili Pepper (not Chili Powder).
-		FireIngredients = { "Chili Pepper" },
-		FireRecipes     = { "Chili Fried Rice" },
+		FireIngredients   = { "Chili Pepper" },
+		-- [BFP-3] Green Curry was missing — its effect text says "FIRE RECIPE"
+		-- but the lookup returned false, so Oil chain never triggered off it.
+		FireRecipes       = { "Chili Fried Rice", "Green Curry" },
 	},
 
-	-- CC diminishing returns
 	CCDiminish = {
 		Hit1 = 1.00, Hit2 = 0.70, Hit3 = 0.40, Hit4 = 0.20,
 		ResetSeconds = 8,
@@ -158,11 +109,11 @@ ChompersData.Constants = {
 	FreezeCapSeconds = 2.5,
 
 	Favourite = {
-		ThrowBonusMultiplier = 0.5,   -- min(BaseCL × 0.5, 30) additive
+		ThrowBonusMultiplier = 0.5,
 		ThrowBonusCap        = 30,
-		SelfConsumeBuffMult  = 1.5,   -- Craving: next throw within 8s
-		EnemyFLSpike         = 2.0,   -- ×2 FL spike on target
-		CravingWindow        = 8,     -- seconds after self-consume
+		SelfConsumeBuffMult  = 1.5,
+		EnemyFLSpike         = 2.0,
+		CravingWindow        = 8,
 	},
 
 	Throw = {
@@ -187,7 +138,7 @@ ChompersData.Constants = {
 	},
 
 	Economy = {
-		StartingCash      = 30,   -- v9.0: was 20
+		StartingCash      = 30,
 		StartingNapkins   = 1,
 		BasketWeightLimit = 35,
 		CartWeightLimit   = 70,
@@ -196,10 +147,10 @@ ChompersData.Constants = {
 	},
 
 	Napkin = {
-		HealAmount   = 25,   -- reduces CL by 25
-		UseTime      = 2.0,  -- seconds (interruptible by hit)
-		Cooldown     = 20,   -- starts on activation, not completion
-		StartCount   = 1,    -- per player per match
+		HealAmount   = 25,
+		UseTime      = 2.0,
+		Cooldown     = 20,
+		StartCount   = 1,
 	},
 
 	Respawn = {
@@ -209,18 +160,18 @@ ChompersData.Constants = {
 		UltraRare = 90,
 		Cash_Small  = 15,
 		Cash_Stack  = 30,
-		Napkin      = 0,     -- never respawns after first spawn
+		Napkin      = 0,
 		Bracelet    = 180,
 	},
 
 	Phase = {
 		PrelobbyMinPlayers = 2,
 		Prelobby           = 60,
-		Gathering          = 180,  -- v9.1: was 120 — Expert builders need breathing room
-		Cooking            = 120,  -- v9.1: was 90  — 2-3 recipes instead of 1-2
-		CookingGrace       = 15,   -- v9.1: was 10
-		FoodFight          = 480,  -- v9.1: was 360 — rewards multiple store trips
-		Accolades          = 45,   -- v9.1: was 30
+		Gathering          = 180,
+		Cooking            = 120,
+		CookingGrace       = 15,
+		FoodFight          = 480,
+		Accolades          = 45,
 	},
 
 	Points = {
@@ -233,8 +184,8 @@ ChompersData.Constants = {
 		FormAlliance           = 5,
 		SurviveToEnd           = 10,
 		FinishDishSolo_base    = 10,
-		FinishDishSousSide     = 8,
-		SousChefContrib_base   = 3,
+		-- [BFP-8] Sous-chef points removed (mechanic cut for Phase 1):
+		-- FinishDishSousSide and SousChefContrib_base were here.
 		RarityMultiplier = {
 			Common    = 1.0,
 			Uncommon  = 1.5,
@@ -256,14 +207,17 @@ ChompersData.Constants = {
 		TogetherMedalShare        = 0.70,
 	},
 
+	-- [BFP-4] Victory keys renamed — values preserved (vendor-economy rebalance).
+	-- Old: GoldenApronMedals / GrandGrocerMedals
+	-- New: LastOneStandingMedals / ChomperChampionMedals
 	Victory = {
-		GoldenApronMedals = 100,
-		GrandGrocerMedals = 60,
-		Accolade1st       = 40,
-		Accolade2nd       = 30,
-		Accolade3rd       = 25,
-		Accolade4th       = 20,
-		Accolade5th       = 15,
+		LastOneStandingMedals = 100,
+		ChomperChampionMedals = 60,
+		Accolade1st           = 40,
+		Accolade2nd           = 30,
+		Accolade3rd           = 25,
+		Accolade4th           = 20,
+		Accolade5th           = 15,
 	},
 
 	Stove = {
@@ -271,41 +225,28 @@ ChompersData.Constants = {
 			Quick     = 2,
 			Standard  = 5,
 			Expert    = 8,
-			UltraRare = 14,  -- Phase 2 Expert UR recipes
-			Legendary = 25,  -- Phase 2 Legendary recipes
+			UltraRare = 14,
+			Legendary = 25,
 		},
-		-- Legacy Legendary (Phase 1): 12s
 		LegendaryP1CookTime = 12,
 		StoveInterruptPresent = 25,
 		StoveInterruptAway    = 40,
 	},
 
-	-- Cheese root mechanic
 	CheeseRoot = {
-		SecondHitWindow = 5,   -- seconds between Cheese Block hits for root
+		SecondHitWindow = 5,
 		RootDuration    = 1.5,
 	},
 }
 
 -- ============================================================
 -- INGREDIENTS
---
--- Phase 1: 24 ingredients (3C/2U/1R per zone), phase=1
--- Phase 2: 16 ingredients (completes 4C/3U/2R/1UR), phase=2
---
--- Fields: name, zone, rarity, cl, wt, cost, allergy,
---         throws(always 3), effect, phase
+-- (24 Phase 1 — unchanged)
 -- ============================================================
 
 ChompersData.Ingredients = {
 
-	-- ══════════════════════════════════════════════════════
-	-- PRODUCE — Allergy: "Produce"
-	-- Zone identity: marks, DoTs, debuffs, speed plays
-	-- Intra-zone Quick: Bruschetta, French Onion
-	-- Intra-zone Standard: Pico de Gallo
-	-- Intra-zone Expert: Green Curry
-	-- ══════════════════════════════════════════════════════
+	-- ── PRODUCE ───────────────────────────────────────────
 	{
 		name="Tomato", zone="Produce", rarity="Common", phase=1,
 		cl=6, wt=1, cost=2, allergy="Produce", throws=3,
@@ -340,13 +281,7 @@ ChompersData.Ingredients = {
 		effect="Burn DoT +2 CL/s 4s (8 total). Fire ingredient — Oil chain activates on this hit (×1.6 CL). Self-consume: +40% throw speed 8s + burn immunity 6s. Costs +5 FL.",
 	},
 
-	-- ══════════════════════════════════════════════════════
-	-- BAKERY — Allergy: "Bakery"
-	-- Zone identity: CC, floor control, roots
-	-- Intra-zone Quick: Omelette, Buttered Toast
-	-- Intra-zone Standard: Cream Puff
-	-- Intra-zone Expert: Crème Brûlée
-	-- ══════════════════════════════════════════════════════
+	-- ── BAKERY ────────────────────────────────────────────
 	{
 		name="Flour", zone="Bakery", rarity="Common", phase=1,
 		cl=5, wt=2, cost=2, allergy="Bakery", throws=3,
@@ -379,12 +314,7 @@ ChompersData.Ingredients = {
 		effect="Root 1s + sticky floor zone 5s (−35% speed in zone). Self-consume: +5 FL.",
 	},
 
-	-- ══════════════════════════════════════════════════════
-	-- DRY GOODS — Allergy: "Dry Goods"
-	-- Zone identity: utility, marks, fire setup, control
-	-- Intra-zone Standard: Fried Noodles
-	-- Intra-zone Expert: Dandan Noodles
-	-- ══════════════════════════════════════════════════════
+	-- ── DRY GOODS ─────────────────────────────────────────
 	{
 		name="Rice", zone="Dry Goods", rarity="Common", phase=1,
 		cl=5, wt=2, cost=3, allergy="Dry Goods", throws=3,
@@ -416,11 +346,7 @@ ChompersData.Ingredients = {
 		effect="Fire primer: fire recipe hitting same target within 3s = ×1.6 CL. Creates brief oil slick at impact. Self-consume: +5 FL.",
 	},
 
-	-- ══════════════════════════════════════════════════════
-	-- FREEZER — Allergy: "Freezer"
-	-- Zone identity: raw power, knockback, disruption
-	-- Intra-zone Expert: Mixed Grill
-	-- ══════════════════════════════════════════════════════
+	-- ── FREEZER ───────────────────────────────────────────
 	{
 		name="Chicken", meshRequired=true,
 		zone="Freezer", rarity="Common", phase=1,
@@ -456,13 +382,13 @@ ChompersData.Ingredients = {
 	},
 }
 
+-- ============================================================
+-- RECIPES (28 Phase 1 — unchanged)
+-- ============================================================
+
 ChompersData.Recipes = {
 
-	-- ══════════════════════════════════════════════════════
-	-- QUICK (10) — No stove, 2s cold prep, 3 throws each
-	-- Intra-zone: Bruschetta (Produce), French Onion (Produce),
-	--             Omelette (Bakery), Buttered Toast (Bakery)
-	-- ══════════════════════════════════════════════════════
+	-- ── QUICK (10) ────────────────────────────────────────
 	{
 		name="Bruschetta", tier="Quick", phase=1, serverAnnounce=false,
 		cl=9, station="None", cookTime=2, servings=3,
@@ -532,11 +458,7 @@ ChompersData.Recipes = {
 		notes="Greek.",
 	},
 
-	-- ══════════════════════════════════════════════════════
-	-- STANDARD (11) — Prep+Stove, 5s cook, 3 throws each
-	-- Intra-zone: Pico de Gallo (Produce), Cream Puff (Bakery),
-	--             Fried Noodles (Dry Goods), Mixed Grill (Freezer — Expert)
-	-- ══════════════════════════════════════════════════════
+	-- ── STANDARD (11) ─────────────────────────────────────
 	{
 		name="Pico de Gallo", tier="Standard", phase=1, serverAnnounce=false,
 		cl=16, station="Prep+Stove", cookTime=5, servings=3,
@@ -615,11 +537,7 @@ ChompersData.Recipes = {
 		notes="British.",
 	},
 
-	-- ══════════════════════════════════════════════════════
-	-- EXPERT (6) — Prep+Stove, 8s cook, 3 throws each
-	-- Intra-zone: Green Curry (Produce), Crème Brûlée (Bakery),
-	--             Dandan Noodles (Dry Goods), Mixed Grill (Freezer)
-	-- ══════════════════════════════════════════════════════
+	-- ── EXPERT (6) ────────────────────────────────────────
 	{
 		name="Green Curry", tier="Expert", phase=1, serverAnnounce=false,
 		cl=32, station="Prep+Stove", cookTime=8, servings=3,
@@ -662,9 +580,7 @@ ChompersData.Recipes = {
 		effect="Knockback + root 1s + sticky floor zone 5s + oil slick. Target pinned in dual-hazard zone. Self-consume: drain 30 FL + +20% speed 8s (net −10 FL after +20 cost).",
 	},
 
-	-- ══════════════════════════════════════════════════════
-	-- LEGENDARY (1) — Prep+Stove, 12s cook, 3 throws
-	-- ══════════════════════════════════════════════════════
+	-- ── LEGENDARY (1) ─────────────────────────────────────
 	{
 		name="Jumbo Seafood Boil", tier="Legendary", phase=1, serverAnnounce=true,
 		cl=48, station="Prep+Stove", cookTime=12, servings=3,
@@ -683,48 +599,39 @@ ChompersData.LegendaryObjects = {
 
 -- ============================================================
 -- SPAWN POOLS
--- Used by IngredientSpawner to know which ingredients can spawn where.
+-- [BFP-6] Deli double-fill removed.
 -- ============================================================
 
 ChompersData.SpawnPools = {
-	-- Zone surfaces spawn their zone's Phase 1 ingredients only
 	Produce   = {},
 	Bakery    = {},
 	DryGoods  = {},
 	Freezer   = {},
-	-- Deli spawns Bakery + Freezer Uncommon+ weighted mix of all Phase 1
 	Deli      = {},
-	-- Stockroom spawns ALL ingredients (Phase 1 implemented, Phase 2 when unlocked)
 	Stockroom = {},
 }
 
--- Populate spawn pools from ingredient table
 for _, ing in ipairs(ChompersData.Ingredients) do
 	if ing.phase == 1 then
-		local zoneKey = ing.zone:gsub(" ", "")  -- "Dry Goods" → "DryGoods"
+		local zoneKey = ing.zone:gsub(" ", "")
 		if ChompersData.SpawnPools[zoneKey] then
 			table.insert(ChompersData.SpawnPools[zoneKey], ing.name)
 		end
 		table.insert(ChompersData.SpawnPools.Stockroom, ing.name)
-		-- Deli: Bakery + Freezer weighted
+		-- Deli: Bakery + Freezer ingredients only (no double-fill of all zones).
 		if ing.zone == "Bakery" or ing.zone == "Freezer" then
 			table.insert(ChompersData.SpawnPools.Deli, ing.name)
 		end
 	end
 end
--- Deli also gets all zones (unweighted fallback)
-for _, ing in ipairs(ChompersData.Ingredients) do
-	if ing.phase == 1 then
-		table.insert(ChompersData.SpawnPools.Deli, ing.name)
-	end
-end
 
 -- ============================================================
--- EMOJI TABLE (single source of truth)
+-- EMOJI TABLE
+-- [BFP-5] Removed dead ZONE_EMOJI reference from GetEmoji().
 -- ============================================================
 
 local EMOJI_TABLE = {
-	-- Ingredients — Phase 1 only (Roblox-safe emojis, 2019 and earlier)
+	-- Ingredients
 	Tomato="🍅", Onion="🧅", Cucumber="🥒",
 	Garlic="🧄", Avocado="🥑", ["Chili Pepper"]="🌶",
 	Flour="🌾", Egg="🥚", Butter="🧈",
@@ -755,14 +662,13 @@ local EMOJI_TABLE = {
 	["Jumbo Seafood Boil"]="🍲",
 }
 
-function ChompersData.GetEmoji(name, zone)
-	return EMOJI_TABLE[name] or (zone and ZONE_EMOJI[zone]) or "🍽"
+function ChompersData.GetEmoji(name)
+	return EMOJI_TABLE[name] or "🍽"
 end
 
--- Auto-assign emoji to all ingredients and recipes
 for _, ing in ipairs(ChompersData.Ingredients) do
 	if not ing.emoji then
-		ing.emoji = ChompersData.GetEmoji(ing.name, ing.zone)
+		ing.emoji = ChompersData.GetEmoji(ing.name)
 	end
 end
 for _, rec in ipairs(ChompersData.Recipes) do
@@ -772,7 +678,7 @@ for _, rec in ipairs(ChompersData.Recipes) do
 end
 
 -- ============================================================
--- HELPERS
+-- HELPERS (unchanged)
 -- ============================================================
 
 function ChompersData.GetIngredient(name)
@@ -827,8 +733,6 @@ function ChompersData.GetPhase1Recipes()
 	return result
 end
 
--- Returns allergen multiplier for a recipe hit against a target with the given allergy.
--- Checks ALL ingredients in the recipe — if ANY match, whole recipe gets ×1.75.
 function ChompersData.GetRecipeAllergenMultiplier(recipe, targetAllergy)
 	if not targetAllergy or targetAllergy == "None" then
 		return ChompersData.Constants.Allergy.NoMatchMultiplier
@@ -842,7 +746,6 @@ function ChompersData.GetRecipeAllergenMultiplier(recipe, targetAllergy)
 	return ChompersData.Constants.Allergy.NoMatchMultiplier
 end
 
--- Returns allergen multiplier for a single raw ingredient throw.
 function ChompersData.GetIngredientAllergenMultiplier(ingredient, targetAllergy)
 	if not targetAllergy or targetAllergy == "None" then
 		return ChompersData.Constants.Allergy.NoMatchMultiplier
@@ -854,19 +757,16 @@ function ChompersData.GetIngredientAllergenMultiplier(ingredient, targetAllergy)
 end
 
 -- ============================================================
--- VENDOR CATALOG v9.1 -- Zone-themed food truck NPCs
--- Four vendors in the car park, one per ingredient zone.
--- Items, tips, and personality reflect each zone's mechanics.
+-- VENDORS (unchanged)
 -- ============================================================
 
 ChompersData.Vendors = {
 
-	-- ── PRODUCE -- Clove Eastwood ─────────────────────────────
 	clove = {
 		id="clove", name="Clove Eastwood", tagline="Former top-shelf. Permanently retired.",
 		emoji="🧄", zone="Produce", specialty="Marks, Speed & Fire",
-		accentHex={80,140,60},    -- earthy produce green
-		truckAccent={195,80,40},  -- chili pepper red
+		accentHex={80,140,60},
+		truckAccent={195,80,40},
 		idleLines={
 			"Tomato first. Then anything. That's a free +15% on your next hit.",
 			"Garlic strips 15% off every active buff instantly. Throw it right before their Creme Brulee lands.",
@@ -875,30 +775,26 @@ ChompersData.Vendors = {
 			"I've cleared rooms. I've cleared buffs. Same motion, different ingredient.",
 		},
 		items={
-			-- Titles
 			{id="clove_title_mark_words",  name="Mark My Words",       category="title",          cost=25,  tier="cheap"},
 			{id="clove_title_buff_strip",  name="Buff Stripped",       category="title",          cost=60,  tier="cheap"},
 			{id="clove_title_tomato_terr", name="Tomato Terror",       category="title",          cost=120, tier="mid"},
 			{id="clove_title_unmarked",    name="Unmarked Menace",     category="title_animated", cost=220, tier="premium"},
 			{id="clove_title_debuffer",    name="The Debuffer",        category="title_prestige", cost=650, tier="prestige"},
-			-- Throw FX
 			{id="clove_fx_garlic_fume",    name="Garlic Fume Burst",   category="throw_fx",       cost=40,  tier="cheap"},
 			{id="clove_fx_tomato_splash",  name="Tomato Splash",       category="throw_fx",       cost=80,  tier="mid"},
 			{id="clove_fx_chili_trail",    name="Chili Flame Trail",   category="throw_fx",       cost=150, tier="premium"},
 			{id="clove_fx_smoke_impact",   name="Green Smoke Impact",  category="throw_fx",       cost=200, tier="premium"},
-			-- Cosmetics
 			{id="clove_cos_braid",         name="Garlic Braid",        category="cosmetic",       cost=90,  tier="mid"},
 			{id="clove_cos_apron",         name="Produce-Stained Apron",category="cosmetic",      cost=60,  tier="cheap"},
 			{id="clove_cos_gloves",        name="Clove's Fingerless",  category="cosmetic",       cost=220, tier="premium"},
 		},
 	},
 
-	-- ── BAKERY -- Yolko ──────────────────────────────────────
 	yolko = {
 		id="yolko", name="Yolko", tagline="The crack is intentional.",
 		emoji="🥚", zone="Bakery", specialty="CC, Floor Hazards & Roots",
-		accentHex={230,200,60},     -- yolk golden yellow
-		truckAccent={240,230,200},  -- cream/flour white
+		accentHex={230,200,60},
+		truckAccent={240,230,200},
 		idleLines={
 			"Butter plus Honey in the same spot. Slip zone AND sticky zone. Nobody's going anywhere.",
 			"Two Cheese Blocks on the same target within 5 seconds. Root. Every time. It's beautiful.",
@@ -907,30 +803,26 @@ ChompersData.Vendors = {
 			"Flour first. They can't aim. Then Honey. They can't move. Then you decide what happens next.",
 		},
 		items={
-			-- Titles
 			{id="yolko_title_bakers_doz",  name="Baker's Dozen",       category="title",          cost=25,  tier="cheap"},
 			{id="yolko_title_sticky",      name="The Sticky One",      category="title",          cost=60,  tier="cheap"},
 			{id="yolko_title_root_canal",  name="Root Canal",          category="title",          cost=120, tier="mid"},
 			{id="yolko_title_honey_trap",  name="Honey Trap",          category="title_animated", cost=220, tier="premium"},
 			{id="yolko_title_immovable",   name="The Immovable",       category="title_prestige", cost=650, tier="prestige"},
-			-- Throw FX
 			{id="yolko_fx_flour_puff",     name="Flour Puff Impact",   category="throw_fx",       cost=40,  tier="cheap"},
-			{id="yolko_fx_butter_sizzle",  name="Butter Sizzle",       category="throw_fx",       cost=80,  tier="mid"},
+			{id="yolko_fx_butter_sizzle", name="Butter Sizzle",        category="throw_fx",       cost=80,  tier="mid"},
 			{id="yolko_fx_egg_splat",      name="Egg Splat Burst",     category="throw_fx",       cost=130, tier="mid"},
 			{id="yolko_fx_honey_drip",     name="Honey Drip Zone",     category="throw_fx",       cost=200, tier="premium"},
-			-- Cosmetics
 			{id="yolko_cos_beret",         name="Flour-Dusted Beret",  category="cosmetic",       cost=80,  tier="mid"},
 			{id="yolko_cos_crown",         name="Cracked Egg Crown",   category="cosmetic",       cost=120, tier="mid"},
 			{id="yolko_cos_honey",         name="Golden Honey Drip",   category="cosmetic",       cost=240, tier="premium"},
 		},
 	},
 
-	-- ── DRY GOODS -- MSG ────────────────────────────────────
 	msg = {
 		id="msg", name="MSG", tagline="Setup is everything. Damage is someone else's problem.",
 		emoji="🫙", zone="Dry Goods", specialty="Combos, Fire Primer & Marks",
-		accentHex={180,30,30},   -- deep soy red
-		truckAccent={20,18,18},  -- lacquer black
+		accentHex={180,30,30},
+		truckAccent={20,18,18},
 		idleLines={
 			"Oil hits target. Fire recipe within 3 seconds. Times 1.60. I don't need to explain why that matters.",
 			"Soy Sauce self-consume gives you a bonus throw. You have 4 throws. They have 3.",
@@ -939,19 +831,16 @@ ChompersData.Vendors = {
 			"Salt on a healer. Their next heal is cut in half. Simple. Effective. I'm not involved.",
 		},
 		items={
-			-- Titles
 			{id="msg_title_utility",       name="Utility Player",      category="title",          cost=25,  tier="cheap"},
 			{id="msg_title_the_setup",     name="The Setup",           category="title",          cost=60,  tier="cheap"},
 			{id="msg_title_chain_react",   name="Chain Reaction",      category="title",          cost=120, tier="mid"},
 			{id="msg_title_enhancer",      name="The Enhancer",        category="title_animated", cost=220, tier="premium"},
 			{id="msg_title_architect",     name="Architect of Pain",   category="title_prestige", cost=650, tier="prestige"},
-			-- Cart skins (MSG holds all container skins -- Dry Goods = utility zone)
 			{id="msg_cart_bamboo",         name="Bamboo Cart",         category="cart_skin",      cost=80,  tier="mid"},
 			{id="msg_cart_lacquer",        name="Lacquered Black Cart",category="cart_skin",      cost=160, tier="premium"},
 			{id="msg_cart_prestige",       name="MSG's Market Cart",   category="cart_skin",      cost=280, tier="prestige"},
 			{id="msg_basket_rattan",       name="Rattan Pantry Basket",category="basket_skin",    cost=60,  tier="mid"},
 			{id="msg_basket_premium",      name="Premium Pantry Basket",category="basket_skin",   cost=130, tier="mid"},
-			-- Throw FX
 			{id="msg_fx_soy_drip",         name="Soy Sauce Drip",      category="throw_fx",       cost=40,  tier="cheap"},
 			{id="msg_fx_oil_slick",        name="Oil Slick Trail",     category="throw_fx",       cost=100, tier="mid"},
 			{id="msg_fx_entangle_web",     name="Entangle Web Impact", category="throw_fx",       cost=140, tier="mid"},
@@ -959,12 +848,11 @@ ChompersData.Vendors = {
 		},
 	},
 
-	-- ── FREEZER -- Barry Chill ─────────────────────────────
 	barry = {
 		id="barry", name="Barry Chill", tagline="He's very relaxed. You should be more worried about that.",
 		emoji="🐟", zone="Freezer", specialty="Heavy Hits, Knockback & Disruption",
-		accentHex={100,180,220},   -- ice blue
-		truckAccent={220,235,245}, -- frost white
+		accentHex={100,180,220},
+		truckAccent={220,235,245},
 		idleLines={
 			"Tuna. Self-consume. Plus fifty percent throw speed. Ten seconds. ...Yeah.",
 			"Shrimp hits twice. Both hits apply your allergen bonus. That's 20 CL times 1.75. Per throw.",
@@ -973,18 +861,15 @@ ChompersData.Vendors = {
 			"The Freezer has the highest average CL of any zone. I mention this to be helpful.",
 		},
 		items={
-			-- Titles
 			{id="barry_title_cold_case",   name="Cold Case",           category="title",          cost=25,  tier="cheap"},
 			{id="barry_title_disruptor",   name="The Disruptor",       category="title",          cost=60,  tier="cheap"},
 			{id="barry_title_knocked",     name="Knocked Back",        category="title",          cost=120, tier="mid"},
 			{id="barry_title_abs_zero",    name="Absolute Zero",       category="title_animated", cost=220, tier="premium"},
 			{id="barry_title_inevitable",  name="The Inevitable",      category="title_prestige", cost=650, tier="prestige"},
-			-- Throw FX
 			{id="barry_fx_ice_crystal",    name="Ice Crystal Impact",  category="throw_fx",       cost=40,  tier="cheap"},
 			{id="barry_fx_frost_arc",      name="Frost Arc Trail",     category="throw_fx",       cost=90,  tier="mid"},
 			{id="barry_fx_shockwave",      name="Knockback Shockwave", category="throw_fx",       cost=140, tier="mid"},
 			{id="barry_fx_double_shimmer", name="Double Hit Shimmer",  category="throw_fx",       cost=210, tier="premium"},
-			-- Cosmetics
 			{id="barry_cos_badge",         name="Fish Stick Badge",    category="cosmetic",       cost=80,  tier="mid"},
 			{id="barry_cos_icepack",       name="Ice Pack Backpack",   category="cosmetic",       cost=120, tier="mid"},
 			{id="barry_cos_crown",         name="Frozen Champion Crown",category="cosmetic",      cost=260, tier="premium"},
@@ -992,7 +877,6 @@ ChompersData.Vendors = {
 	},
 }
 
--- Flat item lookup by ID for server-side validation
 ChompersData.VendorItemById = {}
 for _, vendor in pairs(ChompersData.Vendors) do
 	for _, item in ipairs(vendor.items) do
