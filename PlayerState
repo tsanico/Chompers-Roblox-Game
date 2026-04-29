@@ -1,18 +1,15 @@
 -- ============================================================
--- PlayerState — ModuleScript
--- Location: ServerScriptService > PlayerState
+-- PlayerState — ModuleScript · ServerScriptService
+-- v9.7.1 (Bug-Fix Pass)
 --
--- The single server-side source of truth for every player's
--- in-match state. All other server scripts require this module
--- and call its functions — they never track their own state.
---
--- REQUIRES: ReplicatedStorage > ChompersData
--- FIRES:    ChompersRemotes (UpdateCleanliness, UpdateFullness,
---           UpdateInventory, UpdateWeight, UpdateMoney,
---           UpdateSpeed, UpdateLobbyState, ApplyFreeze,
---           ApplyMark, HitPlayer)
--- LISTENS:  PlayerSelectAllergy, PlayerSelectCart,
---           PlayerSelectFavourite, RequestLobbyData
+-- CHANGES IN THIS PASS:
+--   [BFP-9]   SetAllergy validator: legacy 8 → 4 zones (Produce/Bakery/Dry Goods/Freezer)
+--   [BFP-10]  ApplyMarkToTarget: tolerant of both string and {name=...} table
+--             (matches existing ThrowServer call sites without forcing client edits)
+--   [BFP-11]  GetSpeedMult: FL bloat binary cliff → linear formula (uses C.FL.Bloat*)
+--   [BFP-12]  UseSink/UseToilet: 0 breaks no longer eliminates (soft-fail per GDB §4.2)
+--   [BFP-13]  Sous-chef strip: removed cookingAssists field, RecordCookingAssist function,
+--             assists column from scoreboard
 -- ============================================================
 
 local Players       = game:GetService("Players")
@@ -23,7 +20,6 @@ local ChompersData  = require(ReplicatedStorage:WaitForChild("ChompersData"))
 local C             = ChompersData.Constants
 local Remotes       = ReplicatedStorage:WaitForChild("ChompersRemotes")
 
--- ── Remote references ───────────────────────────────────────
 local function R(name) return Remotes:WaitForChild(name) end
 
 local UpdateCleanliness = R("UpdateCleanliness")
@@ -37,10 +33,7 @@ local ApplyFreeze       = R("ApplyFreeze")
 local ApplyMark         = R("ApplyMark")
 local HitPlayer         = R("HitPlayer")
 
--- ── Module table ────────────────────────────────────────────
 local PlayerState = {}
-
--- Internal storage: keyed by player
 local _state = {}
 
 -- ============================================================
@@ -49,83 +42,60 @@ local _state = {}
 
 local function defaultState()
 	return {
-		-- ── Bars ──────────────────────────────────────────────
-		cl = 0,                  -- Cleanliness (HP). 0–100. Never decays.
-		fl = 0,                  -- Fullness (control). 0–100. Decays over time.
-		clDebuffActive = false,  -- true while in 100% CL state
-		flDebuffActive = false,  -- true while in 100% FL state
-		at100CLTime = 0,         -- timestamp when CL hit 100
+		cl = 0,
+		fl = 0,
+		clDebuffActive = false,
+		flDebuffActive = false,
+		at100CLTime = 0,
 		at100FLTime = 0,
 
-		-- ── Economy ───────────────────────────────────────────
 		money = C.Economy.StartingCash,
 
-		-- ── Inventory ─────────────────────────────────────────
 		inventory = {},
-		overflow  = {},           -- unlimited storage; spills here when hotbar (10 slots) is full
+		overflow  = {},
 		container = "Basket",
 		napkins = C.Economy.StartingNapkins or 1,
 
-		-- ── Bathroom ──────────────────────────────────────────
-		pottyBreaks = 3,   -- breaks per match (hard-coded Phase 1)
+		pottyBreaks = 3,
 		inBathroom = false,
 		bathroomResetTime = nil,
 
-		-- ── Prelobby selections ───────────────────────────────
-		allergy = nil,            -- e.g. "Dairy", "Gluten" — nil until chosen
-		favourite = nil,          -- recipe name string — nil until chosen
+		allergy = nil,
+		favourite = nil,
 		isReady = false,
 
-		-- ── Combat / CC ───────────────────────────────────────
-		activeMark = nil,         -- { bonus=0.15/0.20, expiresAt=tick() }
-		ccHitCount = 0,           -- consecutive CC hits (diminishing returns)
-		lastCCTime = 0,           -- last CC hit timestamp
+		activeMark = nil,
+		ccHitCount = 0,
+		lastCCTime = 0,
 
-		-- ── Oil primer (elemental chain) ───────────────────────
-		oilPrimedAt = 0,          -- timestamp of last Oil hit applied
+		oilPrimedAt = 0,
 
-		-- ── Freeze ────────────────────────────────────────────
-		freezeTotal = 0,          -- cumulative freeze applied this chain (cap 2.5s)
+		freezeTotal = 0,
 
-		-- ── Speed modifiers ───────────────────────────────────
-		-- Computed fresh each time, not stored — see PlayerState.GetSpeedMult()
-
-		-- ── Alliance ──────────────────────────────────────────
-		allyUserId = nil,         -- single ally userId (or nil)
-		allyUserId2 = nil,        -- second ally (3-person alliances, large servers)
+		allyUserId = nil,
+		allyUserId2 = nil,
 		allianceConfirmed = false,
-		inTradeHub = false,        -- true while inside Trade Hub safe zone
+		inTradeHub = false,
 
-		-- ── Points ────────────────────────────────────────────
 		points = 0,
 		totalCLDealt = 0,
 		totalFLDealt = 0,
-		cookingAssists   = 0,         -- successful sous-chef dish contributions
-		eliminations     = 0,         -- players this player sent to 0 potty breaks
-		recipesCooked = {},       -- set of unique recipe names cooked
+		-- [BFP-13] cookingAssists removed (sous-chef cut).
+		eliminations     = 0,
+		recipesCooked = {},
 		ingredientsPurchased = 0,
 		itemsGathered = 0,
 		downsTriggered = 0,
 
-		-- ── Medals (lifetime, persisted eventually via DataStore) ──
 		medals = 0,
+		equippedTitle = nil,
 
-		-- ── Equipped title (set via StoreGuide) ───────────────────
-		equippedTitle = nil,      -- string or nil
-
-		-- ── Knowledge: what this player has revealed about others ──
-		-- [targetUserId] = {fav=string, allergy=string}
 		knownInfo = {},
 
-		-- ── Status ────────────────────────────────────────────
 		isEliminated = false,
 		isSpectating = false,
 	}
 end
-
--- ============================================================
--- INIT / CLEANUP
--- ============================================================
 
 function PlayerState.Init(player)
 	_state[player] = defaultState()
@@ -141,7 +111,7 @@ function PlayerState.Get(player)
 end
 
 -- ============================================================
--- SYNC HELPERS — push state to client
+-- SYNC
 -- ============================================================
 
 function PlayerState.SyncAll(player)
@@ -160,7 +130,6 @@ function PlayerState.SyncInventory(player)
 	local totalWt = PlayerState.GetTotalWeight(player)
 	local limit = PlayerState.GetWeightLimit(player)
 	UpdateInventory:FireClient(player, s.inventory)
-	-- Sync overflow separately so client can show storage section
 	local UpdateOverflow = Remotes:FindFirstChild("UpdateOverflow")
 	if not UpdateOverflow then
 		UpdateOverflow = Instance.new("RemoteEvent")
@@ -190,8 +159,6 @@ function PlayerState.GetWeightLimit(player)
 	return C.Economy.BasketWeightLimit
 end
 
--- Slot limit is always 10 regardless of container (Bible Part 35)
--- Container determines weight cap only, not slot count
 function PlayerState.GetSlotLimit(player)
 	return 10
 end
@@ -215,7 +182,7 @@ end
 
 -- ============================================================
 -- SPEED MULTIPLIER
--- All modifiers are computed fresh — clamped to 35% floor
+-- [BFP-11] FL bloat is now linear from FL=50 to FL=100, not binary.
 -- ============================================================
 
 function PlayerState.GetSpeedMult(player)
@@ -224,7 +191,7 @@ function PlayerState.GetSpeedMult(player)
 
 	local mult = 1.0
 
-	-- Container base speed modifier
+	-- Container base
 	local containerMod = (s.container == "Cart")
 		and (1 - C.Economy.CartSpeedPenalty)
 		or  (1 + C.Economy.BasketSpeedBonus)
@@ -239,12 +206,12 @@ function PlayerState.GetSpeedMult(player)
 		mult = mult * (1 - penalty)
 	end
 
-	-- FL fullness speed tiers (Phase 1 — hardcoded thresholds)
-	-- FL 60–79: -10% speed; FL 80–100: -25% speed
-	if s.fl >= 80 then
-		mult = mult * 0.75   -- −25%
-	elseif s.fl >= 60 then
-		mult = mult * 0.90   -- −10%
+	-- [BFP-11] Linear FL bloat scaling per ChompersData / GDB §3.2:
+	-- t = clamp((FL - 50) / 50, 0, 1)
+	-- speed penalty = t * BloatSpeedMax (default 25%)
+	if s.fl > C.FL.BloatThreshold then
+		local t = math.clamp((s.fl - C.FL.BloatThreshold) / 50, 0, 1)
+		mult = mult * (1 - t * C.FL.BloatSpeedMax)
 	end
 
 	-- 100% CL debuff
@@ -252,15 +219,34 @@ function PlayerState.GetSpeedMult(player)
 		mult = mult * (1 - C.State100.SpeedPenalty)
 	end
 
-	-- 100% FL debuff (stacks if both are active)
+	-- 100% FL debuff (additive on top of bloat scaling)
 	if s.flDebuffActive then
 		mult = mult * (1 - C.State100.SpeedPenalty)
 	end
 
-	-- Hard floor: never below 35%
 	mult = math.max(mult, C.SpeedFloor)
-
 	return mult
+end
+
+-- ============================================================
+-- BLOAT SCALARS (read by ThrowServer for hitbox/AoE)
+-- New helpers — [BFP-11] makes BloatHitboxMax / BloatAoEMax usable.
+-- ============================================================
+
+function PlayerState.GetBloatT(player)
+	local s = _state[player]
+	if not s then return 0 end
+	if s.fl <= C.FL.BloatThreshold then return 0 end
+	return math.clamp((s.fl - C.FL.BloatThreshold) / 50, 0, 1)
+end
+
+function PlayerState.GetHitboxScale(player)
+	-- Scales hitbox W and D (X/Z); height unchanged.
+	return 1 + PlayerState.GetBloatT(player) * C.FL.BloatHitboxMax
+end
+
+function PlayerState.GetAoERadiusScale(player)
+	return 1 + PlayerState.GetBloatT(player) * C.FL.BloatAoEMax
 end
 
 -- ============================================================
@@ -268,15 +254,13 @@ end
 -- ============================================================
 
 function PlayerState.AddMoney(player, amount)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.money = s.money + amount
 	UpdateMoney:FireClient(player, s.money)
 end
 
 function PlayerState.DeductMoney(player, amount)
-	local s = _state[player]
-	if not s then return false end
+	local s = _state[player]; if not s then return false end
 	if s.money < amount then return false end
 	s.money = s.money - amount
 	UpdateMoney:FireClient(player, s.money)
@@ -284,28 +268,20 @@ function PlayerState.DeductMoney(player, amount)
 end
 
 function PlayerState.GetMoney(player)
-	local s = _state[player]
-	return s and s.money or 0
+	local s = _state[player]; return s and s.money or 0
 end
 
 -- ============================================================
 -- INVENTORY
 -- ============================================================
 
--- AddItem: fills hotbar (slots 1-10) first, then spills to overflow.
--- Weight is the only hard limit — overflow has no slot cap.
 function PlayerState.AddItem(player, itemData)
-	local s = _state[player]
-	if not s then return false, "no_state" end
-
+	local s = _state[player]; if not s then return false, "no_state" end
 	if #s.inventory < 10 then
-		-- Hotbar has room
 		table.insert(s.inventory, itemData)
 	else
-		-- Hotbar full — add to unlimited overflow storage
 		table.insert(s.overflow, itemData)
 	end
-
 	s.itemsGathered = s.itemsGathered + 1
 	PlayerState.AddPoints(player, C.Points.PickupIngredient)
 	PlayerState.SyncInventory(player)
@@ -313,10 +289,8 @@ function PlayerState.AddItem(player, itemData)
 	return true
 end
 
--- RemoveItem: removes by slot index (1-based)
 function PlayerState.RemoveItem(player, slotIndex)
-	local s = _state[player]
-	if not s then return nil end
+	local s = _state[player]; if not s then return nil end
 	if not s.inventory[slotIndex] then return nil end
 	local item = table.remove(s.inventory, slotIndex)
 	PlayerState.SyncInventory(player)
@@ -324,23 +298,17 @@ function PlayerState.RemoveItem(player, slotIndex)
 	return item
 end
 
--- MoveItem: reorders inventory without creating holes.
--- Removes item at fromSlot, re-inserts at toSlot.
--- If toSlot > #inventory, item goes to the end.
--- Shifts intervening items by one position (no nil gaps ever created).
 function PlayerState.MoveItem(player, fromSlot, toSlot)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	local n = #s.inventory
 	if fromSlot < 1 or fromSlot > n then return end
 	if fromSlot == toSlot then return end
-	toSlot = math.clamp(toSlot, 1, n)   -- clamp to valid range
+	toSlot = math.clamp(toSlot, 1, n)
 	local item = table.remove(s.inventory, fromSlot)
 	table.insert(s.inventory, toSlot, item)
 	PlayerState.SyncInventory(player)
 end
 
--- MarkItemPaid: marks a specific item as paid (by slot index)
 function PlayerState.MarkItemPaid(player, slotIndex)
 	local s = _state[player]
 	if not s or not s.inventory[slotIndex] then return end
@@ -349,10 +317,8 @@ function PlayerState.MarkItemPaid(player, slotIndex)
 	PlayerState.AddPoints(player, C.Points.IngredientPaidCheckout)
 end
 
--- MarkAllUnpaidAsPaid: marks every unpaid item as paid (hotbar + overflow)
 function PlayerState.MarkAllUnpaidAsPaid(player)
-	local s = _state[player]
-	if not s then return 0 end
+	local s = _state[player]; if not s then return 0 end
 	local count = 0
 	local function payList(list)
 		for _, item in ipairs(list) do
@@ -370,10 +336,8 @@ function PlayerState.MarkAllUnpaidAsPaid(player)
 	return count
 end
 
--- GetUnpaidCost: sum of costs for all unpaid items (hotbar + overflow)
 function PlayerState.GetUnpaidCost(player)
-	local s = _state[player]
-	if not s then return 0 end
+	local s = _state[player]; if not s then return 0 end
 	local total = 0
 	for _, item in ipairs(s.inventory) do
 		if not item.paid then total = total + (item.cost or 0) end
@@ -384,10 +348,8 @@ function PlayerState.GetUnpaidCost(player)
 	return total
 end
 
--- DropAllItems: empties hotbar AND overflow, returns combined dropped list
 function PlayerState.DropAllItems(player)
-	local s = _state[player]
-	if not s then return {} end
+	local s = _state[player]; if not s then return {} end
 	local dropped = {}
 	for _, item in ipairs(s.inventory) do table.insert(dropped, item) end
 	for _, item in ipairs(s.overflow)  do table.insert(dropped, item) end
@@ -398,10 +360,8 @@ function PlayerState.DropAllItems(player)
 	return dropped
 end
 
--- MoveOverflowToHotbar: moves item at overflow index to first free hotbar slot
 function PlayerState.MoveOverflowToHotbar(player, overflowIndex)
-	local s = _state[player]
-	if not s then return false end
+	local s = _state[player]; if not s then return false end
 	if not s.overflow[overflowIndex] then return false end
 	if #s.inventory >= 10 then return false, "hotbar_full" end
 	local item = table.remove(s.overflow, overflowIndex)
@@ -410,7 +370,6 @@ function PlayerState.MoveOverflowToHotbar(player, overflowIndex)
 	return true
 end
 
--- RemoveOverflowItem: removes by overflow index (for drop Q on overflow items)
 function PlayerState.RemoveOverflowItem(player, overflowIndex)
 	local s = _state[player]
 	if not s or not s.overflow[overflowIndex] then return nil end
@@ -420,48 +379,37 @@ function PlayerState.RemoveOverflowItem(player, overflowIndex)
 	return item
 end
 
--- AddNapkin / UseNapkin
 function PlayerState.AddNapkin(player, count)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.napkins = s.napkins + (count or 1)
 end
 
 function PlayerState.UseNapkin(player)
-	local s = _state[player]
-	if not s then return false end
+	local s = _state[player]; if not s then return false end
 	if s.napkins <= 0 then return false end
 	s.napkins = s.napkins - 1
-	-- Napkin heals −25 CL (2s, interruptible — handled by calling script)
 	PlayerState.ModifyCL(player, -25)
 	return true
 end
 
 -- ============================================================
--- CLEANLINESS (CL) BAR
+-- CLEANLINESS
 -- ============================================================
 
--- ModifyCL: delta can be negative (healing) or positive (damage)
--- Returns true if 100% state was triggered by this change
 function PlayerState.ModifyCL(player, delta)
-	local s = _state[player]
-	if not s then return false end
-
+	local s = _state[player]; if not s then return false end
 	local prev = s.cl
 	s.cl = math.clamp(s.cl + delta, 0, 100)
 	UpdateCleanliness:FireClient(player, s.cl)
 
-	-- Warning threshold (95% — hardcoded Phase 1 constant)
 	if s.cl >= 95 and prev < 95 then
 		HitPlayer:FireClient(player, "cl_warn")
 	end
 
-	-- Notify cooking system of hit (resets active cook timer / heat bar)
 	if delta > 0 and _G.NotifyCookingHit then
 		_G.NotifyCookingHit(player)
 	end
 
-	-- 100% state trigger
 	if s.cl >= 100 and not s.clDebuffActive then
 		s.clDebuffActive = true
 		s.at100CLTime = tick()
@@ -469,18 +417,15 @@ function PlayerState.ModifyCL(player, delta)
 		return true
 	end
 
-	-- If CL dropped below 100, clear debuff
 	if s.cl < 100 and s.clDebuffActive then
 		s.clDebuffActive = false
 		PlayerState.SyncSpeed(player)
 	end
-
 	return false
 end
 
 function PlayerState.SetCL(player, value)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.cl = math.clamp(value, 0, 100)
 	if s.cl < 100 then s.clDebuffActive = false end
 	UpdateCleanliness:FireClient(player, s.cl)
@@ -488,13 +433,11 @@ function PlayerState.SetCL(player, value)
 end
 
 -- ============================================================
--- FULLNESS (FL) BAR
+-- FULLNESS
 -- ============================================================
 
 function PlayerState.ModifyFL(player, delta)
-	local s = _state[player]
-	if not s then return false end
-
+	local s = _state[player]; if not s then return false end
 	local prev = s.fl
 	s.fl = math.clamp(s.fl + delta, 0, 100)
 	UpdateFullness:FireClient(player, s.fl)
@@ -515,12 +458,13 @@ function PlayerState.ModifyFL(player, delta)
 		PlayerState.SyncSpeed(player)
 	end
 
+	-- [BFP-11] Speed sync on every FL change so linear bloat ramp is visible.
+	PlayerState.SyncSpeed(player)
 	return false
 end
 
 function PlayerState.SetFL(player, value)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.fl = math.clamp(value, 0, 100)
 	if s.fl < 100 then s.flDebuffActive = false end
 	UpdateFullness:FireClient(player, s.fl)
@@ -528,36 +472,24 @@ function PlayerState.SetFL(player, value)
 end
 
 -- ============================================================
--- 100% STATE — triggers on either bar hitting 100
+-- 100% STATE
 -- ============================================================
 
 function PlayerState._Trigger100State(player, bar)
-	local s = _state[player]
-	if not s then return end
-
-	-- Drop ALL inventory — returns items for world-spawning
+	local s = _state[player]; if not s then return end
 	local dropped = PlayerState.DropAllItems(player)
-
-	-- Tell client: 0.5s dramatic cue + dropped items positions
 	HitPlayer:FireClient(player, "state100", bar, dropped)
-
-	-- Apply speed debuff (already reflected in GetSpeedMult via clDebuffActive/flDebuffActive)
 	PlayerState.SyncSpeed(player)
-
-	-- Points: whoever triggered this gets 25 (handled by CombatSystem calling AddPoints)
-	-- The caller (CombatSystem) is responsible for awarding Down points to the attacker
-
 	print(string.format("[PlayerState] %s hit 100%% %s — inventory dropped (%d items)",
 		player.Name, string.upper(bar), #dropped))
 end
 
 -- ============================================================
--- FL DECAY — runs on a heartbeat loop (called from loader)
--- FL decays slowly over time on its own (CL never decays)
+-- FL DECAY
 -- ============================================================
 
-local FL_DECAY_RATE = 0.5   -- FL units per second lost naturally
-local FL_DECAY_INTERVAL = 1 -- seconds between decay ticks
+local FL_DECAY_RATE = 0.5
+local FL_DECAY_INTERVAL = 1
 
 function PlayerState.StartFLDecay()
 	task.spawn(function()
@@ -565,7 +497,6 @@ function PlayerState.StartFLDecay()
 			task.wait(FL_DECAY_INTERVAL)
 			for player, s in pairs(_state) do
 				if s and not s.isEliminated and s.fl > 0 then
-					-- Only decay if player exists
 					if Players:FindFirstChild(player.Name) then
 						PlayerState.ModifyFL(player, -FL_DECAY_RATE)
 					end
@@ -576,28 +507,36 @@ function PlayerState.StartFLDecay()
 end
 
 -- ============================================================
--- ============================================================
--- MARKS (Part 9 — one active, highest value wins)
+-- MARKS
+-- [BFP-10] ApplyMarkToTarget accepts string "Tomato" / "Soy Sauce"
+-- OR table { name = "Tomato" } for backward compatibility with
+-- legacy ThrowServer call sites.
 -- ============================================================
 
 function PlayerState.ApplyMarkToTarget(targetPlayer, markIngredient)
 	local s = _state[targetPlayer]
 	if not s then return end
 
-	local markDef = C.Marks[markIngredient]
+	-- Accept either string or {name=...} table.
+	local key = markIngredient
+	if type(markIngredient) == "table" then
+		key = markIngredient.name
+	end
+	if type(key) ~= "string" then return end
+
+	local markDef = C.Marks[key]
 	if not markDef then return end
 
-	-- Only apply if higher than current mark (or no mark)
+	-- Higher-mark-wins semantics
 	if s.activeMark and s.activeMark.bonus >= markDef.bonus then return end
 
 	s.activeMark = {
-		ingredient = markIngredient,
+		ingredient = key,
 		bonus      = markDef.bonus,
 		expiresAt  = tick() + markDef.window,
 	}
 
-	-- Tell client to show mark icon above target
-	ApplyMark:FireAllClients(targetPlayer, markIngredient, markDef.window)
+	ApplyMark:FireAllClients(targetPlayer, key, markDef.window)
 end
 
 function PlayerState.GetActiveMark(player)
@@ -611,41 +550,35 @@ function PlayerState.GetActiveMark(player)
 end
 
 -- ============================================================
--- OIL PRIMER (elemental chain — Part 9)
+-- OIL PRIMER
 -- ============================================================
 
 function PlayerState.ApplyOilPrimer(player)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.oilPrimedAt = tick()
 end
 
 function PlayerState.ClearOilPrimer(player)
-	-- Consumes the primer. Sets timestamp to 0 so IsOilPrimed returns false immediately.
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.oilPrimedAt = 0
 end
 
 function PlayerState.IsOilPrimed(player)
-	local s = _state[player]
-	if not s then return false end
+	local s = _state[player]; if not s then return false end
 	return (tick() - s.oilPrimedAt) <= C.Elemental.OilWindowSeconds
 end
 
 -- ============================================================
--- FREEZE (Part 9 — cap 2.5s total)
+-- FREEZE
 -- ============================================================
 
 function PlayerState.ApplyFreeze(player, seconds)
-	local s = _state[player]
-	if not s then return 0 end
+	local s = _state[player]; if not s then return 0 end
 	local remaining = C.FreezeCapSeconds - s.freezeTotal
 	local actual = math.min(seconds, remaining)
 	if actual <= 0 then return 0 end
 	s.freezeTotal = s.freezeTotal + actual
 	ApplyFreeze:FireClient(player, actual)
-	-- Reset freeze total after cap window expires
 	task.delay(C.FreezeCapSeconds + 0.1, function()
 		if s then s.freezeTotal = 0 end
 	end)
@@ -653,21 +586,17 @@ function PlayerState.ApplyFreeze(player, seconds)
 end
 
 -- ============================================================
--- CC DIMINISHING RETURNS (Part 9)
+-- CC DIMINISHING
 -- ============================================================
 
 function PlayerState.GetCCEffectiveness(player)
-	local s = _state[player]
-	if not s then return 1.0 end
-	-- Reset counter if 8s have passed since last CC
+	local s = _state[player]; if not s then return 1.0 end
 	if tick() - s.lastCCTime > C.CCDiminish.ResetSeconds then
 		s.ccHitCount = 0
 	end
 	local diminish = {
-		C.CCDiminish.Hit1,
-		C.CCDiminish.Hit2,
-		C.CCDiminish.Hit3,
-		C.CCDiminish.Hit4,
+		C.CCDiminish.Hit1, C.CCDiminish.Hit2,
+		C.CCDiminish.Hit3, C.CCDiminish.Hit4,
 	}
 	local idx = math.min(s.ccHitCount + 1, 4)
 	s.ccHitCount = s.ccHitCount + 1
@@ -676,57 +605,50 @@ function PlayerState.GetCCEffectiveness(player)
 end
 
 -- ============================================================
--- BATHROOM SYSTEM (Part 4)
+-- BATHROOM
+-- [BFP-12] 0 breaks no longer eliminates from inside the bathroom.
+-- The 0-breaks consequence happens elsewhere (player can't reset
+-- and stays at 100% CL/FL until eventually downed by combat).
 -- ============================================================
 
 function PlayerState.EnterBathroom(player)
-	local s = _state[player]
-	if not s then return false end
-	if s.pottyBreaks <= 0 then return false end
-	-- Bathroom requires CL ≥ 80% OR FL ≥ 80% (or forced at 100% FL)
+	local s = _state[player]; if not s then return false end
+	if s.pottyBreaks <= 0 then
+		-- Door still opens (immune zone) but fixtures won't work.
+		-- We allow entry so the player gets the immune-zone benefit;
+		-- UseSink/UseToilet below will refuse without eliminating.
+	end
 	if s.cl < 80 and s.fl < 80 then return false end
-	if s.inBathroom then return false end   -- already inside
+	if s.inBathroom then return false end
 	s.inBathroom = true
 	s.bathroomResetTime = nil
 	return true
 end
 
--- UseSink: costs 1 Potty Break, resets CL to 0 over ~3s
 function PlayerState.UseSink(player)
-	local s = _state[player]
-	if not s or not s.inBathroom then return false end
-	if s.pottyBreaks <= 0 then
-		-- Eliminate player — no breaks left
-		PlayerState.Eliminate(player)
-		return false
-	end
+	local s = _state[player]; if not s or not s.inBathroom then return false end
+	-- [BFP-12] No-break: silent soft-fail. Caller surfaces UI feedback.
+	if s.pottyBreaks <= 0 then return false end
 	s.pottyBreaks = s.pottyBreaks - 1
 	PlayerState.SetCL(player, 0)
 	PlayerState._CheckBathroomReset(player)
 	return true
 end
 
--- UseToilet: costs 1 Potty Break, resets FL to 0 over ~2s
 function PlayerState.UseToilet(player)
-	local s = _state[player]
-	if not s or not s.inBathroom then return false end
-	if s.pottyBreaks <= 0 then
-		PlayerState.Eliminate(player)
-		return false
-	end
+	local s = _state[player]; if not s or not s.inBathroom then return false end
+	-- [BFP-12] No-break: silent soft-fail.
+	if s.pottyBreaks <= 0 then return false end
 	s.pottyBreaks = s.pottyBreaks - 1
 	PlayerState.SetFL(player, 0)
 	PlayerState._CheckBathroomReset(player)
 	return true
 end
 
--- Check if both bars are now 0 — start the 10s exit timer
 function PlayerState._CheckBathroomReset(player)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	if s.cl == 0 and s.fl == 0 and not s.bathroomResetTime then
 		s.bathroomResetTime = tick()
-		-- Force exit after 10s (Balance Patch v1)
 		task.delay(10, function()
 			if s.inBathroom and s.bathroomResetTime then
 				PlayerState.ExitBathroom(player)
@@ -736,12 +658,9 @@ function PlayerState._CheckBathroomReset(player)
 end
 
 function PlayerState.ExitBathroom(player)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.inBathroom = false
 	s.bathroomResetTime = nil
-	-- 1.5s grace window of invincibility handled by CombatSystem
-	-- listening for ExitBathroom remote
 end
 
 -- ============================================================
@@ -749,14 +668,12 @@ end
 -- ============================================================
 
 function PlayerState.Eliminate(player)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.isEliminated = true
 	s.inBathroom = false
 	print(string.format("[PlayerState] %s ELIMINATED", player.Name))
 end
 
--- EliminatePlayer: eliminates target and credits attacker with a kill
 function PlayerState.EliminatePlayer(target, attacker)
 	PlayerState.Eliminate(target)
 	if attacker then
@@ -766,97 +683,86 @@ function PlayerState.EliminatePlayer(target, attacker)
 end
 
 -- ============================================================
--- ALLIANCE (Part 12)
+-- ALLIANCE
 -- ============================================================
 
 function PlayerState.SetAlly(player, allyPlayer)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.allyUserId = allyPlayer and allyPlayer.UserId or nil
 end
 
 function PlayerState.SetAlly2(player, allyPlayer)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.allyUserId2 = allyPlayer and allyPlayer.UserId or nil
 end
 
 function PlayerState.IsAllied(playerA, playerB)
-	local sA = _state[playerA]
-	if not sA then return false end
+	local sA = _state[playerA]; if not sA then return false end
 	local id = playerB.UserId
 	return sA.allyUserId == id or sA.allyUserId2 == id
 end
 
 -- ============================================================
--- PRELOBBY SELECTIONS
+-- PRELOBBY
+-- [BFP-9] Allergy validator now uses 4 zones, not legacy 8.
 -- ============================================================
 
 function PlayerState.SetAllergy(player, allergyType)
-	local s = _state[player]
-	if not s then return end
-	-- Validate against known allergy types
+	local s = _state[player]; if not s then return end
+	-- [BFP-9] Zone allergies per GDB v9.7.1:
 	local valid = {
-		Dairy=true, Gluten=true, Produce=true, Meat=true,
-		Seafood=true, Nuts=true, Spicy=true, Soy=true
+		Produce     = true,
+		Bakery      = true,
+		["Dry Goods"] = true,
+		Freezer     = true,
 	}
-	if not valid[allergyType] then return end
+	if not valid[allergyType] then
+		warn("[PlayerState] SetAllergy rejected: "..tostring(allergyType))
+		return
+	end
 	s.allergy = allergyType
 end
 
 function PlayerState.SetFavourite(player, recipeName)
-	local s = _state[player]
-	if not s then return end
-	-- Validate recipe exists in ChompersData
+	local s = _state[player]; if not s then return end
 	if not ChompersData.GetRecipe(recipeName) then return end
 	s.favourite = recipeName
 end
 
 function PlayerState.SetReady(player, isReady)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.isReady = isReady == true
 end
 
 -- ============================================================
 -- POINTS
+-- [BFP-13] RecordCookingAssist removed (sous-chef cut).
 -- ============================================================
 
 function PlayerState.AddPoints(player, amount)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.points = s.points + amount
 end
 
 function PlayerState.RecordCLDealt(player, amount)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.totalCLDealt = s.totalCLDealt + amount
 	PlayerState.AddPoints(player, amount * C.Points.DirectHitPerCL)
 end
 
 function PlayerState.RecordFLDealt(player, amount)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.totalFLDealt = s.totalFLDealt + amount
 	PlayerState.AddPoints(player, amount * C.Points.DirectHitPerFL)
 end
 
 function PlayerState.RecordRecipeCooked(player, recipeName)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.recipesCooked[recipeName] = true
 end
 
-function PlayerState.RecordCookingAssist(player)
-	local s = _state[player]
-	if not s then return end
-	s.cookingAssists = s.cookingAssists + 1
-end
-
 function PlayerState.RecordDown(player)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	s.downsTriggered = s.downsTriggered + 1
 	PlayerState.AddPoints(player, C.Points.DownEnemy)
 end
@@ -886,7 +792,7 @@ function PlayerState.DeductMedals(player, amount)
 end
 
 -- ============================================================
--- EQUIPPED TITLE
+-- TITLE
 -- ============================================================
 
 function PlayerState.SetEquippedTitle(player, title)
@@ -899,7 +805,7 @@ function PlayerState.GetEquippedTitle(player)
 end
 
 -- ============================================================
--- KNOWLEDGE: what a player has revealed about others
+-- KNOWN INFO
 -- ============================================================
 
 function PlayerState.RecordKnownInfo(player, targetUserId, fav, allergy)
@@ -913,7 +819,7 @@ function PlayerState.GetKnownInfo(player, targetUserId)
 end
 
 -- ============================================================
--- FRIENDSHIP BAND CHECK
+-- FRIENDSHIP BAND
 -- ============================================================
 
 function PlayerState.HasFriendshipBand(player)
@@ -925,7 +831,6 @@ function PlayerState.HasFriendshipBand(player)
 end
 
 function PlayerState.ConsumeFriendshipBand(player)
-	-- Removes first friendship band from inventory, returns true if found
 	local s = _state[player]; if not s then return false end
 	for i, item in ipairs(s.inventory) do
 		if item.name == "Friendship Bracelet" then
@@ -938,39 +843,38 @@ function PlayerState.ConsumeFriendshipBand(player)
 end
 
 -- ============================================================
--- SCOREBOARD DATA BUILDER
--- Returns array sorted by score descending, with all columns
--- the expanded scoreboard needs.
+-- SCOREBOARD
+-- [BFP-13] assists column removed.
 -- ============================================================
 
 function PlayerState.GetScoreboardData()
 	local rows = {}
 	for player, s in pairs(_state) do
+		local cookCount = 0
+		for _ in pairs(s.recipesCooked) do cookCount = cookCount + 1 end
 		table.insert(rows, {
 			userId       = player.UserId,
 			name         = player.DisplayName or player.Name,
 			allyId       = s.allyUserId,
 			score        = s.points,
 			gather       = s.itemsGathered,
-			cook         = 0,
+			cook         = cookCount,
 			clDealt      = math.floor(s.totalCLDealt),
 			flDealt      = math.floor(s.totalFLDealt),
 			breaks       = s.pottyBreaks,
 			eliminations = s.eliminations,
-			assists      = s.cookingAssists,
+			-- [BFP-13] assists column removed.
 			purchased    = s.ingredientsPurchased,
 			cl           = math.floor(s.cl),
 			isEliminated = s.isEliminated,
 		})
-		rows[#rows].cook = 0
-		for _ in pairs(s.recipesCooked) do rows[#rows].cook = rows[#rows].cook + 1 end
 	end
 	table.sort(rows, function(a,b) return a.score > b.score end)
 	return rows
 end
 
 -- ============================================================
--- REMOTE LISTENERS (Prelobby selections from client)
+-- REMOTE LISTENERS
 -- ============================================================
 
 R("PlayerSelectAllergy").OnServerEvent:Connect(function(player, allergyType)
@@ -989,8 +893,7 @@ R("PlayerSelectFavourite").OnServerEvent:Connect(function(player, recipeName)
 end)
 
 R("RequestLobbyData").OnServerEvent:Connect(function(player)
-	local s = _state[player]
-	if not s then return end
+	local s = _state[player]; if not s then return end
 	UpdateLobbyState:FireClient(player, {
 		allergy   = s.allergy,
 		container = s.container,
@@ -1014,8 +917,6 @@ R("EquipTitle").OnServerEvent:Connect(function(player, titleStr)
 	if r then r:FireClient(player, titleStr) end
 end)
 
--- ReorderInventory: client requests a slot-to-slot move (no holes ever created)
--- Auto-create the remote here so it always exists even if not in ChompersRemotes folder
 local reorderRemote = Remotes:FindFirstChild("ReorderInventory")
 if not reorderRemote then
 	reorderRemote = Instance.new("RemoteEvent")
@@ -1029,20 +930,17 @@ reorderRemote.OnServerEvent:Connect(function(player, fromSlot, toSlot)
 end)
 
 -- ============================================================
--- PLAYER LIFECYCLE
+-- LIFECYCLE
 -- ============================================================
 
 Players.PlayerAdded:Connect(function(player)
 	PlayerState.Init(player)
 
-	-- Fire initial bar values immediately so client scripts
-	-- (ChompersMeters etc.) never see nil on their first check
 	UpdateCleanliness:FireClient(player, 0)
 	UpdateFullness:FireClient(player, 0)
 	UpdateMoney:FireClient(player, C.Economy.StartingCash)
 
 	player.CharacterAdded:Connect(function()
-		-- Full sync once character is loaded — short wait for GUI to settle
 		task.wait(0.2)
 		PlayerState.SyncAll(player)
 	end)
@@ -1051,10 +949,6 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	PlayerState.Cleanup(player)
 end)
-
--- ============================================================
--- START FL DECAY LOOP
--- ============================================================
 
 PlayerState.StartFLDecay()
 
