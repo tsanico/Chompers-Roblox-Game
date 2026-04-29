@@ -20,12 +20,12 @@ local PlayerState = require(ServerScriptService:WaitForChild("PlayerState"))
 
 local PROMPT_DISTANCE = 8
 
-local function classify(part)
+local function classify(thing)
 	-- Attributes win.
-	if part:GetAttribute("IsBasketBay") == true then return "Basket" end
-	if part:GetAttribute("IsCartBay")   == true then return "Cart"   end
+	if thing:GetAttribute("IsBasketBay") == true then return "Basket" end
+	if thing:GetAttribute("IsCartBay")   == true then return "Cart"   end
 
-	local n = part.Name:lower()
+	local n = thing.Name:lower()
 	local hasBay  = n:find("bay") or n:find("stack") or n:find("stand")
 	                or n:find("corral") or n:find("rack")
 	if not hasBay then return nil end
@@ -33,6 +33,30 @@ local function classify(part)
 	if n:find("basket") then return "Basket" end
 	if n:find("cart")   then return "Cart"   end
 	return nil
+end
+
+-- Pick a BasePart inside a Folder/Model to host the ProximityPrompt.
+-- Centroid-closest = the prompt's 8-stud zone covers the middle of the
+-- visual stack, where players naturally walk up.
+local function findAnchor(container)
+	local parts = {}
+	for _, d in ipairs(container:GetDescendants()) do
+		if d:IsA("BasePart") then
+			table.insert(parts, d)
+		end
+	end
+	if #parts == 0 then return nil end
+
+	local sum = Vector3.new(0, 0, 0)
+	for _, p in ipairs(parts) do sum = sum + p.Position end
+	local centroid = sum / #parts
+
+	local best, bestDist = parts[1], (parts[1].Position - centroid).Magnitude
+	for i = 2, #parts do
+		local d = (parts[i].Position - centroid).Magnitude
+		if d < bestDist then best, bestDist = parts[i], d end
+	end
+	return best
 end
 
 local function setupBay(part, containerType)
@@ -101,21 +125,31 @@ local function setupBay(part, containerType)
 end
 
 -- ── Scan workspace ────────────────────────────────────────────
--- Visual cart/basket stacks are typically Models grouping multiple
--- decorative parts. Handle Models AND BaseParts. Track handled
--- descendants so we don't double-attach if a Model has a child part
--- whose name also matches.
+-- Visual cart/basket bays are Folders containing decorative parts
+-- (BasketRack_F, CartBay_L, etc). Also handle Models and named
+-- BaseParts. Track handled descendants so internal parts aren't
+-- double-attached.
 local nBasket, nCart = 0, 0
 local handled = {}
 
 for _, desc in ipairs(workspace:GetDescendants()) do
 	local kind, promptHost = nil, nil
 
-	if desc:IsA("Model") then
+	if desc:IsA("Folder") then
 		kind = classify(desc)
 		if kind then
-			promptHost = desc.PrimaryPart
-				or desc:FindFirstChildWhichIsA("BasePart")
+			promptHost = findAnchor(desc)
+			if promptHost then
+				for _, p in ipairs(desc:GetDescendants()) do
+					handled[p] = true
+				end
+			end
+		end
+
+	elseif desc:IsA("Model") then
+		kind = classify(desc)
+		if kind then
+			promptHost = desc.PrimaryPart or findAnchor(desc)
 			if promptHost then
 				for _, p in ipairs(desc:GetDescendants()) do
 					handled[p] = true
@@ -142,7 +176,7 @@ print(("[BaySystem] Registered %d basket bay(s), %d cart bay(s)"):format(
 	nBasket, nCart))
 
 if nBasket == 0 and nCart == 0 then
-	warn("[BaySystem] No bays found. Tag parts with attribute "
-		.. "IsBasketBay=true or IsCartBay=true, OR rename parts to "
-		.. "include 'BasketBay'/'CartBay'/'BasketStack'/'CartCorral' etc.")
+	warn("[BaySystem] No bays found. Tag with attribute "
+		.. "IsBasketBay=true or IsCartBay=true, OR ensure parts/folders "
+		.. "are named with 'BasketRack'/'CartBay'/'BasketStack' patterns.")
 end
