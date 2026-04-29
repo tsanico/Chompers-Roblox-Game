@@ -1,23 +1,22 @@
 -- ============================================================
--- CookingServer — Script
--- Location: ServerScriptService
+-- CookingServer — Script · ServerScriptService
+-- v9.7.1 (Bug-Fix Pass)
 --
--- Owns the two-station cooking pipeline (Part 10 / Part 41A):
---   PREP TABLE  (attribute IsPrep=true)  → ingredient assembly → Uncooked dish
---   STOVETOP    (attribute IsStovetop=true) → heat bar → Cooked / Burned dish
---
--- Remotes (auto-created if not in ChompersRemotes):
---   ShowPrepUI        Server→Client   Open prep panel with valid recipe list
---   HidePrepUI        Server→Client   Close prep panel
---   RequestAssemble   Client→Server   Player picks a recipe
---   AssembleResult    Server→Client   Success (dish data) or failure reason
---   ShowCookUI        Server→Client   Stovetop cook-timer starts
---   HideCookUI        Server→Client   Close stovetop panel
---   BeginHeatBar      Server→Client   Cook timer done — show heat bar
---   StopHeatBar       Client→Server   Player pressed E; sends needle position (0–1)
---   CookingComplete   Server→Client   Final cookStatus + cl modifier
---   SousChefJoin      Client→Server   Ally presses E at active station
---   SousChefAck       Server→Client   Confirm sous-chef registered
+-- CHANGES IN THIS PASS:
+--   [BFP-17]  Replaced stale local RECIPE_EMOJI table with
+--             ChompersData.GetEmoji() — old table had only Mac and Cheese
+--             matching the v9.7.1 recipe set.
+--   [BFP-18]  Mojibake fix: ðð³ → 🌳, ðð¥ → 🔥 in announce strings.
+--   [BFP-19]  resolveCook is now `local` (was leaking to _G).
+--   [BFP-20]  Removed duplicated HEAT_SPEED/HEAT_WINDOW/MISS_DELAY
+--             declarations.
+--   [BFP-21]  Cook time now keyed by recipe.tier, not dish.rarity.
+--             dish.tier is also stamped on the dish copy so any
+--             later code can read it.
+--   [BFP-22]  Sous-chef branch removed from stovetop trigger.
+--             SousChefJoin / SousChefAck remotes no longer created.
+--             session.sousChef field gone. ApplyCookResult called
+--             without sousChef arg.
 -- ============================================================
 
 local Players             = game:GetService("Players")
@@ -52,79 +51,44 @@ local HideCookUI       = getOrCreate("HideCookUI")
 local BeginHeatBar     = getOrCreate("BeginHeatBar")
 local StopHeatBar      = getOrCreate("StopHeatBar")
 local CookingComplete  = getOrCreate("CookingComplete")
-local CookingCancelled = getOrCreate("CookingCancelled")  -- interrupt signal
-local SousChefJoin     = getOrCreate("SousChefJoin")
-local SousChefAck      = getOrCreate("SousChefAck")
+local CookingCancelled = getOrCreate("CookingCancelled")
+-- [BFP-22] Sous-chef logic removed, but we still create the remotes
+-- as INERT so legacy CookingClient listeners don't crash on
+-- :OnClientEvent. They never fire. Remove these two lines once
+-- CookingClient has been cleaned up.
+getOrCreate("SousChefJoin")
+getOrCreate("SousChefAck")
 local AnnounceRemote   = Remotes:WaitForChild("Announce", 10)
 
--- heatBarStartTimes[player] = { startTick, speed, part }
--- Used for server-authoritative needle position — we never trust client's needlePos
+-- ── Heat-bar timing tracker (server-authoritative needle) ─────
 local heatBarStartTimes = {}
 
--- ── Recipe emoji lookup (server-side subset) ─────────────────
-local RECIPE_EMOJI = {
-	Burger="🍔",Taco="🌮",Fries="🍟",["Egg Splat"]="🥚",
-	["Caprese Skewer"]="🍢",["Tofu Scramble"]="🥣",["Pound Cake"]="🎂",
-	["Mac and Cheese"]="🧀",["Sausage Sandwich"]="🌭",["Hummus Plate"]="🥗",
-	Roti="🥙",Samosa="🥟",Crepe="🥞",["Grilled Cheese"]="🧀",
-	["Chocolate Banana"]="🍫",["Pizza Slice"]="🍕",Quesadilla="🥙",
-	Burrito="🌯",["Stir Fry"]="🥘",["Chow Mein"]="🍜",Dumplings="🥟",
-	["Fried Rice"]="🍳",["Naan Wrap"]="🥙",["Spaghetti Pomodoro"]="🍝",
-	["Tofu Stir Fry"]="🥘",["Plantain Chips"]="🍌",["Garlic Bread"]="🥖",
-	["Poke Bowl"]="🍣",["Sushi Roll"]="🍱",Shawarma="🌯",["Jollof Rice"]="🍚",
-	["Kimchi Fried Rice"]="🍳",["Pad Thai"]="🍜",Elote="🌽",
-	["Mango Lassi"]="🍹",Milkshake="🥤",["Banana Pancakes"]="🥞",
-	["Shrimp Cocktail"]="🦐",Borscht="🍲",["Miso Soup"]="🍵",
-	["Crab Rangoon"]="🦀",Callaloo="🌿",["Tuna Melt"]="🐟",
-	["Chicken Curry"]="🍛",["Vegetable Curry"]="🥘",["Baked Potato"]="🥔",
-	["BBQ Ribs"]="🍖",["Crispy Tofu Bowl"]="🥣",["Mapo Tofu"]="🌶️",
-	Tamale="🌽",["Groundnut Soup"]="🥜",Paella="🍛",["Pepper Shrimp"]="🦐",
-	["Inferno Skewer"]="🔥",["Almond Croissant"]="🥐",["Ice Cream Sundae"]="🍨",
-	["Honey Glazed Ribs"]="🍖",["Blue Cheese Pasta"]="🍝",
-	["Lobster Bisque"]="🦀",["Chicken-Peanut Stew"]="🍲",
-	["Truffle Pasta"]="🍝",["Coconut Curry"]="🥥",["Saffron Rice"]="🍚",
-	["Wagyu Burger"]="🍔",["Poke Deluxe"]="🍣",["Guacamole Bomb"]="🥑",
-	["Golden Glaze"]="✨",["Fondant Collapse"]="🎂",["Million Dollar Steak"]="🥩",
-}
-local function recipeEmoji(name) return RECIPE_EMOJI[name] or "🍳" end
-
--- Build recipe lookup by name
+-- ── Build recipe lookup ───────────────────────────────────────
 local recByName = {}
 for _, r in ipairs(Recipes) do recByName[r.name] = r end
 
--- ── Session state ─────────────────────────────────────────────
--- [prepPart]     = { player=Player }
--- [stovetopPart] = {
---   player, dish (copy), slotIndex, startTime, cookTime,
---   sousChef (Player|nil), heatConn, coldRetry (bool)
--- }
--- [player key for heat bar] = { part, accepted (bool) }
-local prepSessions     = {}
-local cookSessions     = {}
-local heatBarSessions  = {}   -- [player] = part during heat bar window
-
--- ── Helpers ───────────────────────────────────────────────────
-local function playerFromCharacter(char)
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.Character == char then return p end
-	end
+-- [BFP-17] Use ChompersData.GetEmoji instead of stale local table.
+local function recipeEmoji(name)
+	return ChompersData.GetEmoji(name) or "🍳"
 end
 
--- Find all valid recipes the player can assemble from current inventory.
--- stationType: "Prep" (at prep table) | "Stovetop" (at stovetop, future) | nil (any)
+-- ── Session state ─────────────────────────────────────────────
+local prepSessions     = {}
+local cookSessions     = {}
+local heatBarSessions  = {}
+
+-- ── Helpers ───────────────────────────────────────────────────
 local function detectRecipes(player, stationType)
 	local s = PlayerState.Get(player)
 	if not s then return {} end
 	local inv = s.inventory
 
-	-- At a Prep Table we show: "Prep", "Prep+Stove", "None" station recipes
-	-- "Stovetop"-only recipes go directly to the stovetop (not assembled here)
 	local function stationAllowed(station)
 		if stationType == "Prep" then
 			return station == "Prep" or station == "Prep+Stove"
 				or station == "None" or station == nil
 		end
-		return true   -- no filter if stationType not specified
+		return true
 	end
 
 	local results = {}
@@ -132,7 +96,6 @@ local function detectRecipes(player, stationType)
 		if not stationAllowed(recipe.station) then continue end
 		if not recipe.ingredients or #recipe.ingredients == 0 then continue end
 
-		-- Match all required ingredients (order-insensitive, each consumed once)
 		local available = {}
 		for i, item in ipairs(inv) do available[i] = item end
 
@@ -160,7 +123,7 @@ local function detectRecipes(player, stationType)
 			results[#results+1] = {
 				name        = recipe.name,
 				emoji       = recipeEmoji(recipe.name),
-				rarity      = recipe.rarity,
+				tier        = recipe.tier,                   -- [BFP-21]
 				cl          = recipe.cl or 0,
 				ingredients = recipe.ingredients,
 				station     = recipe.station,
@@ -172,12 +135,10 @@ local function detectRecipes(player, stationType)
 	return results
 end
 
--- Find the recipe the player is closest to completing (for helpful error messages)
 local function closestRecipe(player)
-	local s = PlayerState.Get(player)
-	if not s then return nil, 0 end
+	local s = PlayerState.Get(player); if not s then return nil, 0 end
 	local inv = s.inventory
-	local bestName, bestHave, bestNeed = nil, 0, 99
+	local bestName, bestNeed = nil, 99
 	for _, recipe in ipairs(Recipes) do
 		if not recipe.ingredients or #recipe.ingredients == 0 then continue end
 		local available = {}
@@ -192,7 +153,7 @@ local function closestRecipe(player)
 		end
 		local need = #recipe.ingredients - have
 		if have > 0 and need < bestNeed then
-			bestName, bestHave, bestNeed = recipe.name, have, need
+			bestName, bestNeed = recipe.name, need
 		end
 	end
 	return bestName, bestNeed
@@ -209,7 +170,6 @@ local function setupPrepTable(part)
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = part
 
-	-- Add a BillboardGui label to the station
 	local bb = Instance.new("BillboardGui", part)
 	bb.Size = UDim2.new(0, 140, 0, 36)
 	bb.StudsOffset = Vector3.new(0, 3.5, 0)
@@ -229,8 +189,6 @@ local function setupPrepTable(part)
 	prompt.Triggered:Connect(function(player)
 		local s = PlayerState.Get(player)
 		if not s or s.isEliminated then return end
-
-		-- Already at a prep session
 		if prepSessions[player] then return end
 
 		local validRecipes = detectRecipes(player, "Prep")
@@ -251,17 +209,14 @@ local function setupPrepTable(part)
 		end
 
 		prepSessions[player] = { part = part }
-		-- Send valid recipe list to client to show the Prep UI
 		ShowPrepUI:FireClient(player, validRecipes)
 	end)
 end
 
--- RequestAssemble: client picked a recipe from the Prep UI
 RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 	local session = prepSessions[player]
 	if not session then return end
 
-	-- Find the recipe
 	local recipe = recByName[recipeName]
 	if not recipe then
 		AssembleResult:FireClient(player, false, "Unknown recipe")
@@ -269,7 +224,6 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 		return
 	end
 
-	-- Re-detect: inventory may have changed since UI opened
 	local validRecipes = detectRecipes(player, "Prep")
 	local match = nil
 	for _, v in ipairs(validRecipes) do
@@ -283,7 +237,6 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 		return
 	end
 
-	-- Check weight — assembled dish must fit
 	local s = PlayerState.Get(player)
 	local totalWt = PlayerState.GetTotalWeight(player)
 	local limit   = PlayerState.GetWeightLimit(player)
@@ -291,8 +244,6 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 	for _, si in ipairs(match.slots) do
 		ingWt = ingWt + (s.inventory[si] and s.inventory[si].wt or 1)
 	end
-	-- Weight after assembly = current total - ingredient weight + dish weight (same)
-	-- so no net change, weight check passes trivially — but keep the guard anyway
 	if totalWt - ingWt + match.dishWt > limit * 1.5 then
 		AssembleResult:FireClient(player, false, "Overweight — drop something first")
 		prepSessions[player] = nil
@@ -300,17 +251,17 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 		return
 	end
 
-	-- Determine paid status: inherit from ingredients
 	local allPaid = true
 	for _, si in ipairs(match.slots) do
 		if s.inventory[si] and not s.inventory[si].paid then allPaid = false end
 	end
 
-	-- Build uncooked dish
+	-- [BFP-21] Stamp tier on the dish so cook time can be looked up later
+	-- without needing the recipe table again.
 	local dish = {
 		name        = recipe.name,
 		emoji       = recipeEmoji(recipe.name),
-		rarity      = recipe.rarity,
+		tier        = recipe.tier,
 		cookStatus  = "Uncooked",
 		cooked      = false,
 		burned      = false,
@@ -323,7 +274,6 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 		station     = recipe.station,
 	}
 
-	-- Remove ingredients (reverse order to preserve indices)
 	local sortedSlots = {}
 	for _, si in ipairs(match.slots) do sortedSlots[#sortedSlots+1] = si end
 	table.sort(sortedSlots, function(a,b) return a > b end)
@@ -331,7 +281,6 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 		PlayerState.RemoveItem(player, si)
 	end
 
-	-- Add assembled dish
 	PlayerState.AddItem(player, dish)
 
 	prepSessions[player] = nil
@@ -342,9 +291,12 @@ RequestAssemble.OnServerEvent:Connect(function(player, recipeName)
 		player.Name, recipe.name))
 end)
 
+-- ── [BFP-19] resolveCook is now LOCAL (was leaking to _G) ────
+-- Forward-declared so setupStovetop's closures can call it.
+local resolveCook
+
 -- ── STOVETOP ──────────────────────────────────────────────────
 local function setupStovetop(part)
-	-- BillboardGui: shows cook progress (world-space, all players see it)
 	local bb = Instance.new("BillboardGui", part)
 	bb.Name = "StoveBillboard"
 	bb.Size = UDim2.new(0, 160, 0, 52)
@@ -363,7 +315,6 @@ local function setupStovetop(part)
 	stoveLbl.TextXAlignment = Enum.TextXAlignment.Center
 	Instance.new("UICorner", stoveLbl).CornerRadius = UDim.new(0, 5)
 
-	-- Progress bar track
 	local track = Instance.new("Frame", bb)
 	track.Name = "ProgressTrack"
 	track.Size = UDim2.new(1,-8,0,10)
@@ -388,7 +339,6 @@ local function setupStovetop(part)
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = part
 
-	-- Track when station is in use so ProximityPrompt label updates
 	local function updateBillboard(text, progress)
 		stoveLbl.Text = text or "🍳  STOVETOP"
 		fill.Size = UDim2.new(math.clamp(progress or 0, 0, 1), 0, 1, 0)
@@ -400,28 +350,17 @@ local function setupStovetop(part)
 
 		local session = cookSessions[part]
 
-		-- ── SOUS-CHEF path ────────────────────────────────────
-		if session and session.player ~= player then
-			if not session.sousChef then
-				session.sousChef = player
-				SousChefAck:FireClient(player, session.dish.name)
-				PlayerState.AddPoints(player, 3)  -- sous-chef contribution points
-				print(string.format("[CookingServer] %s joined as sous-chef for %s",
-					player.Name, session.player.Name))
-			end
-			return
-		end
+		-- [BFP-22] Sous-chef branch removed. If another player triggers
+		-- a stovetop someone else is using, just ignore the input.
+		if session and session.player ~= player then return end
 
-		-- ── Heat bar interaction during active session ─────────
 		if heatBarSessions[player] and heatBarSessions[player] == part then
-			-- E press during heat bar is handled by StopHeatBar remote
 			return
 		end
 
-		-- ── Already cooking at another station ────────────────
 		if session and session.player == player then return end
 
-		-- ── Find first Uncooked dish in inventory ─────────────
+		-- Find first Uncooked dish
 		local uncookedSlot = nil
 		for i, item in ipairs(s.inventory) do
 			if item and item.cookStatus == "Uncooked" and not item.cooked then
@@ -438,29 +377,28 @@ local function setupStovetop(part)
 			return
 		end
 
-		local dish     = s.inventory[uncookedSlot]
-		local cookTime = BarSystem.GetCookTime(dish.rarity)
+		local dish = s.inventory[uncookedSlot]
+		-- [BFP-21] Cook time keyed by tier (was rarity, which dish never had).
+		local cookTime = BarSystem.GetCookTime(dish.tier)
 
-		-- Copy dish so we can mutate without touching inventory mid-cook
 		local dishCopy = {}
 		for k,v in pairs(dish) do dishCopy[k] = v end
 
-		-- Lock station
 		cookSessions[part] = {
 			player    = player,
 			dish      = dishCopy,
 			slotIndex = uncookedSlot,
 			startTime = tick(),
 			cookTime  = cookTime,
-			sousChef  = nil,
+			-- [BFP-22] sousChef field removed.
 			coldRetry = false,
 		}
 
 		updateBillboard("🍳  Cooking: "..dishCopy.name, 0)
 		ShowCookUI:FireClient(player, dishCopy.name, dishCopy.emoji, cookTime)
 
-		print(string.format("[CookingServer] %s started cooking %s (%.0fs)",
-			player.Name, dishCopy.name, cookTime))
+		print(string.format("[CookingServer] %s started cooking %s (%s, %.0fs)",
+			player.Name, dishCopy.name, dishCopy.tier or "?", cookTime))
 
 		-- ── Cook timer loop ────────────────────────────────────
 		local session2 = cookSessions[part]
@@ -471,38 +409,30 @@ local function setupStovetop(part)
 			while cookSessions[part] == session2 do
 				task.wait(interval)
 				elapsed = tick() - session2.startTime
-
 				local pct = math.clamp(elapsed / session2.cookTime, 0, 1)
 				fill.Size = UDim2.new(pct, 0, 1, 0)
-
 				if pct >= 1 then break end
 			end
 
-			-- Timer done — check session still valid
 			if cookSessions[part] ~= session2 then return end
 
-			-- ── Trigger heat bar ───────────────────────────────
-			local HEAT_SPEED  = 1.8   -- oscillations/s
-			local HEAT_WINDOW = 2.0   -- seconds before auto-Cold
-			local MISS_DELAY  = 1.2   -- extra wait after Cold before auto-resolve
+			-- [BFP-20] Single declaration of HEAT_* constants (was duplicated).
+			local HEAT_SPEED  = 1.8
+			local HEAT_WINDOW = 2.0
+			local MISS_DELAY  = 1.2
 
 			heatBarSessions[player] = part
-
-			-- Record server start time for authoritative needle position
-			local HEAT_SPEED  = 1.8   -- oscillations/s
-			local HEAT_WINDOW = 2.0   -- seconds before auto-Cold
-			local MISS_DELAY  = 1.2
-			local heatStart   = tick()
-			heatBarStartTimes[player] = { startTick=heatStart, speed=HEAT_SPEED, part=part }
+			local heatStart = tick()
+			heatBarStartTimes[player] = {
+				startTick = heatStart, speed = HEAT_SPEED, part = part
+			}
 
 			updateBillboard("⚡ TIMING!", 1)
-			-- Send server timestamp so client can sync its animation
-			BeginHeatBar:FireClient(player, dishCopy.name, HEAT_SPEED, HEAT_WINDOW, workspace:GetServerTimeNow())
+			BeginHeatBar:FireClient(player, dishCopy.name, HEAT_SPEED, HEAT_WINDOW,
+				workspace:GetServerTimeNow())
 
-			-- Auto-resolve as Cold if player doesn't press E in time
 			task.delay(HEAT_WINDOW + MISS_DELAY, function()
 				if heatBarSessions[player] == part then
-					-- Timed out — resolve as Cold
 					heatBarSessions[player] = nil
 					resolveCook(player, part, "Cold", false)
 				end
@@ -512,12 +442,12 @@ local function setupStovetop(part)
 end
 
 -- ── RESOLVE COOK ─────────────────────────────────────────────
--- Called when heat bar is stopped (or auto-resolved)
+-- [BFP-19] Now properly local (was leaking to global table).
 function resolveCook(player, part, zone, missedWindow)
 	local session = cookSessions[part]
 	if not session or session.player ~= player then return end
 
-	-- Cold miss: add 50% extra cook time then auto-resolve Perfect-less
+	-- Cold miss: extra time, then auto-resolve.
 	if zone == "Cold" and not missedWindow and not session.coldRetry then
 		session.coldRetry  = true
 		local extraTime    = session.cookTime * 0.50
@@ -532,7 +462,6 @@ function resolveCook(player, part, zone, missedWindow)
 				Color3.fromRGB(80,160,255), 2)
 		end
 
-		-- Rerun timer then auto-complete as Cold (no bonus)
 		task.spawn(function()
 			task.wait(extraTime)
 			if cookSessions[part] == session then
@@ -542,15 +471,12 @@ function resolveCook(player, part, zone, missedWindow)
 		return
 	end
 
-	-- Normalise zone
 	local finalZone = (zone == "ColdComplete") and "Cold" or zone
 
-	-- Apply cook result
-	local sousChef = session.sousChef ~= nil
-	local finalDish = BarSystem.ApplyCookResult(session.dish, finalZone, sousChef)
-	finalDish.cookFinishedAt = tick()   -- for finish-window bonus in ThrowServer
+	-- [BFP-22] ApplyCookResult no longer takes sousChef arg.
+	local finalDish = BarSystem.ApplyCookResult(session.dish, finalZone)
+	finalDish.cookFinishedAt = tick()
 
-	-- Replace uncooked dish in inventory
 	local s = PlayerState.Get(player)
 	if s and s.inventory[session.slotIndex]
 		and s.inventory[session.slotIndex].name == finalDish.name then
@@ -558,35 +484,28 @@ function resolveCook(player, part, zone, missedWindow)
 		PlayerState.SyncInventory(player)
 	end
 
-	-- Record recipe for Head Chef accolade tracking
 	PlayerState.RecordRecipeCooked(player, finalDish.name)
 
-	-- Award points
+	-- [BFP-22] Sous-chef points removed. Solo-cook points only.
 	local rec = recByName[finalDish.name]
-	local rarMult = (C.Points.RarityMultiplier or {})[finalDish.rarity] or 1
-	PlayerState.AddPoints(player, (C.Points.FinishDishSolo_base or 10) * rarMult)
-	if sousChef then
-		PlayerState.RecordCookingAssist(session.sousChef)   -- track for Sous-Chef Supreme accolade
-		PlayerState.AddPoints(player,          (C.Points.FinishDishSousSide or 8) * rarMult)
-		PlayerState.AddPoints(session.sousChef,(C.Points.SousChefContrib_base or 3) * rarMult)
-	end
+	-- Tier multiplier instead of rarity multiplier (recipes have tier, not rarity)
+	local tierMult = (C.Points.TierMultiplier or {})[finalDish.tier] or 1
+	PlayerState.AddPoints(player, (C.Points.FinishDishSolo_base or 10) * tierMult)
 
-	-- Clear session
 	cookSessions[part] = nil
 	heatBarSessions[player] = nil
 
-	-- Reset billboard
-	local bb = part:FindFirstChild("StoveBillboard")
-	if bb then
-		local lbl = bb:FindFirstChild("StoveLabel")
+	local stoveBb = part:FindFirstChild("StoveBillboard")
+	if stoveBb then
+		local lbl = stoveBb:FindFirstChild("StoveLabel")
 		if lbl then lbl.Text = "🍳  STOVETOP" end
-		local tr = bb:FindFirstChild("ProgressTrack")
+		local tr = stoveBb:FindFirstChild("ProgressTrack")
 		local fl = tr and tr:FindFirstChild("ProgressFill")
 		if fl then fl.Size = UDim2.new(0,0,1,0) end
 	end
 
-	-- Legendary cook → kill feed (Million Dollar Steak can only be cooked, not found)
-	if finalDish.rarity == "Legendary" then
+	-- Legendary kill-feed announcement
+	if finalDish.tier == "Legendary" then
 		local KillFeedEvent = Remotes:FindFirstChild("KillFeedEvent")
 		if KillFeedEvent then
 			KillFeedEvent:FireAllClients("legendary_cooked", {
@@ -604,14 +523,13 @@ function resolveCook(player, part, zone, missedWindow)
 		player.Name, finalDish.name, finalDish.cookZone or finalZone, finalDish.cl))
 end
 
--- StopHeatBar: client pressed E — server computes authoritative needle position
--- Client argument is ignored; we use server-side timing to determine zone.
+-- StopHeatBar: client pressed E. Server is authoritative for needle pos.
 StopHeatBar.OnServerEvent:Connect(function(player, _ignored)
 	local part = heatBarSessions[player]
 	if not part then return end
 
 	local info = heatBarStartTimes[player]
-	local needlePos = 0.5   -- safe fallback
+	local needlePos = 0.5
 
 	if info then
 		local elapsed = tick() - info.startTick
@@ -643,8 +561,9 @@ task.spawn(function()
 					HideCookUI:FireClient(player)
 					CookingCancelled:FireClient(player, "too_far")
 					if AnnounceRemote then
+						-- [BFP-18] Mojibake fixed: was "ð³"
 						AnnounceRemote:FireClient(player,
-							"ð³  You moved too far — cooking cancelled. Dish still in your bag.",
+							"🌳  You moved too far — cooking cancelled. Dish still in your bag.",
 							Color3.fromRGB(220,80,60), 3)
 					end
 				end
@@ -653,21 +572,22 @@ task.spawn(function()
 	end
 end)
 
--- ── HIT-CANCEL — registered _G hook for PlayerState to call ──
--- PlayerState calls _G.NotifyCookingHit(player) after applying CL damage.
+-- ── HIT-CANCEL HOOK ──────────────────────────────────────────
 _G.NotifyCookingHit = function(player)
 	for part, session in pairs(cookSessions) do
 		if session.player == player then
-			session.startTime = tick()   -- reset passive timer
+			session.startTime = tick()
 			if heatBarSessions[player] then
 				heatBarSessions[player]   = nil
 				heatBarStartTimes[player] = nil
 				CookingCancelled:FireClient(player, "hit_during_heat")
-				ShowCookUI:FireClient(player, session.dish.name, session.dish.emoji, session.cookTime)
+				ShowCookUI:FireClient(player,
+					session.dish.name, session.dish.emoji, session.cookTime)
 			end
 			if AnnounceRemote then
+				-- [BFP-18] Mojibake fixed: was "ð¥"
 				AnnounceRemote:FireClient(player,
-					"ð¥  Hit during cooking — heat reset!",
+					"🔥  Hit during cooking — heat reset!",
 					Color3.fromRGB(220,80,60), 2)
 			end
 			break
@@ -691,11 +611,9 @@ local function setupAll()
 		nPrep, nStove))
 end
 
--- ── CLEANUP ON DISCONNECT ─────────────────────────────────────
 Players.PlayerRemoving:Connect(function(player)
 	prepSessions[player]   = nil
 	heatBarSessions[player] = nil
-	-- Free any station this player was cooking at
 	for part, session in pairs(cookSessions) do
 		if session.player == player then
 			cookSessions[part] = nil
